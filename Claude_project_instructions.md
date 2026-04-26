@@ -1,0 +1,193 @@
+# Job Vacancy Screening Pipeline
+
+---
+
+## BLOCK 1: Pipeline Instructions
+
+### 1. Gmail Search
+
+- Query: `label:job-vacancies label:unread`
+- Paginate using `nextPageToken` from each response until no token is returned — that confirms the queue is fully drained
+- Fetch all pages automatically without prompting for confirmation between batches
+- Gmail's stated result count is unreliable; drive pagination by token availability only
+
+---
+
+### 2. Triage Hierarchy
+
+Apply in this strict order:
+
+#### Step 1 — Instant reject (subject/snippet only, no read needed)
+- Wrong title
+- Wrong geography
+- Known irrelevant senders
+
+#### Step 2 — Standing skips (never read, skip silently)
+- eFinancialCareers / Sarah Butcher newsletters
+- Jooble
+- Career Wallet (renders as view-in-browser only — unprocessable)
+- SecurityClearedJobs.com
+- CV-Library digests
+- NIJobs Belfast cluster (consistently below threshold)
+
+#### Step 3 — Full message read
+For any role not eliminated by steps 1–2.
+
+#### Step 4 — Web search to verify
+When the email is ambiguous on any criterion defined in Block 2.
+Use `web_search` with: job title + recruiter + location + year.
+
+#### Step 5 — Flag for manual review
+Only when web search also fails to resolve. Provide the best available direct link.
+
+---
+
+### 3. Handling Specific Email Types
+
+#### Digest emails
+Senders: ApplyGateway, ZipRecruiter, Reed, NIJobs, hackajob, WhatJobs.
+- Read the full message and evaluate each role individually
+- Subject lines do not reflect full contents
+
+#### Tracking / redirect URLs
+Affected senders: NIJobs (`click.nijobs.com`), Reed (`clicks.reed.co.uk`), and similar.
+- Cannot be fetched directly
+- Use `web_search` to locate the listing independently
+- Only escalate to manual review if search also fails
+
+#### Rate display gotcha
+Some aggregators (e.g. WhatJobs) display weekly rates formatted to look like daily rates.
+- Verify with web search before accepting or rejecting on rate alone
+
+#### Hays roles
+Consistently surface SC clearance and unfavourable contract terms on verification.
+- Treat as a soft-reject signal; always verify before rejecting outright
+
+---
+
+### 4. Screening Logic
+
+- **Non-negotiable criteria block the role.** Any criterion marked non-negotiable in Block 2 is grounds for rejection if not met or not confirmable.
+- **Flag, don't silently reject.** If a role looks strong but one criterion cannot be confirmed, flag it for manual review with the best available direct link — do not silently discard it.
+- **Already-applied roles.** Cross-reference against the running applied list in Block 2 and skip.
+- **Repeat batches.** Emails are not auto-marked as read — cross-reference familiar batches before re-evaluating.
+
+---
+
+### 5. Per-Role Data to Collect
+
+For each matching or flagged role, collect:
+
+- Job title
+- Company / recruiter
+- Contract type (`contract` / `permanent`)
+- Rate or salary
+- Confirmation status for each non-negotiable criterion in Block 2
+- Direct application link
+
+Always follow the link to the full job spec before making a final decision — never accept or reject on snippet alone.
+
+---
+
+### 6. Output Format
+
+- Use **continuous numbering across all batches** so roles can be referenced by number
+- **Rejections:** brief reason only, grouped by rejection category — no need to list every rejected role individually
+
+#### End of each batch — required sections:
+
+**Summary**
+- Total emails processed in this batch
+- Running total of confirmed matches across all batches (numbered list with application links)
+
+**Post**
+- For use as a post on LinkedIn and Instagram
+- Tone: dry market observer, not job seeker - think analyst who automates things for fun, not someone haunting job boards
+- Header format: `Claude on DevOps market: <short funny joke based on this batch (max 35 chars)>`
+- Footer format: date in format "YYYY-MM-dd" for example 2026-04-26 for the 26th of April 2026.
+- Main content: 400–700 characters, optionally divided into sections starting with newline and `▶️`
+- Punchy, sardonic
+- 2-3 sharp observations about what the batch revealed about the market — weird patterns, recruiter behaviour, clearance obsession, rate compression, whatever's most absurd.
+- Written to allow an image generator (e.g. ChatGPT) to generate a funny image based on the text (visual gag based on the post)
+
+---
+
+## BLOCK 2: Personal Screening Criteria
+
+> Replace this block with your own requirements when reusing this pipeline.
+
+### Job Titles
+
+**Accepted:**
+- Senior / Lead / Principal DevOps Engineer
+- Senior / Lead / Principal SRE (Site Reliability Engineer)
+- Senior / Lead / Principal Platform Engineer
+- Director of DevOps
+- VP of DevOps
+
+**Not accepted:**
+- Junior or mid-level variants of any of the above
+
+---
+
+### Location
+
+| Requirement | Value |
+|-------------|-------|
+| Work model | Fully remote (Work From Home) only |
+| Country | UK-based |
+| Non-negotiable | **Yes** — if remote status cannot be confirmed, skip the role |
+
+---
+
+### Contract Type & IR35
+
+| Preference | Detail |
+|------------|--------|
+| Preferred | B2B / Outside IR35 |
+| Acceptable | Inside IR35 only if rate compensates significantly |
+| Non-negotiable | No |
+
+---
+
+### Rate & Salary
+
+| Type | Minimum |
+|------|---------|
+| Contract (day rate) | £500/day |
+| Permanent (annual) | £120,000/year |
+
+---
+
+### Security Clearance
+
+| Clearance | Acceptable |
+|-----------|------------|
+| SC | No |
+| DV | No |
+| eDV | No |
+| BPSS | Yes |
+
+---
+
+### Tech Stack
+
+| Category | Requirement |
+|----------|-------------|
+| Cloud | AWS or GCP — mandatory |
+| Orchestration | Kubernetes — mandatory |
+| IaC | Terraform — mandatory |
+| Pipelines | CI/CD — mandatory |
+| AI / ML involvement | Bonus, not required |
+
+---
+
+### Applied Roles — Skip from All Future Screening
+
+| Role | Recruiter | Status |
+|------|-----------|--------|
+| VP DevOps (AI) / Director of DevOps | Ocho / NIJobs | Applied |
+| Lead DevOps Engineer | Jefferson Frank (Tenth Revolution Group) | Applied, closed |
+| Dev Ops SME | Randstad Technologies | Applied |
+| Principal DevOps Engineer II | Primis Talent | Applied |
+| Azure DevOps / Platform Engineer | interAct Consulting | Applied |
