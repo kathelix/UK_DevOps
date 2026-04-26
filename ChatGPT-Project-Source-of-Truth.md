@@ -2,16 +2,26 @@
 
 ## Intro
 
-This file is plugged into ChatGPT Project Sources to reference the latest sources in GitHub.
+This file is plugged into ChatGPT Project Sources to bootstrap access to the latest live project sources.
+
 This ChatGPT Project is used for architecture, design, and technical planning discussions.
 
 ## Source of truth
 
-Use the GitHub repository below as the canonical source of truth:
-- Repository: `Kathelix/claude_on_devops`
+The canonical live project source is the GitHub repository:
 
-Do not treat uploaded Project Sources as authoritative if they conflict with the current GitHub repo contents.
-If GitHub content and any older uploaded file differ, prefer the GitHub version.
+- Repository: `kathelix/claude_on_devops`
+- Default branch: `main`
+- Visibility: `public`
+
+Uploaded Project Source files are bootstrap instructions only. They may become stale.
+
+For future chats:
+
+- Fetch current project files from the GitHub repo before relying on uploaded files.
+- Prefer GitHub contents over uploaded Project Sources if there is any conflict.
+- Do not assume the repo is empty if GitHub code search returns no results - search indexing can lag.
+- If search looks empty, inspect repository metadata, branch, commits, or fetch known paths directly when available.
 
 ## Output expectations
 
