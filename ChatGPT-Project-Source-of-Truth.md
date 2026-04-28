@@ -2,9 +2,11 @@
 
 ## Intro
 
+Fetch and read the latest version of `ChatGPT_image_generation_guide.md` from the live GitHub repository `kathelix/claude_on_devops` on the `main` branch before generating.
+
 This file is plugged into ChatGPT Project Sources to bootstrap access to the latest live project sources.
 
-This ChatGPT Project is used for architecture, design, image generation, and technical planning discussions.
+This ChatGPT Project is used for image generation.
 
 ## Source of truth
 
@@ -35,13 +37,6 @@ Other files may provide project context, but they must not override the image-ge
 - For image-generation requests, fetch and follow `ChatGPT_image_generation_guide.md` as the single source of truth.
 - Do not assume the repo is empty if GitHub code search returns no results - search indexing can lag.
 - If search looks empty, inspect repository metadata, branch, commits, or fetch known paths directly when available.
-
-## Output expectations
-
-For architectural/design discussions:
-
-- do not generate code unless explicitly asked
-- prefer reasoning, trade-offs, structure, and exact wording suggestions for docs
 
 ## Practical intent
 
