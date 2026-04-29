@@ -22,22 +22,14 @@ Apply in this strict order:
 - Wrong geography
 - Known irrelevant senders
 
-#### Step 2 — Standing skips (never read, skip silently)
-- eFinancialCareers / Sarah Butcher newsletters
-- Jooble
-- Career Wallet (renders as view-in-browser only — unprocessable)
-- SecurityClearedJobs.com
-- CV-Library digests
-- NIJobs Belfast cluster (consistently below threshold)
+#### Step 2 — Full message read
+For any role not eliminated by step 1.
 
-#### Step 3 — Full message read
-For any role not eliminated by steps 1–2.
-
-#### Step 4 — Web search to verify
+#### Step 3 — Web search to verify
 When the email is ambiguous on any criterion defined in Block 2.
 Use `web_search` with: job title + recruiter + location + year.
 
-#### Step 5 — Flag for manual review
+#### Step 4 — Flag for manual review
 Only when web search also fails to resolve. Provide the best available direct link.
 
 ---
@@ -74,7 +66,17 @@ Consistently surface SC clearance and unfavourable contract terms on verificatio
 
 ---
 
-### 5. Per-Role Data to Collect
+### 5. Cross-batch deduplication
+
+Roles often appear in multiple digests on the same day (Reed + Haystack + jobs4
+frequently overlap). When the same role surfaces twice:
+- Collapse to a single entry in the results table
+- Note the duplicate as a confirmation signal in the rejection breakdown ("INTEC SELECT — surfaced via Reed + Haystack, +1 confidence")
+- A second sighting from a *different* aggregator slightly raises confidence in the listing being live; a second sighting from the *same* aggregator (e.g. WhatJobs sending the same role twice) should be treated as routine spam, not fresh signal
+
+---
+
+### 6. Per-Role Data to Collect
 
 For each matching or flagged role, collect:
 
@@ -195,10 +197,12 @@ Always follow the link to the full job spec before making a final decision — n
 
 ### Applied Roles — Skip from All Future Screening
 
-| Role | Recruiter | Status |
-|------|-----------|--------|
-| VP DevOps (AI) / Director of DevOps | Ocho / NIJobs | Applied |
-| Lead DevOps Engineer | Jefferson Frank (Tenth Revolution Group) | Applied, closed |
-| Dev Ops SME | Randstad Technologies | Applied |
-| Principal DevOps Engineer II | Primis Talent | Applied |
-| Azure DevOps / Platform Engineer | interAct Consulting | Applied |
+| Role | Recruiter | Type | Rate/Salary | Status | Date applied |
+|------|-----------|------|-------------|--------|--------------|
+| VP DevOps (AI) / Director of DevOps | Ocho / NIJobs | Permanent | £120k–£150k | Applied | — |
+| Lead DevOps Engineer | Jefferson Frank (Tenth Revolution Group) | Contract | £650/day Outside IR35 | Applied, closed | — |
+| Dev Ops SME | Randstad Technologies | Contract | £400–£600/day | Applied | — |
+| Principal DevOps Engineer II | Primis Talent | Permanent | £125k + 9% bonus | Applied | — |
+| Azure DevOps / Platform Engineer | interAct Consulting | Contract | £575/day Outside IR35 | Applied | — |
+| Principal DevOps Engineer | Adepta Partners | Permanent | £125k + bonus | Applied | 2026-04-17 |
+| Lead DevOps Engineer (UK gov scientific org) | Tenth Revolution Group / Jefferson Frank | Contract | £650/day Outside IR35 | Applied | 2026-04-17 |
