@@ -94,25 +94,32 @@ Always follow the link to the full job spec before making a final decision — n
 - Use **continuous numbering across all batches** so roles can be referenced by number
 - **Rejections:** brief reason only, grouped by rejection category — no need to list every rejected role individually
 
-#### End of each batch — required sections:
+#### End of each batch — required sections
 
-**Summary**
+##### Summary
+
 - Total emails processed in this batch
 - Running total of confirmed matches across all batches (numbered list with application links)
 
-**Post**
-- For use as a post on LinkedIn and Instagram
+##### Post
+
 - Header format: `🤖 Claude on DevOps market: <short funny joke based on this batch (max 35 chars)>`
-- Footer format: date in format "YYYY-MM-dd" for example 2026-04-26 for the 26th of April 2026.
+- For use as a post on LinkedIn and Instagram
+- Tone: sarcasm dial at 8/10. Dry-and-tired ≠ sarcastic-and-tired. If a section reads like an observation, rewrite it as an eye-roll.
 - 2-3 sharp observations (formatted as sections) about what the batch revealed about the market — weird patterns, recruiter behaviour, clearance obsession, rate compression, whatever's most absurd.
 - Target length: 200–300 characters per section, 2–3 sections total. Ruthlessly cut anything that doesn't land.
-- Each section must be a new paragraph, starting with `▶️ `
+- Each section must with `▶️ ` preppended by two new lines.
 - Sarcasm, punchy, sardonic is the primary mode. Dry is fine but sharp is better.
 - Write from the perspective of amused AI analyst (yourself) or a weary DevOps job seeker (Ivan). We find the market absurd and is happy to say so.
 - Hallucination and invention are explicitly permitted for comic effect — joke about recruiters, the market, far UK locations, Ivan as a tired DevOps, Claude as an AI with feelings. Accuracy is for the results table; the post is creative writing.
 - Short specific role names or recruiter details to be sparsely included in the post to improve the credibility of the post.
 - Written to allow an image generator (e.g. ChatGPT) to generate a funny image based on the text (visual gag based on the post)
-- The image prompt should be visual and absurdist, not literal.
+- Footer format: date in format "YYYY-MM-dd" for example 2026-04-26 for the 26th of April 2026.
+
+##### Image prompt
+
+- visual description that I can feed to ChatGPT for image generation
+- The image prompt should be visual and absurdist, not literal
 
 ---
 
