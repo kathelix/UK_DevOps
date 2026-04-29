@@ -17,19 +17,33 @@
 
 Apply in this strict order:
 
-#### Step 1 — Instant reject (subject/snippet only, no read needed)
+#### Step 1 — Skip already-applied and recently-reviewed
+Cross-reference every candidate against:
+- "Applied Roles" table (Block 2) — skip indefinitely
+- "Reviewed — Not Applied" table (Block 2) — skip if Reviewed date is within 30 days
+
+If a "Reviewed — Not Applied" entry is older than 30 days, treat the role as new and process normally. Mention in the rejection breakdown when a stale entry has been re-evaluated.
+
+#### Step 2 — Instant reject (subject/snippet only, no read needed)
 - Wrong title
 - Wrong geography
 - Known irrelevant senders
 
-#### Step 2 — Full message read
-For any role not eliminated by step 1.
+#### Step 3 — Full message read
+For any role not eliminated by steps 1-2.
 
-#### Step 3 — Web search to verify
+#### Step 4 — Web search to verify
 When the email is ambiguous on any criterion defined in Block 2.
 Use `web_search` with: job title + recruiter + location + year.
 
-#### Step 4 — Flag for manual review
+**Search budget per role: maximum 3 web_search calls.**
+- 1st search: broad — recruiter + role title + key criterion (e.g. "outside IR35", "remote")
+- 2nd search: narrow — try a different criterion or rephrase
+- 3rd search: last resort — try the recruiter's company name on a job aggregator (Reed, Totaljobs, OutsideSpy)
+
+If after 3 searches the role still cannot be verified on the missing criterion, flag it for manual review with the best available direct link. Do not exceed the budget. Do not silently reject.
+
+#### Step 5 — Flag for manual review
 Only when web search also fails to resolve. Provide the best available direct link.
 
 ---
@@ -123,6 +137,18 @@ Always follow the link to the full job spec before making a final decision — n
 - visual description that I can feed to ChatGPT for image generation
 - The image prompt should be visual and absurdist, not literal
 
+##### Reviewed-not-applied prompt
+
+At the end of every batch, after the Post and Image prompt sections, add a short prompt to the user:
+
+> 💬 **Did you review and reject any flagged roles from previous batches?**
+> Reply with the role names and I'll provide the markdown block to append to
+> the "Reviewed - Not Applied" table in the Instructions.
+
+Only ask if there are flagged-for-manual-review roles outstanding from this or recent batches. Don't ask if every role this batch was a clean accept or clean reject.
+
+When the user names roles to add, output a single ready-to-paste markdown table block with the new rows, using today's date in the "Date reviewed" column.
+
 ---
 
 ## BLOCK 2: Personal Screening Criteria
@@ -193,9 +219,15 @@ Always follow the link to the full job spec before making a final decision — n
 | Pipelines | CI/CD — mandatory |
 | AI / ML involvement | Bonus, not required |
 
+#### Azure handling
+- **Azure-only roles are rejected.** If the cloud stack is exclusively Azure, reject - do not flag for manual review.
+- **Azure as part of a multi-cloud stack** (AWS + Azure, GCP + Azure, AWS + GCP + Azure) **is acceptable** - evaluate normally against other criteria.
+- "Azure DevOps" as a CI/CD tool name does not count as Azure cloud - that's a pipeline tool. Look at the actual cloud platform the role is deploying to.
+- If the role description heavily emphasises Windows server administration, .NET, or Microsoft-stack tooling alongside Azure, treat as Microsoft-heavy and reject.
+
 ---
 
-### Applied Roles — Skip from All Future Screening
+### Applied Roles - Skip from All Future Screening
 
 | Role | Recruiter | Type | Rate/Salary | Status | Date applied |
 |------|-----------|------|-------------|--------|--------------|
@@ -206,3 +238,14 @@ Always follow the link to the full job spec before making a final decision — n
 | Azure DevOps / Platform Engineer | interAct Consulting | Contract | £575/day Outside IR35 | Applied | — |
 | Principal DevOps Engineer | Adepta Partners | Permanent | £125k + bonus | Applied | 2026-04-17 |
 | Lead DevOps Engineer (UK gov scientific org) | Tenth Revolution Group / Jefferson Frank | Contract | £650/day Outside IR35 | Applied | 2026-04-17 |
+
+### Reviewed - Not Applied (30-day skip window)
+
+Roles I flagged for manual review where the user looked at them and chose not to apply.
+Skip from screening for 30 days from the "Date reviewed". After 30 days, drop the entry — if the role resurfaces it's worth a fresh look (job spec may have changed, rate may have moved).
+
+| Role | Recruiter | Type | Rate/Salary | Reason not applied | Date reviewed |
+|------|-----------|------|-------------|-------------------|----------|
+| Senior Python DevOps Engineer | Oliver Bernard | Permanent | (low salary) | Cambridge RevTech startup, salary below threshold | — |
+| Senior DevOps Engineer (Azure/Terraform) | INTEC SELECT | Contract | £550–£650/day Outside IR35 | Azure-only stack | 2026-04-29 |
+| DevOps Engineer Outside IR35 | Sanderson | Contract | £550–£575/day Outside IR35 | Azure/Windows-heavy stack | 2026-04-29 |
