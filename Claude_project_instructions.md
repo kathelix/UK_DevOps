@@ -238,6 +238,7 @@ When the user names roles to add, output a single ready-to-paste markdown table 
 | Azure DevOps / Platform Engineer | interAct Consulting | Contract | £575/day Outside IR35 | Applied | — |
 | Principal DevOps Engineer | Adepta Partners | Permanent | £125k + bonus | Applied | 2026-04-17 |
 | Lead DevOps Engineer (UK gov scientific org) | Tenth Revolution Group / Jefferson Frank | Contract | £650/day Outside IR35 | Applied | 2026-04-17 |
+| Infrastructure Engineer | Tailscale (via Welcome to the Jungle) | Permanent | £129k–£161k | Applied | 2026-04-30 |
 
 ### Reviewed - Not Applied (30-day skip window)
 
@@ -249,3 +250,4 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior Python DevOps Engineer | Oliver Bernard | Permanent | (low salary) | Cambridge RevTech startup, salary below threshold | — |
 | Senior DevOps Engineer (Azure/Terraform) | INTEC SELECT | Contract | £550–£650/day Outside IR35 | Azure-only stack | 2026-04-29 |
 | DevOps Engineer Outside IR35 | Sanderson | Contract | £550–£575/day Outside IR35 | Azure/Windows-heavy stack | 2026-04-29 |
+| Senior DevOps Engineer (FinTech) | MCS Group (Belfast) | Permanent | Not disclosed | Listing no longer available at review time | 2026-04-30 |
