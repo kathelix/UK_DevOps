@@ -105,7 +105,7 @@ Always follow the link to the full job spec before making a final decision — n
 
 ---
 
-### 6. Output Format
+### 7. Output Format
 
 - Use **continuous numbering across all batches** so roles can be referenced by number
 - **Rejections:** brief reason only, grouped by rejection category — no need to list every rejected role individually
