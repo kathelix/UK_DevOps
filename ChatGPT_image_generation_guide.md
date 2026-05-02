@@ -59,7 +59,9 @@ It should feel hand-crafted, humorous, and memorable.
 - Do **not** repeat the same exact character pose, same exact human or robot, same exact desk angle, or same scene layout.
 - Keep the series identity, but vary the scene and metaphor each time.
 
-### 2. Prefer wide landscape format
+### 2. Image format requirements
+
+Use wide landscape format.
 
 Design primarily for social media feed preview.
 
@@ -386,7 +388,11 @@ Before generating or approving an image, verify:
 - [ ] Does the image feel like part of the same recurring series?
 - [ ] Is the composition new rather than recycled?
 - [ ] Is it funny and social media safe?
+- [ ] Would this still be readable in a LinkedIn/Instagram mobile feed without zooming?
+- [ ] Could 30-50% of small text/details be removed without weakening the joke?
 - [ ] If Diese appears, is the cat subtle and not distracting?
+- [ ] Does generated image have dimensions 1200 x 627 px?
+
 
 ---
 
