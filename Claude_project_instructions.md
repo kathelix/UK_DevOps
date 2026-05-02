@@ -251,3 +251,4 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior DevOps Engineer (Azure/Terraform) | INTEC SELECT | Contract | £550–£650/day Outside IR35 | Azure-only stack | 2026-04-29 |
 | DevOps Engineer Outside IR35 | Sanderson | Contract | £550–£575/day Outside IR35 | Azure/Windows-heavy stack | 2026-04-29 |
 | Senior DevOps Engineer (FinTech) | MCS Group (Belfast) | Permanent | Not disclosed | Listing no longer available at review time | 2026-04-30 |
+| Senior DevOps Engineer | Oscar Technology (via Reed) | Contract | £680–£710/day Inside IR35 | Fully on-site West Midlands; Inside IR35 | 2026-05-02 |
