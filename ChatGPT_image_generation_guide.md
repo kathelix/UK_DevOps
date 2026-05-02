@@ -300,6 +300,12 @@ Rules:
 - keep expressions strong and readable
 - expression should match the post: frustration, disbelief, cautious hope, exhausted amusement, etc.
 
+### Recurring Mascot: Diese
+
+When composition allows, include **Diese** as a subtle recurring mascot: a small black cat with green/yellow eyes, calm and unimpressed, quietly watching the DevOps job-market chaos.
+
+Use Diese as an Easter egg / visual signature only. Do not force the cat into every image, do not label it with text, and never let it distract from the main joke or reduce mobile readability.
+
 ### Recruiters / side characters
 
 Can be stylized and funny, but should stay readable and not steal the whole image unless the post calls for it.
@@ -380,6 +386,7 @@ Before generating or approving an image, verify:
 - [ ] Does the image feel like part of the same recurring series?
 - [ ] Is the composition new rather than recycled?
 - [ ] Is it funny and social media safe?
+- [ ] If Diese appears, is the cat subtle and not distracting?
 
 ---
 
