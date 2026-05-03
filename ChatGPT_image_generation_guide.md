@@ -406,9 +406,51 @@ Only use them when they are relevant to that specific Claude post.
 
 ---
 
+## X Thread Generation
+
+Adapt a Claude DevOps market post for X (Twitter), convert it into a **4-6 tweet thread**.
+
+### Goals
+
+- Mobile-first readability
+- Strong hook
+- Short, punchy tweets
+- Same humour and sarcasm as the Claude post
+
+### Structure
+
+1. Tweet 1 - hook / main absurdity
+2. Tweet 2 - context
+3. Tweet 3 - strongest example
+4. Tweet 4 - secondary example
+5. Final tweet - punchline / conclusion
+
+### Rules
+
+- Target 70-150 characters per tweet
+- Max ~220 characters only if necessary
+- Use short lines and line breaks
+- One idea per tweet
+- Do not copy LinkedIn text directly
+- Cut repetition, filler, and long explanations
+
+### Final tweet
+
+Must feel like a payoff.
+
+Good examples:
+- “This is not a market.”
+- “No Kubernetes. Only Workflows™.”
+
+### Output
+
+Return only the ready-to-post X thread, without explanations.
+
+---
+
 ## Quality Checklist Before Finalizing
 
-Before generating or approving an image, verify:
+Before generating or approving images, verify:
 
 - [ ] Did I fetch and read the latest GitHub version of this guide first?
 - [ ] Is the image based on one strong visual metaphor, not a dense infographic?
@@ -428,6 +470,7 @@ Before generating or approving an image, verify:
 - [ ] Could 30-50% of small text/details be removed without weakening the joke?
 - [ ] If Diese appears, is the cat subtle and not distracting?
 - [ ] Have you generated TWO images: one with dimensions 1200 x 627 px, and another with dimensions 1200 x 1500 px?
+- [ ] Have you generated X Thread tweets based on Claude Post text?
 
 ---
 
