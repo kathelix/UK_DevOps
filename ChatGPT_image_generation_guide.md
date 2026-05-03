@@ -4,7 +4,7 @@
 
 This file is the **primary source of truth** for all image generation in the `Claude on DevOps market` / `UK DevOps` social media series.
 
-For any request to generate a LinkedIn, Instagram, UK DevOps, or Claude DevOps market image, ChatGPT must:
+For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude DevOps market image, ChatGPT must:
 
 1. Fetch and read the latest version of this file from the live GitHub repository `kathelix/claude_on_devops` on the `main` branch before generating.
 2. Follow this guide even when the user only says something short, such as:
@@ -18,19 +18,25 @@ For any request to generate a LinkedIn, Instagram, UK DevOps, or Claude DevOps m
 
 ## Purpose
 
-Use this guide when generating a **new funny image from scratch** based on a daily or batch-style **Claude DevOps market post**.
+Use this guide when generating a **new funny satirical image from scratch** based on a daily or batch-style **Claude DevOps market post**.
 
-The goal is to produce a **recognizable recurring series** of satirical images for social media that:
-
-- looks consistent across posts
-- is readable in feed previews of the social platforms
-- works on both desktop and mobile
+The goal is to produce a **recognizable recurring series identity** of daily satirical images for social media that:
+- looks consistent across posts in series
+- is readable in feed previews of the **social platforms**
+- works on both **desktop and mobile**
 - stays funny, sharp, professional, and public-safe
+- keep the composition **cleaner and slightly simpler**
+- use **minimal readable text**
+- double-check visible text for spelling and legibility
+- choose **one fresh visual metaphor** based on the strongest joke in the Claude post
+- do not recycle the same layout from earlier images
+- do not create a dense infographic / dashboard / table layout
 
 Target **social platforms** for the series:
 
 - LinkedIn
 - Instagram
+- X (Twitter)
 
 ---
 
@@ -61,20 +67,9 @@ It should feel hand-crafted, humorous, and memorable.
 
 ### 2. Image format requirements
 
-Use wide landscape format.
-
 Design primarily for social media feed preview.
 
-**Default target format:**
-
-- **1200 x 627 px**
-- landscape / wide composition
-- built for social media feed rendering first
-
 Avoid:
-
-- tall poster layouts
-- square-first thinking
 - important content touching the extreme top or bottom edges
 
 ### 3. Safe margins
@@ -82,7 +77,6 @@ Avoid:
 Keep all critical elements inside safe margins.
 
 Rules:
-
 - no essential text glued to the top edge
 - no essential text glued to the bottom edge
 - leave roughly **10-15% vertical breathing room**
@@ -93,11 +87,65 @@ Rules:
 Assume a large share of viewers will see the image on phones.
 
 That means:
-
 - headline must remain readable on mobile
 - tiny in-scene text should never carry the main joke
 - the image should still work if someone only glances at it for 1 second
 - central subject and central gag must be readable without zooming
+
+### 5. Multi-Platform Output (LinkedIn + X)
+
+For each Claude post, generate TWO image variants in a single request.
+
+#### Primary Variant (LinkedIn / Instagram)
+
+- Format: 1200 x 627 px (landscape / wide composition)
+- built for social media feed rendering first
+- Follow all rules in this document without simplification
+- This is the FULL version of the visual idea
+- Can include multiple supporting jokes and details as already defined above
+
+Target:
+
+- around **3 main visual jokes maximum**
+- one main focal joke
+- one secondary supporting joke
+- optionally one tertiary supporting element
+
+Avoid:
+
+- tall poster layouts
+- square-first thinking
+
+#### Secondary Variant (X / Twitter)
+
+Target:
+- Always select the SINGLE strongest idea from the post
+- optionally one secondary supporting element
+- Ignore additional jokes
+- Prefer bold, absurd, visual metaphors
+- If the image requires reading to understand, simplify further
+
+Rules:
+- Format: 1200 x 1500 px (portrait, 4:5)
+- MUST follow the SAME artistic style, tone, and identity as the primary variant
+- MUST be derived from the SAME core idea (not a different joke)
+
+Differences vs primary variant:
+- Reduce visual complexity by ~30–50%
+- Focus on ONE strongest visual element from the scene
+- Remove secondary jokes, panels, and dense background details
+- Keep composition bold, central, and instantly readable
+- Use minimal text (ideally one readable phrase)
+
+Important:
+- Do NOT redesign from scratch in a different style
+- Do NOT introduce a new concept unrelated to the primary variant
+- This is a SIMPLIFIED version, not an alternative interpretation
+
+If multiple ideas are present in the scene:
+- Select the most visually dominant / absurd / recognisable one
+- Keep it
+- Remove everything else aggressively
 
 ---
 
@@ -146,13 +194,6 @@ Preferred:
 ## Visual Complexity
 
 ### 1. Simpler is better
-
-Target:
-
-- around **3 main visual jokes maximum**
-- one main focal joke
-- one secondary supporting joke
-- optionally one tertiary supporting element
 
 Avoid:
 
@@ -230,7 +271,6 @@ Examples:
 Do not default to the same setup every time.
 
 Good metaphor families:
-
 - museum / gallery
 - airport departures board
 - trade fair / expo
@@ -259,7 +299,6 @@ Good metaphor families:
 - alphabet-soup café
 
 Avoid reusing:
-
 - the same flood / swamp / conveyor / desk composition again and again
 - the same exact recurring character look in the same corner
 
@@ -268,7 +307,6 @@ Avoid reusing:
 Pull only the most visually strong supporting details from the post.
 
 Examples:
-
 - duplicated recruiter posters
 - one glowing miracle role
 - “remote” next to Canary Wharf
@@ -287,7 +325,6 @@ Do not attempt to visualize every bullet from the post.
 ### Main character
 
 The central figure can vary:
-
 - tired DevOps engineer
 - robot analyst
 - office worker
@@ -296,7 +333,6 @@ The central figure can vary:
 - anthropomorphic system operator
 
 Rules:
-
 - vary appearance from image to image
 - do not reuse exactly the same face, hoodie, pose, headset, or corner placement repeatedly
 - keep expressions strong and readable
@@ -320,8 +356,8 @@ Can be stylized and funny, but should stay readable and not steal the whole imag
 
 The image must work in:
 
-- desktop feed card preview
 - mobile post view on social media apps
+- desktop feed card preview
 - profile activity grid / recent posts view
 
 ### Practical design implications
@@ -391,30 +427,7 @@ Before generating or approving an image, verify:
 - [ ] Would this still be readable in a LinkedIn/Instagram mobile feed without zooming?
 - [ ] Could 30-50% of small text/details be removed without weakening the joke?
 - [ ] If Diese appears, is the cat subtle and not distracting?
-- [ ] Does generated image have dimensions 1200 x 627 px?
-
-
----
-
-## Instruction Template for Future Chats
-
-Use this operational interpretation when the user says something like:
-
-> Generate a new image for today’s Claude post.
-
-Interpret that as:
-
-- fetch and read the latest GitHub version of this guide first
-- generate a **new satirical image from scratch**
-- use the **recurring series identity**
-- follow the **landscape 1200 x 627 feed-safe approach**
-- optimize for **mobile and desktop visibility**
-- keep the composition **cleaner and slightly simpler**
-- use **minimal readable text**
-- double-check visible text for spelling and legibility
-- choose **one fresh visual metaphor** based on the strongest joke in the Claude post
-- do not recycle the same layout from earlier images
-- do not create a dense infographic / dashboard / table layout
+- [ ] Have you generated TWO images: one with dimensions 1200 x 627 px, and another with dimensions 1200 x 1500 px?
 
 ---
 
@@ -423,7 +436,7 @@ Interpret that as:
 These are the most important rules to preserve:
 
 1. **Fetch and follow this guide from GitHub before generating**
-2. **Landscape 1200 x 627 style composition**
+2. **2 images generated:** 1) 1200 x 627 px and 2) 1200 x 1500 px
 3. **Headline and essential content inside safe margins**
 4. **Mobile-first readability**
 5. **Minimal readable text**
@@ -441,6 +454,6 @@ These are the most important rules to preserve:
 
 If a shorter reminder is needed, use this:
 
-> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from GitHub. Generate a new satirical image from scratch in the established vintage editorial-cartoon series style. Use a wide 1200 x 627 landscape composition optimized for LinkedIn and Instagram feed preview and mobile readability.
+> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from GitHub. Generate 2 new satirical images from scratch in the established vintage editorial-cartoon series style. Use a 1200 x 627 px composition optimized for LinkedIn and Instagram, and 1200 x 1500 optimized for X (Twitter) feed preview and mobile readability.
 
 Keep all important text inside safe margins, minimize in-scene text, double-check spelling, reduce clutter, and focus on one strong visual metaphor plus at most 2-3 main jokes. Preserve series identity, but do not reuse the same layout, character pose, or composition from earlier images. Do not create a dense infographic, dashboard, scorecard, or table-style image.
