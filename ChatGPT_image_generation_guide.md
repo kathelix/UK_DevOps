@@ -438,13 +438,10 @@ Adapt a Claude DevOps market post for X (Twitter), convert it into a **4-6 tweet
 
 Must feel like a payoff.
 
-Good examples:
-- “This is not a market.”
-- “No Kubernetes. Only Workflows™.”
-
 ### Output
 
 Return only the ready-to-post X thread, without explanations.
+Format - single markdown, with all tweets inside, each tweet starts with number for example "1/5 ..."
 
 ---
 
