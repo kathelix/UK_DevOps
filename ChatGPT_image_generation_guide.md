@@ -16,6 +16,8 @@ For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude D
 4. Not substitute a dense infographic, dashboard, table, or multi-card layout unless the guide is explicitly changed to allow that.
 5. If the file cannot be fetched, say so before generating and do not invent replacement rules.
 
+Critical: exact final pixel dimensions must always be verified after generation. The image model often returns approximate sizes. Always post-process the final asset to the required dimensions before delivery.
+
 ## Purpose
 
 Use this guide when generating a **new funny satirical image from scratch** based on a daily or batch-style **Claude DevOps market post**.
@@ -146,6 +148,63 @@ If multiple ideas are present in the scene:
 - Select the most visually dominant / absurd / recognisable one
 - Keep it
 - Remove everything else aggressively
+
+---
+
+## Mandatory export and dimension rules
+
+Pixel dimensions are hard production requirements, not suggestions.
+
+The image generator may produce approximate aspect ratios, so ChatGPT must not assume the generated image has the correct size.
+
+For every generated image:
+
+1. Generate the image in the closest available aspect ratio.
+2. Check the actual pixel dimensions of the generated image.
+3. If the dimensions are not exactly correct, resize/crop/pad the image to the required final dimensions.
+4. Only provide the final corrected file to the user.
+5. Do not claim the image is ready until the exported file has been verified.
+
+Required final exports:
+
+- LinkedIn / Instagram primary landscape: exactly `1200 x 627 px`
+- X / Twitter secondary portrait: exactly `1200 x 1500 px`
+
+The final delivered asset must match these dimensions exactly, even if the generated preview does not.
+
+Never rely on phrases like “wide”, “landscape”, “portrait”, “4:5”, or “close to” as substitutes for exact pixel dimensions.
+
+---
+
+## Aspect ratio and composition safety
+
+Final dimensions are hard requirements, but they must not be achieved by destructive cropping.
+
+For the primary LinkedIn / Instagram image, the scene must be composed as a wide horizontal poster from the start, targeting `1200 x 627 px`.
+
+For the X / Twitter image, the scene must be composed as a portrait poster from the start, targeting `1200 x 1500 px`.
+
+Do not generate a square or mismatched image and then crop away important content to force the required dimensions.
+
+All important elements must stay inside safe margins:
+- character faces
+- speech bubbles
+- key props
+- readable captions
+- logos or labels
+- the main visual joke
+
+Use approximately 8-10% safe margin on all edges.
+
+Post-processing rules:
+- Prefer non-destructive resize when aspect ratio is correct.
+- Prefer padding / background extension when small adjustment is needed.
+- Avoid cropping important elements.
+- If exact export would require cutting meaningful content, regenerate instead.
+
+The final asset must satisfy both:
+1. exact pixel dimensions
+2. intact composition with no important elements removed
 
 ---
 
