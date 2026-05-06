@@ -128,7 +128,7 @@ Target:
 - If the image requires reading to understand, simplify further
 
 Rules:
-- Format: 1200 x 1500 px (portrait, 4:5)
+- STRICT CANVAS: 1200 x 1500 px portrait only. Full-bleed vertical composition. Do not generate landscape. Do not generate square. Do not place a landscape image inside a portrait canvas. Do not use blurred background padding. Compose vertically from scratch.
 - MUST follow the SAME artistic style, tone, and identity as the primary variant
 - MUST be derived from the SAME core idea (not a different joke)
 
