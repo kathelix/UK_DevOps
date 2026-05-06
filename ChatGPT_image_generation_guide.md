@@ -6,15 +6,14 @@ This file is the **primary source of truth** for all image generation in the `Cl
 
 For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude DevOps market image, ChatGPT must:
 
-1. Fetch and read the latest version of this file from the live GitHub repository `kathelix/claude_on_devops` on the `main` branch before generating.
-2. Follow this guide even when the user only says something short, such as:
+1. Follow this guide even when the user only says something short, such as:
    - “Generate new image”
    - “Generate image for today’s post”
    - “Create LinkedIn image”
    - “Generate new image for today’s Claude post”
-3. Treat this file as more authoritative than memory, previous chat behaviour, uploaded stale copies, or generic image-generation habits.
-4. Not substitute a dense infographic, dashboard, table, or multi-card layout unless the guide is explicitly changed to allow that.
-5. If the file cannot be fetched, say so before generating and do not invent replacement rules.
+2. Treat this file as more authoritative than memory, previous chat behaviour, uploaded stale copies, or generic image-generation habits.
+3. Not substitute a dense infographic, dashboard, table, or multi-card layout unless the guide is explicitly changed to allow that.
+4. If the file cannot be fetched, say so before generating and do not invent replacement rules.
 
 Critical: exact final pixel dimensions must always be verified after generation. The image model often returns approximate sizes. Always post-process the final asset to the required dimensions before delivery.
 

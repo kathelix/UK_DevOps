@@ -252,3 +252,5 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | DevOps Engineer Outside IR35 | Sanderson | Contract | £550–£575/day Outside IR35 | Azure/Windows-heavy stack | 2026-04-29 |
 | Senior DevOps Engineer (FinTech) | MCS Group (Belfast) | Permanent | Not disclosed | Listing no longer available at review time | 2026-04-30 |
 | Senior DevOps Engineer | Oscar Technology (via Reed) | Contract | £680–£710/day Inside IR35 | Fully on-site West Midlands; Inside IR35 | 2026-05-02 |
+| Senior DevOps Engineer | Humanoid (London robotics) | Permanent | Not disclosed | Permanent onsite | 2026-05-03 |
+| Senior DevOps Engineer | Norton Blake | Contract | Not disclosed | No rate, IR35, or remote status disclosed; recruiter's prior listings trend Inside IR35 | 2026-05-03 |
