@@ -4,9 +4,10 @@
 
 This file is the **primary source of truth** for all image generation in the `Claude on DevOps market` / `UK DevOps` social media series.
 
-For any request to generate a LinkedIn, Instagram, UK DevOps, or Claude DevOps market image, ChatGPT must:
+For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude DevOps market image, ChatGPT must:
 
 1. Follow this guide even when the user only says something short, such as:
+   - “New image”
    - “Generate new image”
    - “Generate image for today’s post”
    - “Create LinkedIn image”
@@ -17,19 +18,27 @@ For any request to generate a LinkedIn, Instagram, UK DevOps, or Claude DevOps m
 
 ## Purpose
 
-Use this guide when generating a **new funny image from scratch** based on a daily or batch-style **Claude DevOps market post**.
+Use this guide when generating a **new funny satirical image from scratch** based on a daily or batch-style **Claude DevOps market post**.
 
-The goal is to produce a **recognizable recurring series** of satirical images for social media that:
-
-- looks consistent across posts
-- is readable in feed previews of the social platforms
-- works on both desktop and mobile
+The goal is to produce a **recognizable recurring series identity** of daily satirical images for social media that:
+- looks consistent across posts in series
+- works on both **mobile and desktop**
+- is readable in feed previews of the **social platforms**
 - stays funny, sharp, professional, and public-safe
+- keep the composition **cleaner and slightly simpler**
+- use **minimal readable text**
+- double-check visible text for spelling and legibility
+- choose **one fresh visual metaphor** based on the strongest joke in the Claude post
+- do not recycle the same layout from earlier images
+- do not create a dense infographic / dashboard / table layout
 
 Target **social platforms** for the series:
 
 - LinkedIn
 - Instagram
+- X (Twitter)
+
+Critical: exact final pixel dimensions must always be verified after generation. The image model often returns approximate sizes. Always post-process the final asset to the required dimensions before delivery.
 
 ---
 
@@ -41,7 +50,7 @@ Every image in this series should preserve the same broad identity:
 - textured illustrated look
 - warm muted colours, but with enough contrast and occasional brighter accents
 - expressive frustrated / tired / bemused main character when relevant
-- polished, funny, slightly absurd, social media safe
+- polished, funny, satirical, slightly absurd, social media safe
 - visually recognizable as part of the same recurring series
 
 Do **not** make the series visually sterile or corporate.
@@ -60,20 +69,9 @@ It should feel hand-crafted, humorous, and memorable.
 
 ### 2. Image format requirements
 
-Use wide landscape format.
-
 Design primarily for social media feed preview.
 
-**Default target format:**
-
-- **1200 x 627 px**
-- landscape / wide composition
-- built for social media feed rendering first
-
 Avoid:
-
-- tall poster layouts
-- square-first thinking
 - important content touching the extreme top or bottom edges
 
 ### 3. Safe margins
@@ -81,7 +79,6 @@ Avoid:
 Keep all critical elements inside safe margins.
 
 Rules:
-
 - no essential text glued to the top edge
 - no essential text glued to the bottom edge
 - leave roughly **10-15% vertical breathing room**
@@ -92,11 +89,122 @@ Rules:
 Assume a large share of viewers will see the image on phones.
 
 That means:
-
 - headline must remain readable on mobile
 - tiny in-scene text should never carry the main joke
 - the image should still work if someone only glances at it for 1 second
 - central subject and central gag must be readable without zooming
+
+### 5. Multi-Platform Output (LinkedIn + X)
+
+For each Claude post, generate TWO image variants in a single request.
+
+#### Primary Variant (LinkedIn / Instagram)
+
+- Format: 1200 x 627 px (landscape / wide composition)
+- built for social media feed rendering first
+- Follow all rules in this document without simplification
+- This is the FULL version of the visual idea
+- Can include multiple supporting jokes and details as already defined above
+
+Target:
+
+- around **3 main visual jokes maximum**
+- one main focal joke
+- one secondary supporting joke
+- optionally one tertiary supporting element
+
+Avoid:
+
+- tall poster layouts
+- square-first thinking
+
+#### Secondary Variant (X / Twitter)
+
+Target:
+- Always select the SINGLE strongest idea from the post
+- optionally one secondary supporting element
+- Ignore additional jokes
+- Prefer bold, absurd, visual metaphors
+- If the image requires reading to understand, simplify further
+
+Rules:
+- Format: 1200 x 1500 px (portrait, 4:5)
+- MUST follow the SAME artistic style, tone, and identity as the primary variant
+- MUST be derived from the SAME core idea (not a different joke)
+
+Differences vs primary variant:
+- Reduce visual complexity by ~30–50%
+- Focus on ONE strongest visual element from the scene
+- Remove secondary jokes, panels, and dense background details
+- Keep composition bold, central, and instantly readable
+- Use minimal text (ideally one readable phrase)
+
+Important:
+- Do NOT redesign from scratch in a different style
+- Do NOT introduce a new concept unrelated to the primary variant
+- This is a SIMPLIFIED version, not an alternative interpretation
+
+If multiple ideas are present in the scene:
+- Select the most visually dominant / absurd / recognisable one
+- Keep it
+- Remove everything else aggressively
+
+---
+
+## Mandatory export and dimension rules
+
+Pixel dimensions are hard production requirements, not suggestions.
+
+The image generator may produce approximate aspect ratios, so ChatGPT must not assume the generated image has the correct size.
+
+For every generated image:
+
+1. Generate the image in the closest available aspect ratio.
+2. Check the actual pixel dimensions of the generated image.
+3. If the dimensions are not exactly correct, resize/crop/pad the image to the required final dimensions.
+4. Only provide the final corrected file to the user.
+5. Do not claim the image is ready until the exported file has been verified.
+
+Required final exports:
+
+- LinkedIn / Instagram primary landscape: exactly `1200 x 627 px`
+- X / Twitter secondary portrait: exactly `1200 x 1500 px`
+
+The final delivered asset must match these dimensions exactly, even if the generated preview does not.
+
+Never rely on phrases like “wide”, “landscape”, “portrait”, “4:5”, or “close to” as substitutes for exact pixel dimensions.
+
+---
+
+## Aspect ratio and composition safety
+
+Final dimensions are hard requirements, but they must not be achieved by destructive cropping.
+
+For the primary LinkedIn / Instagram image, the scene must be composed as a wide horizontal poster from the start, targeting `1200 x 627 px`.
+
+For the X / Twitter image, the scene must be composed as a portrait poster from the start, targeting `1200 x 1500 px`.
+
+Do not generate a square or mismatched image and then crop away important content to force the required dimensions.
+
+All important elements must stay inside safe margins:
+- character faces
+- speech bubbles
+- key props
+- readable captions
+- logos or labels
+- the main visual joke
+
+Use approximately 8-10% safe margin on all edges.
+
+Post-processing rules:
+- Prefer non-destructive resize when aspect ratio is correct.
+- Prefer padding / background extension when small adjustment is needed.
+- Avoid cropping important elements.
+- If exact export would require cutting meaningful content, regenerate instead.
+
+The final asset must satisfy both:
+1. exact pixel dimensions
+2. intact composition with no important elements removed
 
 ---
 
@@ -145,13 +253,6 @@ Preferred:
 ## Visual Complexity
 
 ### 1. Simpler is better
-
-Target:
-
-- around **3 main visual jokes maximum**
-- one main focal joke
-- one secondary supporting joke
-- optionally one tertiary supporting element
 
 Avoid:
 
@@ -229,7 +330,6 @@ Examples:
 Do not default to the same setup every time.
 
 Good metaphor families:
-
 - museum / gallery
 - airport departures board
 - trade fair / expo
@@ -258,7 +358,6 @@ Good metaphor families:
 - alphabet-soup café
 
 Avoid reusing:
-
 - the same flood / swamp / conveyor / desk composition again and again
 - the same exact recurring character look in the same corner
 
@@ -267,7 +366,6 @@ Avoid reusing:
 Pull only the most visually strong supporting details from the post.
 
 Examples:
-
 - duplicated recruiter posters
 - one glowing miracle role
 - “remote” next to Canary Wharf
@@ -286,7 +384,6 @@ Do not attempt to visualize every bullet from the post.
 ### Main character
 
 The central figure can vary:
-
 - tired DevOps engineer
 - robot analyst
 - office worker
@@ -295,7 +392,6 @@ The central figure can vary:
 - anthropomorphic system operator
 
 Rules:
-
 - vary appearance from image to image
 - do not reuse exactly the same face, hoodie, pose, headset, or corner placement repeatedly
 - keep expressions strong and readable
@@ -319,8 +415,8 @@ Can be stylized and funny, but should stay readable and not steal the whole imag
 
 The image must work in:
 
-- desktop feed card preview
 - mobile post view on social media apps
+- desktop feed card preview
 - profile activity grid / recent posts view
 
 ### Practical design implications
@@ -369,11 +465,49 @@ Only use them when they are relevant to that specific Claude post.
 
 ---
 
+## X Thread Generation
+
+Adapt a Claude DevOps market post for X (Twitter), convert it into a **4-6 tweet thread**.
+
+### Goals
+
+- Mobile-first readability
+- Strong hook
+- Short, punchy tweets
+- Same humour and sarcasm as the Claude post
+
+### Structure
+
+1. Tweet 1 - hook / main absurdity
+2. Tweet 2 - context
+3. Tweet 3 - strongest example
+4. Tweet 4 - secondary example
+5. Final tweet - punchline / conclusion
+
+### Rules
+
+- Target 70-150 characters per tweet
+- Max ~220 characters only if necessary
+- Use short lines and line breaks
+- One idea per tweet
+- Do not copy LinkedIn text directly
+- Cut repetition, filler, and long explanations
+
+### Final tweet
+
+Must feel like a payoff.
+
+### Output
+
+Return only the ready-to-post X thread, without explanations.
+Format - single markdown, with all tweets inside, each tweet starts with number for example "1/5 ..."
+
+---
+
 ## Quality Checklist Before Finalizing
 
-Before generating or approving an image, verify:
+Before generating or approving images, verify:
 
-- [ ] Did I fetch and read the latest GitHub version of this guide first?
 - [ ] Is the image based on one strong visual metaphor, not a dense infographic?
 - [ ] Is it landscape and social media feed friendly?
 - [ ] Is the headline fully readable?
@@ -390,29 +524,8 @@ Before generating or approving an image, verify:
 - [ ] Would this still be readable in a LinkedIn/Instagram mobile feed without zooming?
 - [ ] Could 30-50% of small text/details be removed without weakening the joke?
 - [ ] If Diese appears, is the cat subtle and not distracting?
-- [ ] Does generated image have dimensions 1200 x 627 px?
-
-
----
-
-## Instruction Template for Future Chats
-
-Use this operational interpretation when the user says something like:
-
-> Generate a new image for today’s Claude post.
-
-Interpret that as:
-
-- generate a **new satirical image from scratch**
-- use the **recurring series identity**
-- follow the **landscape 1200 x 627 feed-safe approach**
-- optimize for **mobile and desktop visibility**
-- keep the composition **cleaner and slightly simpler**
-- use **minimal readable text**
-- double-check visible text for spelling and legibility
-- choose **one fresh visual metaphor** based on the strongest joke in the Claude post
-- do not recycle the same layout from earlier images
-- do not create a dense infographic / dashboard / table layout
+- [ ] Have you generated TWO images: one with dimensions 1200 x 627 px, and another with dimensions 1200 x 1500 px?
+- [ ] Have you generated X Thread tweets based on Claude Post text?
 
 ---
 
@@ -420,17 +533,17 @@ Interpret that as:
 
 These are the most important rules to preserve:
 
-2. **Landscape 1200 x 627 style composition**
-3. **Headline and essential content inside safe margins**
-4. **Mobile-first readability**
-5. **Minimal readable text**
-6. **Correct spelling in the image**
-7. **Fresh composition each time**
-8. **Same series identity, not same scene**
-9. **Cleaner, simpler, faster to read**
-10. **Social media safe humor**
-11. **Main joke first, details second**
-12. **No dense infographic / table / dashboard layout unless explicitly requested**
+1. **2 images generated:** 1) 1200 x 627 px, and 2) 1200 x 1500 px
+2. **Headline and essential content inside safe margins**
+3. **Mobile-first readability**
+4. **Minimal readable text**
+5. **Correct spelling in the image**
+6. **Fresh composition each time**
+7. **Same series identity, not same scene**
+8. **Cleaner, simpler, faster to read**
+9. **Social media safe humor**
+10. **Main joke first, details second**
+11. **No dense infographic / table / dashboard layout unless explicitly requested**
 
 ---
 
@@ -438,6 +551,6 @@ These are the most important rules to preserve:
 
 If a shorter reminder is needed, use this:
 
-> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from GitHub. Generate a new satirical image from scratch in the established vintage editorial-cartoon series style. Use a wide 1200 x 627 landscape composition optimized for LinkedIn and Instagram feed preview and mobile readability.
+> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from GitHub. Generate 2 new satirical images from scratch in the established vintage editorial-cartoon series style. Use a 1200 x 627 px composition optimized for LinkedIn and Instagram, and 1200 x 1500 optimized for X (Twitter) feed preview and mobile readability.
 
 Keep all important text inside safe margins, minimize in-scene text, double-check spelling, reduce clutter, and focus on one strong visual metaphor plus at most 2-3 main jokes. Preserve series identity, but do not reuse the same layout, character pose, or composition from earlier images. Do not create a dense infographic, dashboard, scorecard, or table-style image.
