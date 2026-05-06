@@ -7,6 +7,7 @@ This file is the **primary source of truth** for all image generation in the `Cl
 For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude DevOps market image, ChatGPT must:
 
 1. Follow this guide even when the user only says something short, such as:
+   - “New image”
    - “Generate new image”
    - “Generate image for today’s post”
    - “Create LinkedIn image”
@@ -15,16 +16,14 @@ For any request to generate a LinkedIn, Instagram, x.com, UK DevOps, or Claude D
 3. Not substitute a dense infographic, dashboard, table, or multi-card layout unless the guide is explicitly changed to allow that.
 4. If the file cannot be fetched, say so before generating and do not invent replacement rules.
 
-Critical: exact final pixel dimensions must always be verified after generation. The image model often returns approximate sizes. Always post-process the final asset to the required dimensions before delivery.
-
 ## Purpose
 
 Use this guide when generating a **new funny satirical image from scratch** based on a daily or batch-style **Claude DevOps market post**.
 
 The goal is to produce a **recognizable recurring series identity** of daily satirical images for social media that:
 - looks consistent across posts in series
+- works on both **mobile and desktop**
 - is readable in feed previews of the **social platforms**
-- works on both **desktop and mobile**
 - stays funny, sharp, professional, and public-safe
 - keep the composition **cleaner and slightly simpler**
 - use **minimal readable text**
@@ -39,6 +38,8 @@ Target **social platforms** for the series:
 - Instagram
 - X (Twitter)
 
+Critical: exact final pixel dimensions must always be verified after generation. The image model often returns approximate sizes. Always post-process the final asset to the required dimensions before delivery.
+
 ---
 
 ## Core Creative Identity
@@ -49,7 +50,7 @@ Every image in this series should preserve the same broad identity:
 - textured illustrated look
 - warm muted colours, but with enough contrast and occasional brighter accents
 - expressive frustrated / tired / bemused main character when relevant
-- polished, funny, slightly absurd, social media safe
+- polished, funny, satirical, slightly absurd, social media safe
 - visually recognizable as part of the same recurring series
 
 Do **not** make the series visually sterile or corporate.
@@ -507,7 +508,6 @@ Format - single markdown, with all tweets inside, each tweet starts with number 
 
 Before generating or approving images, verify:
 
-- [ ] Did I fetch and read the latest GitHub version of this guide first?
 - [ ] Is the image based on one strong visual metaphor, not a dense infographic?
 - [ ] Is it landscape and social media feed friendly?
 - [ ] Is the headline fully readable?
@@ -533,18 +533,17 @@ Before generating or approving images, verify:
 
 These are the most important rules to preserve:
 
-1. **Fetch and follow this guide from GitHub before generating**
-2. **2 images generated:** 1) 1200 x 627 px and 2) 1200 x 1500 px
-3. **Headline and essential content inside safe margins**
-4. **Mobile-first readability**
-5. **Minimal readable text**
-6. **Correct spelling in the image**
-7. **Fresh composition each time**
-8. **Same series identity, not same scene**
-9. **Cleaner, simpler, faster to read**
-10. **Social media safe humor**
-11. **Main joke first, details second**
-12. **No dense infographic / table / dashboard layout unless explicitly requested**
+1. **2 images generated:** 1) 1200 x 627 px, and 2) 1200 x 1500 px
+2. **Headline and essential content inside safe margins**
+3. **Mobile-first readability**
+4. **Minimal readable text**
+5. **Correct spelling in the image**
+6. **Fresh composition each time**
+7. **Same series identity, not same scene**
+8. **Cleaner, simpler, faster to read**
+9. **Social media safe humor**
+10. **Main joke first, details second**
+11. **No dense infographic / table / dashboard layout unless explicitly requested**
 
 ---
 
