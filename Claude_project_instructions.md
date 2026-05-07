@@ -239,6 +239,7 @@ When the user names roles to add, output a single ready-to-paste markdown table 
 | Principal DevOps Engineer | Adepta Partners | Permanent | £125k + bonus | Applied | 2026-04-17 |
 | Lead DevOps Engineer (UK gov scientific org) | Tenth Revolution Group / Jefferson Frank | Contract | £650/day Outside IR35 | Applied | 2026-04-17 |
 | Infrastructure Engineer | Tailscale (via Welcome to the Jungle) | Permanent | £129k–£161k | Applied | 2026-04-30 |
+| Lead AI DevOps Engineer | Lorien | Contract | Salary negotiable | Applied | 2026-05-07 |
 
 ### Reviewed - Not Applied (30-day skip window)
 
@@ -254,3 +255,5 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior DevOps Engineer | Oscar Technology (via Reed) | Contract | £680–£710/day Inside IR35 | Fully on-site West Midlands; Inside IR35 | 2026-05-02 |
 | Senior DevOps Engineer | Humanoid (London robotics) | Permanent | Not disclosed | Permanent onsite | 2026-05-03 |
 | Senior DevOps Engineer | Norton Blake | Contract | Not disclosed | No rate, IR35, or remote status disclosed; recruiter's prior listings trend Inside IR35 | 2026-05-03 |
+| Lead Platform Engineer | Lorien | Contract | Not disclosed | Listing inaccessible at review / likely filled | 2026-05-07 |
+| Senior SRE (DevOps, Remote) | EMBL-EBI | Permanent | £43,015–£79,798/year | Below £120k threshold; "based on experience and family" pay scale | 2026-05-07 |
