@@ -257,3 +257,4 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior DevOps Engineer | Norton Blake | Contract | Not disclosed | No rate, IR35, or remote status disclosed; recruiter's prior listings trend Inside IR35 | 2026-05-03 |
 | Lead Platform Engineer | Lorien | Contract | Not disclosed | Listing inaccessible at review / likely filled | 2026-05-07 |
 | Senior SRE (DevOps, Remote) | EMBL-EBI | Permanent | £43,015–£79,798/year | Below £120k threshold; "based on experience and family" pay scale | 2026-05-07 |
+| Head of DevOps | M Group | Permanent | Not disclosed | Permanent and onsite (Stevenage HQ) | 2026-05-08 |
