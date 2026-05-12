@@ -259,3 +259,5 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior SRE (DevOps, Remote) | EMBL-EBI | Permanent | £43,015–£79,798/year | Below £120k threshold; "based on experience and family" pay scale | 2026-05-07 |
 | Head of DevOps | M Group | Permanent | Not disclosed | Permanent and onsite (Stevenage HQ) | 2026-05-08 |
 | Principal DevOps Engineer (Freelance) | Updraft (via Indeed) | Contract | Day rate not disclosed, Outside IR35 | Listing expired on Indeed at review time | 2026-05-10 |
+| Senior Platform Engineer | Lorien | Contract | Salary negotiable | Doesn't fit (salary/remote unconfirmed; recruiter pattern not promising) | 2026-05-12 |
+| Senior AI-Enabled DevOps Engineer | Lorien | Permanent | Competitive | Doesn't fit (closing date already past; salary/remote unconfirmed) | 2026-05-12 |
