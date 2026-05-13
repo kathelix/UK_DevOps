@@ -9,13 +9,121 @@ For any request to generate a LinkedIn, Instagram, X / Twitter, UK DevOps, or Cl
 1. Follow this guide even when the user gives a short instruction such as:
    - "New image"
    - "Generate new image"
-   - "Generate image for today’s post"
+   - "Generate image for today's post"
    - "Create LinkedIn image"
-   - "Generate new image for today’s Claude post"
-2. Treat this file as more authoritative than memory, previous chat behaviour, stale uploads, generic image-generation habits, or the model’s default visual style.
-3. Never substitute a dense infographic, dashboard, table, collage, comic strip, or multi-card layout unless the user explicitly asks for that.
-4. If this file cannot be fetched or read, say so before generating and do not invent replacement rules.
-5. Deliver final platform assets only after their exact pixel dimensions have been verified or corrected.
+   - "Generate new image for today's Claude post"
+2. Treat this file as more authoritative than memory, previous chat behaviour, stale uploads, generic image-generation habits, or the model's default visual style.
+3. Follow the **4-phase workflow with explicit user approval gates**.
+4. Never substitute a dense infographic, dashboard, table, collage, comic strip, or multi-card layout unless the user explicitly asks for that.
+5. If this file cannot be fetched or read, say so before generating and do not invent replacement rules.
+6. Deliver final platform assets only after their exact pixel dimensions have been verified or corrected.
+
+---
+
+## The 4-phase workflow - mandatory
+
+The UK DevOps image process must be split into four separate phases.
+
+Do **not** merge these phases unless the user explicitly asks to skip the workflow.
+
+### Phase 1 - Analyse Claude's post and produce prompts only
+
+Input:
+
+- Claude's daily DevOps market post text.
+
+Output:
+
+1. The chosen **main joke**.
+2. The chosen **visual metaphor**.
+3. A short explanation of why this metaphor works.
+4. The exact **LinkedIn / Instagram landscape image prompt**.
+5. The exact **X / Twitter portrait image prompt**.
+
+Hard rule:
+
+- **Do not generate any image during Phase 1.**
+- Stop after giving the two prompts.
+- Ask the user to approve, modify, or paste back the prompt for Phase 2.
+
+Approval gate:
+
+- The user must explicitly approve the concept or paste the Phase 2 prompt before image generation begins.
+
+### Phase 2 - Generate LinkedIn / Instagram landscape image
+
+Input:
+
+- User-approved LinkedIn / Instagram prompt.
+
+Action:
+
+1. Generate the LinkedIn / Instagram image.
+2. Verify the generated file dimensions.
+3. If the generated file is not exactly `1200 x 627 px`, create a corrected export.
+4. Deliver only the final corrected `1200 x 627 px` asset.
+
+Hard rules:
+
+- The image must be a **native landscape composition**.
+- Do not create a portrait image and crop it into landscape.
+- Do not continue to X image generation in this phase.
+
+Approval gate:
+
+- The user must approve the LinkedIn / Instagram image before Phase 3 begins.
+
+### Phase 3 - Generate X / Twitter portrait image
+
+Input:
+
+- User-approved X / Twitter prompt.
+
+Action:
+
+1. Generate a **native portrait composition** for X.
+2. Verify the generated file dimensions.
+3. If the generated file is not exactly `1200 x 1500 px`, create a corrected export.
+4. Deliver only the final corrected `1200 x 1500 px` asset.
+
+Hard rules:
+
+- The X image must be regenerated vertically from scratch.
+- The X image must keep the same joke, characters, props, and style as the approved LinkedIn / Instagram concept.
+- The X image must be vertically recomposed, not merely adapted by canvas tricks.
+- Never place the landscape image inside a portrait canvas.
+- Never use blurred top/bottom filler.
+- Never use decorative padding to force the landscape image into portrait.
+- Resize/crop only after native portrait generation, and only if it does not damage the composition.
+
+Approval gate:
+
+- The user must approve the X image before Phase 4 begins.
+
+### Phase 4 - Generate X / Twitter thread
+
+Input:
+
+- User asks for X / Twitter thread.
+
+Output:
+
+- Ready-to-post tweets.
+
+Default length:
+
+- Use **2 tweets by default**, unless the user explicitly requests another number.
+
+Reason:
+
+- Shorter threads may be less likely to be hidden, throttled, or partially shown by X.
+
+Hard rules:
+
+- Keep the thread lightweight.
+- Do not repeat the whole LinkedIn post.
+- Preserve the main joke and one supporting absurdity.
+- Return only the ready-to-post tweets unless the user asks for commentary.
 
 ---
 
@@ -70,7 +178,7 @@ Critical: exact final pixel dimensions must always be verified after generation.
 
 ## Mandatory working method before image generation
 
-Before calling the image generator, ChatGPT must silently build a short internal image brief using this structure:
+During Phase 1, ChatGPT must build an image brief using this structure:
 
 1. **Main joke**
    - Pick ONE strongest joke from the Claude post.
@@ -141,7 +249,7 @@ Avoid both extremes.
 ### Too childish - avoid
 
 - toy-like cartoon
-- children’s book style
+- children's book style
 - overly rounded characters
 - flat vector mascot art
 - theme-park clipart
@@ -190,16 +298,18 @@ Not allowed:
 - comparison tables
 - separate framed mini-scenes
 - multiple unrelated locations in the same image
-- “five jokes in five areas” composition
+- "five jokes in five areas" composition
 
 The image may contain several props or signs, but they must all belong to the same physical scene.
 
 If the concept cannot fit into one scene, simplify the concept rather than adding panels.
 
-### 2. Always generate from scratch
+### 2. Always generate from scratch per platform
 
-- Do not reuse the previous composition.
-- Do not repeat the same exact character pose, same exact human or robot, same exact desk angle, or same scene layout.
+- Generate LinkedIn / Instagram as a native landscape scene.
+- Generate X / Twitter as a native portrait scene.
+- Do not reuse the landscape image as the base for X.
+- Do not place one platform image inside another platform's canvas.
 - Keep the series identity, but vary the scene and metaphor each time.
 
 ### 3. Feed-first design
@@ -241,18 +351,6 @@ That means:
 ---
 
 ## Platform variants
-
-For a new Claude post, the normal workflow is:
-
-1. Generate the LinkedIn / Instagram version first.
-2. Verify and export exactly 1200 x 627 px.
-3. After the user approves the concept, generate the X / Twitter version using the same concept.
-4. Recompose the X version vertically from scratch.
-5. Verify and export exactly 1200 x 1500 px.
-
-Do not generate both platform variants simultaneously unless the user explicitly asks for both at once.
-
-Reason: the LinkedIn version validates the main visual concept first. The X version should adapt the approved concept, not invent a new one.
 
 ### LinkedIn / Instagram variant
 
@@ -331,7 +429,7 @@ ChatGPT must never deliver the raw image-generator preview as the final asset un
 
 For every image request:
 
-1. Generate the image in the closest available composition.
+1. Generate the image in the required native platform composition.
 2. Inspect the generated file dimensions.
 3. If the file is not exactly the required size, create a corrected export:
    - LinkedIn / Instagram: exactly `1200 x 627 px`
@@ -341,13 +439,13 @@ For every image request:
 
 The user should not need to detect dimension errors manually.
 
-Never rely on phrases like “wide”, “landscape”, “portrait”, “4:5”, or “close to” as substitutes for exact pixel dimensions.
+Never rely on phrases like "wide", "landscape", "portrait", "4:5", or "close to" as substitutes for exact pixel dimensions.
 
 ---
 
 ## Aspect ratio and composition safety
 
-Final dimensions are hard requirements, but they must not be achieved by destructive cropping.
+Final dimensions are hard requirements, but they must not be achieved by destructive cropping or platform-in-platform padding.
 
 For the LinkedIn / Instagram image, the scene must be composed as a wide horizontal poster from the start, targeting `1200 x 627 px`.
 
@@ -369,8 +467,9 @@ Use approximately 8-10% safe margin on all edges.
 Post-processing rules:
 
 - Prefer non-destructive resize when aspect ratio is correct.
-- Prefer padding / background extension when a small adjustment is needed.
-- Avoid cropping important elements.
+- Prefer a small centre crop only when it does not remove important content.
+- Never use blurred top/bottom filler for X.
+- Never place a landscape image into a portrait canvas for X.
 - If exact export would require cutting meaningful content, regenerate instead.
 
 The final asset must satisfy both:
@@ -459,7 +558,7 @@ Every image should have this visual hierarchy:
 4. Supporting detail
 5. Optional background texture
 
-If the viewer’s eye does not know where to go first, the image is too busy.
+If the viewer's eye does not know where to go first, the image is too busy.
 
 ---
 
@@ -515,6 +614,7 @@ Examples:
 - SC clearance everywhere
 - salary mismatch by region
 - job title inflation / deflation
+- the same job posted across many cities
 
 ### Step 2: Choose one fresh visual metaphor
 
@@ -552,30 +652,25 @@ Good metaphor families:
 - medieval quest / role-playing guild
 - job-market casino
 - recruitment zoo
+- duplicated office / cubicle diorama
 
 Avoid reusing:
 
 - the same flood / swamp / conveyor / desk composition again and again
 - the same exact recurring character look in the same corner
-- the same “wall of job ads” unless the new joke demands it
+- the same "wall of job ads" unless the new joke demands it
 
-### Step 3: Keep only the best supporting details
+### Special metaphor rule: same role across many cities
 
-Pull only the most visually strong supporting details from the post.
+When the Claude post is about the same role being posted across many cities, the strongest visual metaphor is usually:
 
-Examples:
+- a duplicated office / cubicle diorama
+- identical engineers
+- identical desks
+- identical job cards
+- different city signs
 
-- duplicated recruiter posters
-- one glowing miracle role
-- “remote” next to Canary Wharf
-- stacks of SC-cleared notices
-- one great recruiter label
-- one highlighted rate like `£650/day Outside IR35`
-- one FinTech role duplicated via many recruiters
-- a single large `ACTIVE SC REQUIRED` barrier
-- a salary tag that visibly contradicts the seniority
-
-Do not attempt to visualize every bullet from the post.
+A map can work, but repetition is usually funnier and clearer than geography alone.
 
 ---
 
@@ -620,77 +715,48 @@ Recruiters and side characters can be stylized and funny, but should stay readab
 
 ---
 
-## Social media performance rules
+## Mandatory Phase 1 output template
 
-### Feed-first design
+When the user provides Claude's post text and asks to work on today's post, answer with this structure and stop:
 
-The image must work in:
+```markdown
+## Phase 1 - Concept
 
-- mobile post view on social media apps
-- desktop feed card preview
-- profile activity grid / recent posts view
+### Main joke
+[one-sentence summary]
 
-### Practical design implications
+### Best visual metaphor
+[one-sentence metaphor]
 
-- headline must be visible in preview
-- main subject should remain clear when scaled down
-- avoid essential details at outer edges
-- avoid micro captions that disappear in the activity grid
-- the post should still be understandable when shown small
+### Why this works
+[brief explanation]
 
----
+### Prompt 1 - LinkedIn / Instagram landscape
+```text
+[complete prompt for 1200 x 627]
+```
 
-## Preferred reusable structure
+### Prompt 2 - X / Twitter portrait
+```text
+[complete prompt for 1200 x 1500]
+```
 
-A strong default formula for this series is:
+Approve the concept or paste Prompt 1 back when ready for Phase 2.
+```
 
-1. Top headline
-2. One central visual metaphor
-3. One clear emotional focal point
-4. One or two large readable labels or highlighted items
-5. Minimal tiny text
-6. Warm textured editorial cartoon style
-
----
-
-## Text and naming examples
-
-The top line usually follows the pattern:
-
-- `Claude on DevOps market: ...`
-
-But the exact caption should be based on the daily post.
-
-Supporting readable labels can include things like:
-
-- `Outside IR35`
-- `Remote`
-- `SC required`
-- `Active SC only`
-- `£650/day Outside IR35`
-- `Canary Wharf`
-- `BPSS`
-- `Principal DevOps Engineer`
-- `Fully Remote UK`
-- `Inside IR35`
-- `Senior Platform Engineer`
-- `WFH`
-
-Only use them when they are relevant to that specific Claude post.
-
-Prefer short labels over long sentences inside the image.
+Do not call the image generator in this phase.
 
 ---
 
 ## Mandatory image prompt template
 
-When generating a UK DevOps image, ChatGPT must internally use a prompt following this structure:
+When creating the two prompts in Phase 1, use this structure:
 
 ```text
-Create ONE single editorial cartoon scene.
+Create ONE single satirical editorial cartoon scene.
 
 Platform:
-[LinkedIn/Instagram 1200 x 627 px] OR [X/Twitter 1200 x 1500 px]
+[LinkedIn/Instagram 1200 x 627 px landscape] OR [X/Twitter 1200 x 1500 px portrait]
 
 Core metaphor:
 [one metaphor only]
@@ -714,10 +780,10 @@ Text inside image:
 No other essential text.
 
 Style:
-Colourful satirical editorial illustration, textured hand-drawn poster feel, slightly realistic proportions and lighting, funny adult cartoon, not photorealistic, not childish, not infographic, not multi-panel.
+Colourful satirical editorial illustration, textured hand-drawn poster feel, slightly realistic proportions and lighting, funny adult cartoon, not photorealistic, not childish, not infographic, not dashboard, not poster collage, not multi-panel.
 
 Composition:
-Mobile-first readability, central focal point, safe margins, no tiny essential text, no dense background clutter.
+[platform-specific composition instructions]
 ```
 
 ---
@@ -750,7 +816,14 @@ The following outputs are considered failed and must be regenerated or corrected
 
 8. **Platform adaptation failure**
    - X version is just the landscape image placed inside a portrait canvas
+   - X version uses blurred top/bottom filler
    - X version invents a different concept after the LinkedIn concept was approved
+   - X version is a lazy resize rather than a native portrait recomposition
+
+9. **Workflow failure**
+   - images are generated during Phase 1
+   - X image is generated before LinkedIn / Instagram approval
+   - thread is generated before image approval, unless explicitly requested
 
 ---
 
@@ -758,9 +831,12 @@ The following outputs are considered failed and must be regenerated or corrected
 
 Before delivering any image, verify:
 
+- [ ] Is this the correct workflow phase?
+- [ ] Did the user approve or paste the relevant prompt for this phase?
 - [ ] Is the image based on one strong visual metaphor, not a dense infographic?
 - [ ] Is it one coherent physical scene?
 - [ ] Is it platform-composed from the start, not destructively cropped?
+- [ ] For X, is it a native portrait composition, not padded landscape?
 - [ ] Is the headline fully readable?
 - [ ] Are important elements kept away from edges?
 - [ ] Does it work on mobile without zooming?
@@ -782,7 +858,11 @@ Before delivering any image, verify:
 
 ## X thread generation
 
-Adapt a Claude DevOps market post for X / Twitter, converting it into a **4-6 tweet thread**.
+Adapt a Claude DevOps market post for X / Twitter.
+
+### Default
+
+Use a **2-tweet thread by default**, unless the user explicitly requests a different number.
 
 ### Goals
 
@@ -792,37 +872,28 @@ Adapt a Claude DevOps market post for X / Twitter, converting it into a **4-6 tw
 - same humour and sarcasm as the Claude post
 - no unnecessary explanation
 
-### Structure
+### Structure for 2 tweets
 
 1. Tweet 1 - hook / main absurdity
-2. Tweet 2 - context
-3. Tweet 3 - strongest example
-4. Tweet 4 - secondary example
-5. Final tweet - punchline / conclusion
+2. Tweet 2 - secondary absurdity + punchline
 
 ### Rules
 
-- target 70-150 characters per tweet
-- max around 220 characters only if necessary
-- use short lines and line breaks
+- target 70-220 characters per tweet
+- use short lines and line breaks when helpful
 - one idea per tweet
 - do not copy LinkedIn text directly
 - cut repetition, filler, and long explanations
 - preserve the sharpness of the Claude post
 
-### Final tweet
-
-Must feel like a payoff.
-
 ### Output
 
-Return only the ready-to-post X thread, without explanations.
+Return only the ready-to-post X thread, unless the user asks for commentary.
 
 Format:
 
-- single markdown block
-- all tweets inside
-- each tweet starts with a number, for example: `1/5 ...`
+- each tweet in its own code block, or one markdown block if the user prefers
+- number tweets as `1/2` and `2/2`
 
 ---
 
@@ -830,20 +901,24 @@ Format:
 
 These are the most important rules to preserve:
 
-1. One scene only.
-2. One main metaphor only.
-3. Main joke first, details second.
-4. No dense infographic / table / dashboard / multi-panel layout unless explicitly requested.
-5. Mobile-first readability.
-6. Minimal readable text.
-7. Correct spelling in the image.
-8. Fresh composition each time.
-9. Same series identity, not same scene.
-10. Cleaner, simpler, faster to read.
-11. Social media safe humour.
-12. Exact final dimensions verified before delivery:
+1. Follow the 4-phase workflow.
+2. Do not generate images in Phase 1.
+3. One scene only.
+4. One main metaphor only.
+5. Main joke first, details second.
+6. No dense infographic / table / dashboard / multi-panel layout unless explicitly requested.
+7. Mobile-first readability.
+8. Minimal readable text.
+9. Correct spelling in the image.
+10. Fresh composition each time.
+11. Same series identity, not same scene.
+12. Cleaner, simpler, faster to read.
+13. Social media safe humour.
+14. Exact final dimensions verified before delivery:
     - LinkedIn / Instagram: `1200 x 627 px`
     - X / Twitter: `1200 x 1500 px`
+15. X image must be native portrait regeneration, never padded landscape.
+16. Default X thread length is 2 tweets unless user asks otherwise.
 
 ---
 
@@ -851,4 +926,4 @@ These are the most important rules to preserve:
 
 If a shorter reminder is needed, use this:
 
-> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from Project Sources. Generate a new UK DevOps satirical image from scratch in the established colourful editorial-cartoon series style. Choose one main joke, one visual metaphor, and one coherent physical scene. Do not create an infographic, collage, dashboard, table, or multi-panel comic. Use minimal large readable text, safe margins, mobile-first readability, and slightly realistic but not photorealistic rendering. Verify or correct the final export to the exact platform dimensions before delivery.
+> Before generating, fetch and follow the latest `ChatGPT_image_generation_guide.md` from Project Sources. Use the 4-phase workflow: Phase 1 analyse Claude's post and produce two prompts only; Phase 2 generate approved LinkedIn / Instagram landscape image; Phase 3 generate approved native X portrait image; Phase 4 generate X thread. Choose one main joke, one visual metaphor, and one coherent physical scene. Do not create an infographic, collage, dashboard, table, or multi-panel comic. Use minimal large readable text, safe margins, mobile-first readability, and slightly realistic but not photorealistic rendering. Verify or correct final exports to exact dimensions: 1200 x 627 for LinkedIn / Instagram, 1200 x 1500 for X. Never make the X version by padding or framing the landscape image.
