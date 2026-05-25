@@ -261,3 +261,6 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Principal DevOps Engineer (Freelance) | Updraft (via Indeed) | Contract | Day rate not disclosed, Outside IR35 | Listing expired on Indeed at review time | 2026-05-10 |
 | Senior Platform Engineer | Lorien | Contract | Salary negotiable | Doesn't fit (salary/remote unconfirmed; recruiter pattern not promising) | 2026-05-12 |
 | Senior AI-Enabled DevOps Engineer | Lorien | Permanent | Competitive | Doesn't fit (closing date already past; salary/remote unconfirmed) | 2026-05-12 |
+| AWS DevOps Engineer | outsideir35.org.uk | Contract | £635/day Outside IR35 | Active SC required; Sole British National only | 2026-05-25 |
+| Lead DevOps Engineer (R26947) | Unknown (via jobs.co.uk) | Permanent | Not disclosed | Listing unfindable — skipped per policy | 2026-05-25 |
+| Head of DevOps | Socium – Teams Done Differently | Permanent | Not disclosed | Onsite | 2026-05-25 |
