@@ -264,3 +264,5 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | AWS DevOps Engineer | outsideir35.org.uk | Contract | £635/day Outside IR35 | Active SC required; Sole British National only | 2026-05-25 |
 | Lead DevOps Engineer (R26947) | Unknown (via jobs.co.uk) | Permanent | Not disclosed | Listing unfindable — skipped per policy | 2026-05-25 |
 | Head of DevOps | Socium – Teams Done Differently | Permanent | Not disclosed | Onsite | 2026-05-25 |
+| AWS DevOps Engineer | Opus Recruitment Solutions | Contract | £500–600/day Outside IR35 | SC clearance required (in vacancy text) | 2026-05-27 |
+| Cloud Platform Engineer (Energy/Oil & Gas, Azure, AWS) | Hays Technology | Contract | £600–700/day | Azure-heavy; required certs not held | 2026-05-27 |
