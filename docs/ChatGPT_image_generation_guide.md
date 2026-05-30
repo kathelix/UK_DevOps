@@ -204,6 +204,40 @@ If the Claude post contains several funny points, ChatGPT must not visualize all
 
 ---
 
+## Daily Concept Freshness Rule
+
+Every UK DevOps daily image must use a genuinely new central visual metaphor.
+
+Before proposing or generating a new image concept, first mentally check the recent and past UK DevOps concepts and avoid reusing the same core setup, even if the wording or props are changed.
+
+Do not repeat previously used central themes such as:
+
+- Escape room
+- Church / cathedral / cult of Active SC
+- Restaurant / menu / allergy warnings
+- Ministry / government bureaucracy
+- TV talent show
+- Taxi fare / fare meter
+- Evolution chart / reverse evolution
+- Duplicated office / cubicle diorama
+- Job market as a literal dashboard, infographic, or wall of listings
+
+A new daily concept must feel like a fresh joke at first glance, not a variation of an older scene.
+
+The recurring topics may stay the same - SC clearance, Inside IR35, fake remote, low rates, location mismatch, AWS/Azure confusion, recruiter absurdity - but the visual metaphor must change.
+
+Recommended process:
+
+1. Extract the single strongest pain or absurdity from the daily Claude summary.
+2. Brainstorm at least 3 possible metaphors before choosing one.
+3. Reject any metaphor that is too close to a previous UK DevOps image.
+4. Choose the metaphor that is clearest in 1-2 seconds on mobile.
+5. Use supporting job-market details only as props, labels, or background jokes.
+
+The goal is a fresh editorial cartoon every day, not a reusable template with different labels.
+
+---
+
 ## Core creative identity
 
 Every image in this series should preserve the same broad identity:
