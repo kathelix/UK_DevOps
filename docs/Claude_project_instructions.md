@@ -39,8 +39,8 @@ Use `web_search` with: job title + recruiter + location + year.
 **Search budget per role: maximum 4 web_search calls.**
 - 1st search: narrow — try search on a recruiter's website
 - 2nd search: broad — recruiter + role title + key criterion (e.g. "outside IR35", "remote")
-- 3nd search: narrow — try a different criterion or rephrase
-- 4rd search: last resort — try the recruiter's company name on a job aggregator (Reed, Totaljobs, OutsideSpy)
+- 3rd search: narrow — try a different criterion or rephrase
+- 4th search: last resort — try the recruiter's company name on a job aggregator (Reed, Totaljobs, OutsideSpy)
 
 If after 4 searches the role still cannot be verified on the missing criterion, flag it for manual review with the best available direct link. Do not exceed the budget. Do not silently reject.
 
@@ -100,6 +100,7 @@ For each matching or flagged role, collect:
 - Company / recruiter
 - Contract type (`contract` / `permanent`)
 - Rate or salary
+- Tech Stack
 - Confirmation status for each non-negotiable criterion in Block 2
 - Direct application link
 
@@ -107,7 +108,25 @@ Always follow the link to the full job spec before making a final decision — n
 
 ---
 
-### 7. Output Format
+### 7. Match Bands & Actions
+
+Once a role passes all Non-negotiable gates, compute its weighted Match %:
+
+```
+Match % = Σ (criterion Weight × criterion Score)
+```
+
+Apply the band:
+
+| Band | Match % | Action |
+|------|---------|--------|
+| **Recommend** | > 75% | Surface as a confirmed match in the results table; include application link. |
+| **Flag for review** | 50–75% | Surface for manual review with best available direct link and the reason it didn't auto-recommend. |
+| **Reject** | < 50% | Drop; record only in the grouped rejection breakdown. |
+
+---
+
+### 8. Output Format
 
 - Use **continuous numbering across all batches** so roles can be referenced by number
 - **Rejections:** brief reason only, grouped by rejection category — no need to list every rejected role individually
@@ -155,11 +174,9 @@ When the user names roles to add, output a single ready-to-paste markdown table 
 
 ## BLOCK 2: Personal Screening Criteria
 
-> Replace this block with your own requirements when reusing this pipeline.
+### Non-negotiable
 
-### Work model
-
-Non-negotiable : Yes
+#### Work model
 
 | Requirement | Value |
 |-------------|-------|
@@ -169,9 +186,7 @@ If remote status cannot be confirmed, skip the role.
 
 ---
 
-### Security Clearance
-
-Non-negotiable : Yes
+#### Security Clearance
 
 | Clearance | Acceptable |
 |-----------|------------|
@@ -182,71 +197,112 @@ Non-negotiable : Yes
 
 ---
 
-### Job Titles
+### Negotiable
 
-Non-negotiable : No
-Weight: 10
+#### Job Titles
+
+Weight: 10%
 
 **Accepted:**
-- Senior / Lead / Principal DevOps Engineer
-- Senior / Lead / Principal SRE (Site Reliability Engineer)
-- Senior / Lead / Principal Platform Engineer
-- Director of DevOps
-- VP of DevOps
-- DevOps Engineer
-- Platform Engineer
-- SRE
-
-**Not accepted:**
-- Junior variants of any of the above
-
----
-
-### Contract Type & IR35
-
-Non-negotiable : No
-Weight: 30
-
-| Type | Preference |
-|------------|--------|
-| B2B / Outside IR35 | Desired |
-| Inside IR35 | Much less desirable |
-| Permanent | Much less desirable |
+| Role Name | Score |
+|-----------|--------|
+| Senior / Lead / Principal DevOps Engineer | 100% |
+| Senior / Lead / Principal Platform Engineer | 100% |
+| Senior / Lead / Principal SRE (Site Reliability Engineer) | 90% |
+| Director of DevOps | 90% |
+| VP of DevOps | 90% |
+| DevOps Engineer | 80% |
+| DevOps Manager | 80% |
+| Platform Engineer | 80% |
+| SRE | 70% |
+| Junior | 0% |
 
 ---
 
-### Rate & Salary
+#### Contract Type & IR35
 
-Non-negotiable : No
 Weight: 30
 
-| Type | Minimum |
-|------|---------|
-| Contract Outside IR35 (day rate) | £500/day |
-| Contract Iutside IR35 (day rate) | £900/day |
-| Permanent (annual) | £130,000/year |
+| Type | Score |
+|---------|--------|
+| B2B / Outside IR35 | 100% |
+| Inside IR35 | 30% |
+| Permanent | 30% |
 
 ---
 
-### Tech Stack
+#### Rate & Salary
 
-Non-negotiable : No
 Weight: 30
 
-| Category | Requirement |
-|----------|-------------|
-| Cloud GCP | Desired |
-| Cloud AWS | Possible |
-| Orchestration / Kubernetes | Desired |
-| Pipelines, CI/CD | Mandatory |
-| IaC / Terraform | Desired |
-| AI / ML involvement | Desired |
+These bands are mutually exclusive.
 
-#### Azure handling
-- **Azure-only roles are rejected.** If the cloud stack is exclusively Azure, reject - do not flag for manual review.
-- **Azure as part of a multi-cloud stack** (AWS + Azure, GCP + Azure, AWS + GCP + Azure) **is acceptable** - evaluate normally against other criteria.
+| Type | Rate/Salary band | Score |
+|------|---------|----------|
+| Contract Outside IR35 (day rate) | > £650/day | 100% |
+| Contract Outside IR35 (day rate) | £575-650/day | 80% |
+| Contract Outside IR35 (day rate) | £500-575/day | 50% |
+| Contract Outside IR35 (day rate) | < £500/day | 5% |
+| Contract Inside IR35 (day rate) | > £1000/day | 80% |
+| Contract Inside IR35 (day rate) | £800-1000/day | 50% |
+| Contract Inside IR35 (day rate) | <£800/day | 5% |
+| Permanent (annual) | > £130,000/year | 50% |
+| Permanent (annual) | £110,000-130,000/year | 40% |
+| Permanent (annual) | < 110,000/year | 5% |
+
+Treat undisclosed as flag-for-review.
+
+---
+
+#### Tech Stack — Cloud
+Weight: 9
+
+| Cloud | Score |
+|-------|-------|
+| GCP (primary or multi-cloud) | 100% |
+| AWS (primary or multi-cloud) | 60% |
+| Azure only | reject (gate) |
+| No major cloud | 0% |
+
 - "Azure DevOps" as a CI/CD tool name does not count as Azure cloud - that's a pipeline tool. Look at the actual cloud platform the role is deploying to.
+
 - If the role description heavily emphasises Windows server administration, .NET, or Microsoft-stack tooling alongside Azure, treat as Microsoft-heavy and reject.
+
+#### Tech Stack — main CI/CD tool
+Weight: 7
+
+| Presence | Score |
+|----------|-------|
+| GitLab/GitHub Actions | 100% |
+| ArgoCD | 80% |
+| Jenkins | 20% |
+| Absent | 0% |
+
+#### Tech Stack — Kubernetes
+Weight: 4
+
+| Presence | Score |
+|----------|-------|
+| Kubernetes | 100% |
+| Containers, no K8s | 50% |
+| Absent | 0% |
+
+#### Tech Stack — IaC
+Weight: 3
+
+| Presence | Score |
+|----------|-------|
+| Terraform | 100% |
+| Other IaC (CloudFormation/Pulumi/Helm) | 50% |
+| None | 0% |
+
+#### Tech Stack — AI / ML / LLM
+Weight: 7
+
+| Presence | Score |
+|----------|-------|
+| AI/ML/LLM involvement | 100% |
+| None | 0% |
 
 ---
 
@@ -289,3 +345,6 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Head of DevOps | Socium – Teams Done Differently | Permanent | Not disclosed | Onsite | 2026-05-25 |
 | AWS DevOps Engineer | Opus Recruitment Solutions | Contract | £500–600/day Outside IR35 | SC clearance required (in vacancy text) | 2026-05-27 |
 | Cloud Platform Engineer (Energy/Oil & Gas, Azure, AWS) | Hays Technology | Contract | £600–700/day | Azure-heavy; required certs not held | 2026-05-27 |
+| Lead DevOps Engineer | Elliptic (via Welcome to the Jungle) | Permanent | Undisclosed | Hybrid — fails fully-remote gate | 2026-06-02 |
+| Staff Site Reliability Engineer | Replit (via Welcome to the Jungle) | Permanent | Undisclosed | Flagged (perm + undisclosed salary); user passed | 2026-06-02 |
+| Senior Platform Engineer (K8s/IaC/GitOps) | Submer / Radian Arc (via Welcome to the Jungle) | Permanent | Undisclosed | Flagged (EMEA scope, cloud + salary unconfirmed); user passed | 2026-06-02 |
