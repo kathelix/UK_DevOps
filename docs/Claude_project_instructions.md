@@ -36,12 +36,13 @@ For any role not eliminated by steps 1-2.
 When the email is ambiguous on any criterion defined in Block 2.
 Use `web_search` with: job title + recruiter + location + year.
 
-**Search budget per role: maximum 3 web_search calls.**
-- 1st search: broad — recruiter + role title + key criterion (e.g. "outside IR35", "remote")
-- 2nd search: narrow — try a different criterion or rephrase
-- 3rd search: last resort — try the recruiter's company name on a job aggregator (Reed, Totaljobs, OutsideSpy)
+**Search budget per role: maximum 4 web_search calls.**
+- 1st search: narrow — try search on a recruiter's website
+- 2nd search: broad — recruiter + role title + key criterion (e.g. "outside IR35", "remote")
+- 3nd search: narrow — try a different criterion or rephrase
+- 4rd search: last resort — try the recruiter's company name on a job aggregator (Reed, Totaljobs, OutsideSpy)
 
-If after 3 searches the role still cannot be verified on the missing criterion, flag it for manual review with the best available direct link. Do not exceed the budget. Do not silently reject.
+If after 4 searches the role still cannot be verified on the missing criterion, flag it for manual review with the best available direct link. Do not exceed the budget. Do not silently reject.
 
 #### Step 5 — Flag for manual review
 Only when web search also fails to resolve. Provide the best available direct link.
@@ -74,6 +75,7 @@ Consistently surface SC clearance and unfavourable contract terms on verificatio
 ### 4. Screening Logic
 
 - **Non-negotiable criteria block the role.** Any criterion marked non-negotiable in Block 2 is grounds for rejection if not met or not confirmable.
+- Use Weights of criteria from Block 2 to calculate the Match level of a role
 - **Flag, don't silently reject.** If a role looks strong but one criterion cannot be confirmed, flag it for manual review with the best available direct link — do not silently discard it.
 - **Already-applied roles.** Cross-reference against the running applied list in Block 2 and skip.
 - **Repeat batches.** Emails are not auto-marked as read — cross-reference familiar batches before re-evaluating.
@@ -155,50 +157,21 @@ When the user names roles to add, output a single ready-to-paste markdown table 
 
 > Replace this block with your own requirements when reusing this pipeline.
 
-### Job Titles
+### Work model
 
-**Accepted:**
-- Senior / Lead / Principal DevOps Engineer
-- Senior / Lead / Principal SRE (Site Reliability Engineer)
-- Senior / Lead / Principal Platform Engineer
-- Director of DevOps
-- VP of DevOps
-
-**Not accepted:**
-- Junior or mid-level variants of any of the above
-
----
-
-### Location
+Non-negotiable : Yes
 
 | Requirement | Value |
 |-------------|-------|
 | Work model | Fully remote (Work From Home) only |
-| Country | UK-based |
-| Non-negotiable | **Yes** — if remote status cannot be confirmed, skip the role |
 
----
-
-### Contract Type & IR35
-
-| Preference | Detail |
-|------------|--------|
-| Preferred | B2B / Outside IR35 |
-| Acceptable | Inside IR35 only if rate compensates significantly |
-| Non-negotiable | No |
-
----
-
-### Rate & Salary
-
-| Type | Minimum |
-|------|---------|
-| Contract (day rate) | £500/day |
-| Permanent (annual) | £120,000/year |
+If remote status cannot be confirmed, skip the role.
 
 ---
 
 ### Security Clearance
+
+Non-negotiable : Yes
 
 | Clearance | Acceptable |
 |-----------|------------|
@@ -209,15 +182,65 @@ When the user names roles to add, output a single ready-to-paste markdown table 
 
 ---
 
+### Job Titles
+
+Non-negotiable : No
+Weight: 10
+
+**Accepted:**
+- Senior / Lead / Principal DevOps Engineer
+- Senior / Lead / Principal SRE (Site Reliability Engineer)
+- Senior / Lead / Principal Platform Engineer
+- Director of DevOps
+- VP of DevOps
+- DevOps Engineer
+- Platform Engineer
+- SRE
+
+**Not accepted:**
+- Junior variants of any of the above
+
+---
+
+### Contract Type & IR35
+
+Non-negotiable : No
+Weight: 30
+
+| Type | Preference |
+|------------|--------|
+| B2B / Outside IR35 | Desired |
+| Inside IR35 | Much less desirable |
+| Permanent | Much less desirable |
+
+---
+
+### Rate & Salary
+
+Non-negotiable : No
+Weight: 30
+
+| Type | Minimum |
+|------|---------|
+| Contract Outside IR35 (day rate) | £500/day |
+| Contract Iutside IR35 (day rate) | £900/day |
+| Permanent (annual) | £130,000/year |
+
+---
+
 ### Tech Stack
+
+Non-negotiable : No
+Weight: 30
 
 | Category | Requirement |
 |----------|-------------|
-| Cloud | AWS or GCP — mandatory |
-| Orchestration | Kubernetes — mandatory |
-| IaC | Terraform — mandatory |
-| Pipelines | CI/CD — mandatory |
-| AI / ML involvement | Bonus, not required |
+| Cloud GCP | Desired |
+| Cloud AWS | Possible |
+| Orchestration / Kubernetes | Desired |
+| Pipelines, CI/CD | Mandatory |
+| IaC / Terraform | Desired |
+| AI / ML involvement | Desired |
 
 #### Azure handling
 - **Azure-only roles are rejected.** If the cloud stack is exclusively Azure, reject - do not flag for manual review.
