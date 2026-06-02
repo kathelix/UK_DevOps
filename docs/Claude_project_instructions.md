@@ -214,6 +214,7 @@ Weight: 10%
 | DevOps Engineer | 80% |
 | DevOps Manager | 80% |
 | Platform Engineer | 80% |
+| Cloud Engineer | 80% |
 | SRE | 70% |
 | Junior | 0% |
 
