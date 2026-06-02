@@ -349,3 +349,5 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Lead DevOps Engineer | Elliptic (via Welcome to the Jungle) | Permanent | Undisclosed | Hybrid — fails fully-remote gate | 2026-06-02 |
 | Staff Site Reliability Engineer | Replit (via Welcome to the Jungle) | Permanent | Undisclosed | Flagged (perm + undisclosed salary); user passed | 2026-06-02 |
 | Senior Platform Engineer (K8s/IaC/GitOps) | Submer / Radian Arc (via Welcome to the Jungle) | Permanent | Undisclosed | Flagged (EMEA scope, cloud + salary unconfirmed); user passed | 2026-06-02 |
+| Cloud Engineer | OutsideIR35 board | Contract | £650/day Outside IR35 | Azure-only stack on verification | 2026-06-02 |
+| DevOps Engineer | Olive Jar Digital (via WhatJobs) | FTC/Permanent | Undisclosed | Listing unfindable on review; skipped per policy | 2026-06-02 |
