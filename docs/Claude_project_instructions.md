@@ -209,6 +209,7 @@ Weight: 10%
 | Senior / Lead / Principal DevOps Engineer | 100% |
 | Senior / Lead / Principal Platform Engineer | 100% |
 | Senior / Lead / Principal SRE (Site Reliability Engineer) | 90% |
+| Infrastructure / Cloud Architect | 100% |
 | Director of DevOps | 90% |
 | VP of DevOps | 90% |
 | DevOps Engineer | 80% |
@@ -320,6 +321,8 @@ Weight: 7
 | Lead DevOps Engineer (UK gov scientific org) | Tenth Revolution Group / Jefferson Frank | Contract | £650/day Outside IR35 | Applied | 2026-04-17 |
 | Infrastructure Engineer | Tailscale (via Welcome to the Jungle) | Permanent | £129k–£161k | Applied | 2026-04-30 |
 | Lead AI DevOps Engineer | Lorien | Contract | Salary negotiable | Applied | 2026-05-07 |
+| Infrastructure/Cloud (AWS) Architect | Sanderson | Contract | £500–700/day Outside IR35 | Applied (likely stale listing) | 2026-06-04 |
+| Principal DevOps Engineer | Ohalo (direct) | Permanent | Undisclosed (+ equity) | Applied | 2026-06-04 |
 
 ### Reviewed - Not Applied (30-day skip window)
 
@@ -351,3 +354,4 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior Platform Engineer (K8s/IaC/GitOps) | Submer / Radian Arc (via Welcome to the Jungle) | Permanent | Undisclosed | Flagged (EMEA scope, cloud + salary unconfirmed); user passed | 2026-06-02 |
 | Cloud Engineer | OutsideIR35 board | Contract | £650/day Outside IR35 | Azure-only stack on verification | 2026-06-02 |
 | DevOps Engineer | Olive Jar Digital (via WhatJobs) | FTC/Permanent | Undisclosed | Listing unfindable on review; skipped per policy | 2026-06-02 |
+| DevSecOps Engineer | Revizto (direct) | Permanent | Undisclosed | Couldn't locate a live listing to apply; security-specialised / off-axis, no AI/ML | 2026-06-04 |
