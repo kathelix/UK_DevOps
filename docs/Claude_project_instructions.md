@@ -170,6 +170,18 @@ Only ask if there are flagged-for-manual-review roles outstanding from this or r
 
 When the user names roles to add, output a single ready-to-paste markdown table block with the new rows, using today's date in the "Date reviewed" column.
 
+##### Mark-as-read offer (trial — pending capability validation)
+
+After all sections above, offer to remove the `UNREAD` label from the threads
+processed in this batch:
+
+> 🏷️ I can mark the N processed threads as read (remove UNREAD). Confirm and I'll do it.
+
+- Call `unlabel_thread` (UNREAD) ONLY after explicit per-batch confirmation.
+- Never strip labels without confirmation — no blanket pre-authorisation.
+- Trial step: until validated as stable, the §4 "cross-reference familiar batches"
+  rule stays as the safety net. Once proven, we replace line 81.
+
 ---
 
 ## BLOCK 2: Personal Screening Criteria
@@ -334,12 +346,9 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Senior Python DevOps Engineer | Oliver Bernard | Permanent | (low salary) | Cambridge RevTech startup, salary below threshold | — |
 | Senior DevOps Engineer (Azure/Terraform) | INTEC SELECT | Contract | £550–£650/day Outside IR35 | Azure-only stack | 2026-04-29 |
 | DevOps Engineer Outside IR35 | Sanderson | Contract | £550–£575/day Outside IR35 | Azure/Windows-heavy stack | 2026-04-29 |
-| Senior DevOps Engineer (FinTech) | MCS Group (Belfast) | Permanent | Not disclosed | Listing no longer available at review time | 2026-04-30 |
 | Senior DevOps Engineer | Oscar Technology (via Reed) | Contract | £680–£710/day Inside IR35 | Fully on-site West Midlands; Inside IR35 | 2026-05-02 |
 | Senior DevOps Engineer | Humanoid (London robotics) | Permanent | Not disclosed | Permanent onsite | 2026-05-03 |
 | Senior DevOps Engineer | Norton Blake | Contract | Not disclosed | No rate, IR35, or remote status disclosed; recruiter's prior listings trend Inside IR35 | 2026-05-03 |
-| Lead Platform Engineer | Lorien | Contract | Not disclosed | Listing inaccessible at review / likely filled | 2026-05-07 |
-| Senior SRE (DevOps, Remote) | EMBL-EBI | Permanent | £43,015–£79,798/year | Below £120k threshold; "based on experience and family" pay scale | 2026-05-07 |
 | Head of DevOps | M Group | Permanent | Not disclosed | Permanent and onsite (Stevenage HQ) | 2026-05-08 |
 | Principal DevOps Engineer (Freelance) | Updraft (via Indeed) | Contract | Day rate not disclosed, Outside IR35 | Listing expired on Indeed at review time | 2026-05-10 |
 | Senior Platform Engineer | Lorien | Contract | Salary negotiable | Doesn't fit (salary/remote unconfirmed; recruiter pattern not promising) | 2026-05-12 |
