@@ -335,6 +335,7 @@ Weight: 7
 | Lead AI DevOps Engineer | Lorien | Contract | Salary negotiable | Applied | 2026-05-07 |
 | Infrastructure/Cloud (AWS) Architect | Sanderson | Contract | £500–700/day Outside IR35 | Applied (likely stale listing) | 2026-06-04 |
 | Principal DevOps Engineer | Ohalo (direct) | Permanent | Undisclosed (+ equity) | Applied | 2026-06-04 |
+| Cloud Architect | ISR Recruitment | Contract | £80/hr (~£640/day) Outside IR35 | Applied | 2026-06-05 |
 
 ### Reviewed - Not Applied (30-day skip window)
 
@@ -364,3 +365,8 @@ Skip from screening for 30 days from the "Date reviewed". After 30 days, drop th
 | Cloud Engineer | OutsideIR35 board | Contract | £650/day Outside IR35 | Azure-only stack on verification | 2026-06-02 |
 | DevOps Engineer | Olive Jar Digital (via WhatJobs) | FTC/Permanent | Undisclosed | Listing unfindable on review; skipped per policy | 2026-06-02 |
 | DevSecOps Engineer | Revizto (direct) | Permanent | Undisclosed | Couldn't locate a live listing to apply; security-specialised / off-axis, no AI/ML | 2026-06-04 |
+| Lead AWS DevOps Engineer | Tenth Revolution Group (Jefferson Frank) | Contract | £600–700/day Outside IR35 | Listing closed — no longer accepting applications | 2026-06-05 |
+| Contract AWS Cloud Infrastructure Engineer | Spectrum IT | Contract | Undisclosed, Outside IR35 | Hybrid (1 day/week Portsmouth); Microsoft-heavy (IIS/SQL); no K8s (ECS only); stale listing live since 2 Apr 2026 | 2026-06-05 |
+| Senior AI-Enabled Software/DevOps Engineer | via jobs.co.uk | Contract | £650–850/day | Azure-only; no AI anywhere in the body despite the title | 2026-06-05 |
+| Platform Engineering Lead | Unconfirmed (via Welcome to the Jungle) | Permanent | £110–149K | Application portal repeatedly flagged submission as spam; could not apply | 2026-06-05 |
+| Data Platform Engineer | via Pro Contract Jobs | Contract | Undisclosed, Outside IR35 | Could not locate the actual live listing | 2026-06-05 |
