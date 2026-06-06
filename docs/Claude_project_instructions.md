@@ -12,10 +12,10 @@ Applied and skipped roles live in Airtable, NOT in this prompt.
 - Table: **Vacancies** — `tableId: tbl3abC60VRQWb21w`
 - Fields: `Role`, `Recruiter`, `Type` (Contract/Permanent), `Rate/Salary`,
   `Status` (Applied | Skipped), `Date` (ISO, the apply/review date — drives the
-  30-day skip window), `Notes`, `Link`.
+  30-day skip window), `Notes`, `Link` (field id `fldz2C7r1hSNrET4i`, type url).
 
 At the START of every run: read the whole table (`list_records_for_table`) once and hold it in memory as the skip list. This replaces the old Block 2 tables.
-At the END of a run, and whenever the user reports apply/skip decisions, WRITE rows here (`create_records_for_table`) — never ask the user to paste markdown.
+At the END of a run, and whenever the user reports apply/skip decisions, WRITE rows here (`create_records_for_table`) — never ask the user to paste markdown. Always populate the `Link` field (`fldz2C7r1hSNrET4i`) on every row per §6a, and use `update_records_for_table` to backfill/improve `Link` on existing rows.
 If Airtable can't be read, say so and fall back to the email-history safety net (§4 "Repeat batches"); do not proceed as if the skip list were empty.
 
 ---
@@ -77,7 +77,7 @@ Senders: ApplyGateway, ZipRecruiter, Reed, NIJobs, hackajob, WhatJobs.
 #### Tracking / redirect URLs
 Affected senders: NIJobs (`click.nijobs.com`), Reed (`clicks.reed.co.uk`), and similar.
 - Cannot be fetched directly
-- Use `web_search` to locate the listing independently
+- Use `web_search` to locate the listing independently and capture the canonical link (see §6a)
 - Only escalate to manual review if search also fails
 
 #### Rate display gotcha
@@ -120,9 +120,27 @@ For each matching or flagged role, collect:
 - Rate or salary
 - Tech Stack
 - Confirmation status for each non-negotiable criterion in Block 2
-- Direct application link
+- Best-known link, resolved per §6a (never a tracking/redirect URL) — and stored in the Airtable `Link` field
 
 Always follow the link to the full job spec before making a final decision — never accept or reject on snippet alone.
+
+---
+
+### 6a. Link resolution & storage (always)
+
+Every role surfaced to the user (Recommend **or** Flag) and every row written to Airtable MUST carry a best-known link.
+
+Resolution order — use the highest that resolves:
+1. Direct employer/ATS posting (Lever, Greenhouse, Workable, Ashby, or the company's own careers page for that role)
+2. Recruiter's own website listing for the role
+3. Canonical aggregator job page (Reed / Totaljobs / LinkedIn / Welcome to the Jungle) — the human-viewable URL, **not** a click-tracker
+4. If no role-specific URL resolves: the recruiter/company careers page
+5. If nothing resolves: write `search: <title> + <recruiter>` in `Notes` and say so in chat
+
+**Never** store or present a tracking/redirect URL (`clicks.reed.co.uk`, `click.nijobs.com`, `*.pstmrk.it`, `web.jobmails.io`, `*.ct.sendgrid.net`, and similar). They can't be followed — `web_search` the canonical posting (within the §2 Step-4 budget) and use that.
+
+- **In chat:** show the link inline next to every Recommend and Flag.
+- **In Airtable:** write it to the `Link` field (`fldz2C7r1hSNrET4i`) on every created/updated row — not just in `Notes`. If a later run finds a better link for an existing role, `update_records_for_table` to improve it.
 
 ---
 
@@ -138,8 +156,8 @@ Apply the band:
 
 | Band | Match % | Action |
 |------|---------|--------|
-| **Recommend** | > 75% | Surface as a confirmed match in the results table; include application link. |
-| **Flag for review** | 50–75% | Surface for manual review with best available direct link and the reason it didn't auto-recommend. |
+| **Recommend** | > 75% | Surface as a confirmed match in the results table; include application link (§6a). |
+| **Flag for review** | 50–75% | Surface for manual review with best available direct link (§6a) and the reason it didn't auto-recommend. |
 | **Reject** | < 50% | Drop; record only in the grouped rejection breakdown. |
 
 ---
@@ -154,7 +172,7 @@ Apply the band:
 ##### Summary
 
 - Total emails processed in this batch
-- Running total of confirmed matches across all batches (numbered list with application links)
+- Running total of confirmed matches across all batches (numbered list, each with its best-known link)
 
 ##### Post
 
@@ -184,10 +202,11 @@ At the end of every batch, after the Post and Image prompt sections, if there ar
 > Reply with the role names and I'll log them as Applied or Skipped in Airtable.
 
 When the user names roles to skip: write one `Skipped` row per role to the
-Vacancies table (§0) with today's date in `Date` and the reason in `Notes` —
-do NOT output a markdown table. Confirm with a one-line tally.
+Vacancies table (§0) with today's `Date`, the reason in `Notes`, and the
+best-known link in the `Link` field (§6a) — do NOT output a markdown table.
+Confirm with a one-line tally.
 
-When the user says they APPLIED to a role: write an `Applied` row (today's date, any status note in `Notes`). Same for roles I recommended that the user actions.
+When the user says they APPLIED to a role: write an `Applied` row (today's date, any status note in `Notes`, and the best-known link in the `Link` field per §6a). Same for roles I recommended that the user actions.
 
 Don't prompt if every role this batch was a clean accept or clean reject.
 
