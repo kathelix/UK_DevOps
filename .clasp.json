@@ -1,4 +1,16 @@
 {
-  "scriptId": "REPLACE_WITH_SCRIPT_ID",
-  "rootDir": "apps-script"
+  "scriptId": "1keDCjdrWCP7i98SlWeH5pPQK24AqbY9KlHKPn1j6gI4QDJR8SphUhDc8",
+  "rootDir": "apps-script",
+  "scriptExtensions": [
+    ".js",
+    ".gs"
+  ],
+  "htmlExtensions": [
+    ".html"
+  ],
+  "jsonExtensions": [
+    ".json"
+  ],
+  "filePushOrder": [],
+  "skipSubdirectories": false
 }
