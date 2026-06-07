@@ -6,10 +6,10 @@ Improvements deliberately deferred during the 1:1 Make.com → Apps Script port 
 
 Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, consumed by Claude from Airtable.
 
-- [ ] **M1 — Apps Script project files into repo**: `appsscript.json` manifest (declares Gmail Advanced Service, scopes, timezone — replaces manual "Services" setup) + `.clasp.json` (scriptId).
-- [ ] **M2 — CI deploy via clasp**: GitHub Action `clasp push` on merge to main; `CLASPRC_JSON` as repo secret. CI deploys only — execution stays on the GAS time trigger / manual runs (decided: no CI-triggered execution, ever). Script Properties and triggers remain runtime state: one-time manual + idempotent `setup()`.
-- [ ] **M3 — Airtable schema-as-code**: `airtable/schema.json` + idempotent apply script in CI (Meta API, PAT with `schema.bases:write`). Additive-only: the API cannot delete tables/fields or change field types — removals stay manual. First apply creates `RawEmails`.
-- [ ] **M4 — Collector E2E (1 email)**: add `DRY_RUN` flag (log would-be writes/labels, touch nothing); then real run with `MAX_MESSAGES=1`, verify RawEmails row + `make-collected` label.
+- [x] **M1 — Apps Script project files into repo**: `appsscript.json` manifest (declares Gmail Advanced Service, scopes, timezone — replaces manual "Services" setup) + `.clasp.json` (scriptId).
+- [x] **M2 — CI deploy via clasp**: GitHub Action `clasp push` on merge to main; `CLASPRC_JSON` as repo secret. CI deploys only — execution stays on the GAS time trigger / manual runs (decided: no CI-triggered execution, ever). Script Properties and triggers remain runtime state: one-time manual + idempotent `setup()`.
+- [x] **M3 — Airtable schema-as-code**: `airtable/schema.json` + idempotent apply script in CI (Meta API, PAT with `schema.bases:write`). Additive-only: the API cannot delete tables/fields or change field types — removals stay manual. First apply creates `RawEmails`.
+- [x] **M4 — Collector E2E (1 email)**: add `DRY_RUN` flag (log would-be writes/labels, touch nothing); then real run with `MAX_MESSAGES=1`, verify RawEmails row + `make-collected` label.
 - [ ] **M5 — Claude dry-run session (Cowork)**: read `Status=New` rows, split into vacancies, screen per Block 2; propose Vacancies rows + Status flips in chat only, zero writes. Second pass writes to `Vacancies_test` before touching real tables.
 - [ ] **M6 — Instructions cutover (bump to VERSION 2.0)**: rewrite Block 1 §1 (intake = RawEmails, Gmail demoted to fallback + discrepancy canary) and §9 (mark-as-read → Status flip); claude.ai project field becomes a bootstrap stub → read `instructions/Claude_project_instructions.md` from the mounted UK_DevOps folder. Local dir primary, fail loudly if folder not attached, no network fallback. Verify the scheduled run's session has the folder attached. Pause Make scenario after parity.
 
