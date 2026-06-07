@@ -25,7 +25,7 @@ const CONFIG = {
   // don't head-of-line block the queue; excluded by QUERY. Created on demand.
   FAILED_LABEL_NAME: 'job-vacancies/make-failed',
   // Make used limit=1 per run; here one run handles a full day's batch:
-  MAX_MESSAGES: 1,
+  MAX_MESSAGES: 5,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
   // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
