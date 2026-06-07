@@ -142,7 +142,16 @@ function extractHtmlBody_(payload) {
 }
 
 function decodeB64Url_(data) {
-  return Utilities.newBlob(Utilities.base64DecodeWebSafe(data)).getDataAsString('UTF-8');
+  // Gmail returns base64url, often unpadded; Apps Script's decoder is strict.
+  // Normalize whitespace, restore padding, fall back to the standard alphabet.
+  let s = String(data || '').replace(/\s+/g, '');
+  while (s.length % 4 !== 0) s += '=';
+  try {
+    return Utilities.newBlob(Utilities.base64DecodeWebSafe(s)).getDataAsString('UTF-8');
+  } catch (e) {
+    const std = s.replace(/-/g, '+').replace(/_/g, '/');
+    return Utilities.newBlob(Utilities.base64Decode(std)).getDataAsString('UTF-8');
+  }
 }
 
 function getLabelsById_() {
