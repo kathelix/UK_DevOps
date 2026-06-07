@@ -37,6 +37,10 @@ Decisions of record:
 - [ ] **Retry wrapper with exponential backoff** (1s/2s/4s, then fail cleanly) for external calls: Airtable writes, Gmail API reads, any `UrlFetchApp`.
 - [ ] **Timeout safety** — track elapsed time, stop cleanly before the Apps Script execution limit, leave the rest for the next run (pairs with the `MAX_MESSAGES` batch size).
 
+## Airtable
+
+- [ ] **Import the existing Vacancies table schema into `airtable/schema.json`** so all schemas are under version control (RawEmails and Vacancies_test already are). Do it via a small repeatable export script (`airtable/import-schema.js`: GET Meta API → merge into schema.json) rather than hand-copying, so drift snapshots stay diffable. Prerequisite for safety: extend `apply-schema.js` to match fields **by field ID when present** (import IDs along with names) — name-only matching turns any UI rename into a duplicate field on the next CI run. With ID matching, renames become detectable drift warnings instead.
+
 ## Pipeline integration
 
 - [ ] **Switch the Claude screening pipeline (project instructions Block 1 §1) from Gmail search to RawEmails**: read `Status=New` → screen → flip to `Processed`. Keep the Gmail connector as fallback + discrepancy canary. Do this only after the collector has run validated in parallel with Make.
