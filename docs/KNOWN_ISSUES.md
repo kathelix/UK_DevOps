@@ -1,0 +1,25 @@
+# Known Issues
+
+## 1. Gmail search-index orphans (messages invisible to the API)
+
+**Symptom:** an email is visible in the Gmail web UI under `label:job-vacancies label:unread`, but no API query can find it — not `from:`, not `subject:`, not free text, not even `in:anywhere` with spam/trash included. Observed 2026-06-07 with securityclearedjobs.com emails (sender "noreply", subjects like "GCP Cloud Engineer at IO Associates…"); both stayed unread across multiple screening runs.
+
+**Cause:** Gmail keeps two read paths. The **label store** (label → thread mapping, written transactionally at delivery) serves the UI's label views. The **full-text search index** is built asynchronously after delivery — and indexing is not guaranteed. Messages with MIME the indexer dislikes never enter the index. Every API search (`q=` parameter) goes through the index; the UI's label browsing does not. Result: delivered, labeled, visible — and unsearchable.
+
+**Who inherits it:** anything using `q=`-based listing — the Claude Gmail connector, Make.com's "Search emails" module, and the current Apps Script collector (`Gmail.Users.Messages.list({q})`). The structural fix (label-store listing via `getUserLabelByName()` / `labelIds`) is in `TODO.md` → Collector.
+
+**Detection (canary):** the screening pipeline marks everything it processes as read; the collector labels everything it stores. Anything left unread/uncollected in the label after the daily runs — beyond post-run arrivals — is an index orphan. Check occasionally in the Gmail UI.
+
+**Current handling:** securityclearedjobs.com is a known-irrelevant sender anyway (100% clearance-gated); instructions v1.1 documents both the instant-reject and the count-mismatch explanation. The agreed mitigation is monitoring via the canary; escalate to the label-store fix if orphans appear from senders that matter.
+
+## 2. Apps Script Advanced Gmail Service auto-decodes body data
+
+`payload.body.data` arrives as a **byte array** (number[]), not the base64url string the raw Gmail API returns — the Apps Script client auto-converts `format: byte` fields. Decoders fed `String(byteArray)` fail with misleading errors (`invalid char "," …`). Handled in `decodeB64Url_()` (array → `newBlob(bytes)`); the string path is kept as fallback. Cost three debugging rounds on 2026-06-07; see commit `db60415`.
+
+## 3. Airtable schema apply is additive-only and name-matched
+
+The Meta API cannot delete tables/fields or change field types, so `airtable/apply-schema.js` only creates and warns. Consequence: a field renamed in the Airtable UI looks "missing" to CI and gets re-created as a duplicate on the next run. Until the field-ID-matching improvement lands (`TODO.md` → Airtable), treat `schema.json` as the authority on names and avoid renaming fields in the UI.
+
+## 4. Aggregator "remote" tags lie
+
+Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise Technical listing: 3 days onsite, Inside IR35, SC/DV preferred). NIJobs prints "Benefits: Work From Home" under descriptions that say "Hybrid from Belfast". Screening rules in `instructions/` v1.1 treat tags as noise — only spec text or web verification confirms remote.

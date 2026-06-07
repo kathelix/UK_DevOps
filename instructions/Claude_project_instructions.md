@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 1.0
+VERSION: 1.1
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -95,6 +95,19 @@ Some aggregators (e.g. WhatJobs) display weekly rates formatted to look like dai
 #### Hays roles
 Consistently surface SC clearance and unfavourable contract terms on verification.
 - Treat as a soft-reject signal; always verify before rejecting outright
+
+#### Rise Technical roles
+Same pattern as Hays, confirmed 2026-06-07: a Reed listing tagged "WFH Remote" turned out to be 3 days/week onsite, Inside IR35, Active SC/DV preferred, Microsoft-heavy.
+- Treat as a soft-reject signal; verify remote/IR35/clearance before flagging or recommending
+
+#### Aggregator remote tags
+Reed's "WFH Remote" badge (and similar aggregator tags) is recruiter-set and unreliable.
+- Never accept a tag alone as remote confirmation — only the job-spec text or web verification counts
+- A "Work From Home" line in a benefits list contradicted by "hybrid/onsite" in the description body = NOT remote
+
+#### securityclearedjobs.com
+Known irrelevant sender: 100% clearance-gated inventory → instant reject, no read needed.
+- These emails are also invisible to the Gmail API search index (visible in the UI only). If processed counts differ from UI unread counts, suspect these — it is not a pipeline failure. Details: `docs/KNOWN_ISSUES.md` in the UK_DevOps repo.
 
 ---
 
@@ -240,6 +253,8 @@ After all sections above are produced, remove the `UNREAD` label from every thre
 | Work model | Fully remote (Work From Home) only |
 
 If remote status cannot be confirmed, skip the role.
+
+Geography: Ivan is eligible to work in the EU as well as the UK. "Fully remote within the EU" passes this gate the same as fully-remote UK (e.g. Welcome to the Jungle "Remote (within the EU)" roles are in scope). All other gates still apply; rate/salary bands are evaluated in GBP equivalent.
 
 ---
 
