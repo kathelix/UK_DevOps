@@ -168,7 +168,14 @@ function extractHtmlBody_(payload) {
 }
 
 function decodeB64Url_(data) {
-  // Normalize everything to the standard alphabet with correct padding,
+  // Apps Script's Advanced Gmail Service auto-decodes 'byte'-format fields:
+  // body.data arrives as a NUMBER ARRAY (bytes), not a base64 string.
+  // (Diagnosed from: 'invalid char "," at index 2' — a comma-joined array.)
+  if (Array.isArray(data)) {
+    return Utilities.newBlob(data).getDataAsString('UTF-8');
+  }
+  // String shape (plain Gmail API behavior), kept as fallback:
+  // normalize to the standard alphabet with correct padding,
   // and fail with a FORENSIC error instead of "Could not decode string".
   let s = String(data || '')
     .replace(/\s+/g, '')
