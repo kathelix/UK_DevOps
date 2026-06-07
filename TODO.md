@@ -29,7 +29,7 @@ Decisions of record:
 - [ ] **Resolve tracking redirects to canonical job URLs** (`clicks.reed.co.uk`, `click.nijobs.com/f/a/…`) via `UrlFetchApp`, capped per run. Note: this "clicks" the trackers.
 - [ ] **Regression test for the cleaning regex** using `tests/fixtures/email.html` (e.g. clasp + local runner, or an in-project `checkFixture()` assertion function).
 - [ ] **Modularize for testability** — split into `config / gmail / parser / airtable / main`; keep cleaning, link-extraction and dedupe as pure functions (no Gmail/Airtable side effects) so they run against `tests/fixtures/` locally.
-- [ ] **Raise `MAX_MESSAGES` back to ~25** once testing with `1` is done.
+- [x] **Raise `MAX_MESSAGES` back to ~25** once testing with `1` is done. (Done 2026-06-07, start of parallel-run week.)
 
 ### Reliability
 
@@ -41,7 +41,7 @@ Decisions of record:
 
 - [ ] **Switch the Claude screening pipeline (project instructions Block 1 §1) from Gmail search to RawEmails**: read `Status=New` → screen → flip to `Processed`. Keep the Gmail connector as fallback + discrepancy canary. Do this only after the collector has run validated in parallel with Make.
 - [ ] **Decommission the Make.com scenario** once parity is confirmed (it also burns the 1,000 free ops/month).
-- [ ] **Rename state labels after Make decommission** — `job-vacancies/make-collected|processing|failed` → tool-neutral names (e.g. `job-vacancies/collected|processing|failed`); add a `nolinks` state once link extraction lands, for emails yielding no usable URLs.
+- [ ] **Refactor Make.com leftovers after decommission** — rename state labels `job-vacancies/make-collected|processing|failed` → tool-neutral (preferred, e.g. `job-vacancies/collected|…`) or `gas-*`; add a `nolinks` state once link extraction lands. Also sweep other relics: `UK_DevOps_Gmail_Collector.blueprint.json` at repo root (archive into `docs/` or delete), "Make" wording in `apps-script/README.md` parity notes and script comments.
 
 ## Docs
 
