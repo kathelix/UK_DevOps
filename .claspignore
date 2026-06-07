@@ -1,0 +1,4 @@
+# Push only the script and its manifest; everything else in rootDir stays local.
+**/**
+!gmail-collector.gs
+!appsscript.json

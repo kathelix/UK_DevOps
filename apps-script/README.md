@@ -2,7 +2,9 @@
 
 Faithful port of Make.com scenario "UK DevOps - Gmail Collector" (Gmail → regex clean → store → label as collected). Destination is Airtable instead of Google Sheets. No behavior improvements in this slice.
 
-## 1. Airtable table (create manually in base "Job Search")
+## 1. Airtable table
+
+Created automatically by CI from `airtable/schema.json` (additive-only apply via the Meta API — see `.github/workflows/deploy-airtable.yml`). The reference layout:
 
 Table name: **RawEmails**
 
@@ -23,13 +25,26 @@ Table name: **RawEmails**
 | CleanText | Long text | M — cleaned; 49k Sheets cap dropped, truncated only at Airtable's 100k long-text limit |
 | Status | Single select: New / Processed / Error | — (only addition; queue field for the screening pipeline, default "New") |
 
-## 2. Script
+## 2. Deployment
 
-1. [script.google.com](https://script.google.com) → New project → name it `UK DevOps - Gmail Collector` → paste `gmail-collector.gs`.
-2. Services (+) → **Gmail API** → Add (the Advanced Gmail Service; needed for message-level labels and snippet, same granularity as Make's modules).
-3. Project Settings → Script Properties → add `AIRTABLE_TOKEN` = a PAT scoped to the Job Search base with `data.records:write`.
-4. Run `collectJobEmails` once → authorize → check Logger output and the Airtable table.
-5. Triggers → Add → `collectJobEmails`, time-driven, daily 4am–5am (before the screening run).
+Continuous: merge to `main` touching `apps-script/**` → GitHub Action runs `clasp push` (see `.github/workflows/deploy-gas.yml`). The `appsscript.json` manifest declares the Gmail Advanced Service, OAuth scopes and timezone — no manual "Services" clicking.
+
+One-time bootstrap (local):
+
+1. `npm i -g @google/clasp && clasp login`
+2. Enable the Apps Script API: [script.google.com/home/usersettings](https://script.google.com/home/usersettings)
+3. Create or link the script project:
+   - existing project: copy its Script ID (GAS editor → Project Settings) into `.clasp.json`;
+   - new: `clasp create --type standalone --title "UK DevOps - Gmail Collector" --rootDir apps-script` (writes `.clasp.json` for you — commit it).
+4. `clasp push -f` once locally to verify, then add GitHub repo secrets:
+   - `CLASPRC_JSON` = contents of `~/.clasprc.json` (created by `clasp login`)
+   - `AIRTABLE_SCHEMA_TOKEN` = PAT with `schema.bases:read|write` on the base (for the Airtable workflow)
+
+Runtime state — stays manual, not deployable:
+
+1. GAS editor → Project Settings → Script Properties → `AIRTABLE_TOKEN` = PAT with `data.records:write` on the base.
+2. Run `collectJobEmails` once → authorize scopes → check Logger + the RawEmails table.
+3. Triggers → Add → `collectJobEmails`, time-driven, daily 4am–5am (before the screening run).
 
 ## 3. Parity notes
 

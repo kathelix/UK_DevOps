@@ -1,0 +1,40 @@
+{
+  "baseId": "appV9puNHinuRKTk9",
+  "comment": "Desired Airtable schema, applied additively by apply-schema.js (Meta API cannot delete tables/fields or change field types — removals are manual). The existing Vacancies table is intentionally NOT managed here.",
+  "tables": [
+    {
+      "name": "RawEmails",
+      "description": "Queue of regex-cleaned job-alert emails, populated by apps-script/gmail-collector.gs. Claude's screening pipeline reads Status=New rows and flips them to Processed. Mirrors the Make.com Sheets columns A-M.",
+      "fields": [
+        { "name": "MessageId", "type": "singleLineText", "description": "Gmail message ID (dedupe key)" },
+        { "name": "ExecutionId", "type": "singleLineText", "description": "Collector run ID" },
+        { "name": "CollectedAt", "type": "dateTime", "options": { "timeZone": "Europe/London", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+        { "name": "ThreadId", "type": "singleLineText" },
+        { "name": "EmailDate", "type": "dateTime", "options": { "timeZone": "Europe/London", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
+        { "name": "FromName", "type": "singleLineText" },
+        { "name": "FromEmail", "type": "singleLineText" },
+        { "name": "Subject", "type": "singleLineText" },
+        { "name": "Snippet", "type": "multilineText" },
+        { "name": "UserLabels", "type": "singleLineText" },
+        { "name": "HtmlLength", "type": "number", "options": { "precision": 0 } },
+        { "name": "CleanLength", "type": "number", "options": { "precision": 0 } },
+        { "name": "CleanText", "type": "multilineText", "description": "Regex-cleaned body; truncated only at Airtable's 100k long-text limit" },
+        { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "New", "color": "yellowBright" }, { "name": "Processed", "color": "greenBright" }, { "name": "Error", "color": "redBright" } ] } }
+      ]
+    },
+    {
+      "name": "Vacancies_test",
+      "description": "Sandbox mirror of Vacancies for dry-run pipeline sessions (roadmap M5). Same fields as the real Vacancies table; safe to wipe.",
+      "fields": [
+        { "name": "Role", "type": "singleLineText" },
+        { "name": "Recruiter", "type": "singleLineText" },
+        { "name": "Type", "type": "singleSelect", "options": { "choices": [ { "name": "Contract" }, { "name": "Permanent" } ] } },
+        { "name": "Rate/Salary", "type": "singleLineText" },
+        { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "Applied", "color": "greenBright" }, { "name": "Skipped", "color": "grayBright" } ] } },
+        { "name": "Date", "type": "date", "options": { "dateFormat": { "name": "iso" } } },
+        { "name": "Notes", "type": "multilineText" },
+        { "name": "Link", "type": "url" }
+      ]
+    }
+  ]
+}

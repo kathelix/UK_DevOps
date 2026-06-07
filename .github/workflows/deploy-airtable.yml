@@ -1,0 +1,26 @@
+name: Deploy Airtable schema
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'airtable/**'
+      - '.github/workflows/deploy-airtable.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  apply-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Apply schema (additive-only)
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_SCHEMA_TOKEN }}
+        run: node airtable/apply-schema.js airtable/schema.json

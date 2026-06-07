@@ -1,0 +1,46 @@
+name: Deploy GAS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - '.clasp.json'
+      - '.claspignore'
+      - '.github/workflows/deploy-gas.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  clasp-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install clasp
+        run: npm install -g @google/clasp
+
+      - name: Authenticate clasp
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then
+            echo "::error::Secret CLASPRC_JSON is not set (contents of ~/.clasprc.json after 'clasp login')"
+            exit 1
+          fi
+          echo "$CLASPRC_JSON" > ~/.clasprc.json
+
+      - name: Guard against placeholder scriptId
+        run: |
+          if grep -q REPLACE_WITH_SCRIPT_ID .clasp.json; then
+            echo "::error::.clasp.json still contains the placeholder scriptId"
+            exit 1
+          fi
+
+      - name: Push to Apps Script
+        run: clasp push -f
