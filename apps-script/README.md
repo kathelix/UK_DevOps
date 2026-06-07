@@ -31,14 +31,15 @@ Table name: **RawEmails**
 4. Run `collectJobEmails` once → authorize → check Logger output and the Airtable table.
 5. Triggers → Add → `collectJobEmails`, time-driven, daily 4am–5am (before the screening run).
 
-## 3. Parity notes (deliberate, for later iterations)
+## 3. Parity notes
 
 - **Same query, same labels** as Make (`-label:job-vacancies/make-collected …`, adds `make-collected` on success). Script and Make scenario share state — they can run side by side during transition without double-collecting. Unread status is never touched, same as Make.
 - **Regex verbatim** from the Text parser module, flags `gis` (global, case-insensitive, dot-matches-newline) exactly as configured in Make.
-- **Search-index caveat inherited:** the query path (`q=`) is the same Gmail search index Make uses, so securityclearedjobs.com-style index orphans remain invisible to this slice. Switching the fetch to the label store (`getUserLabelByName`) is a later iteration.
-- **Write ordering** matches Make: store row first, label as collected only on success. A crash between the two yields a duplicate row on retry (MessageId makes duplicates detectable), never a lost email.
-- `make-processing` / `make-failed` labels are excluded by the query (as in Make) but never set by this slice (also as in Make's exported scenario).
-- `MAX_MESSAGES` is 25/run vs Make's limit 1 — the only operational difference; lower it if you want strict parity.
+- **Write ordering** matches Make: store row first, label as collected only on success — a crash between the two can produce a duplicate row on retry (detectable via MessageId), never a lost email.
+- `make-processing` / `make-failed` labels are excluded by the query but never set — exactly as in Make's exported scenario.
+- `MAX_MESSAGES` is configurable (Make ran with limit=1).
+
+Known drawbacks inherited from the 1:1 port, and planned improvements, are tracked in [`TODO.md`](../TODO.md) at the repo root.
 
 ## 4. Costs
 
