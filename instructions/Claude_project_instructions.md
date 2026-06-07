@@ -1,5 +1,13 @@
 # Job Vacancy Screening Pipeline
 
+VERSION: 1.0
+
+> Versioning: every change to this file MUST bump the version — MAJOR for breaking
+> changes (intake source, non-negotiable gates, output contract), MINOR for
+> non-breaking ones (criteria tweaks, new soft-reject signals, wording).
+> Claude echoes the version it loaded in every batch report, so stale copies
+> announce themselves.
+
 ---
 
 ## BLOCK 1: Pipeline Instructions

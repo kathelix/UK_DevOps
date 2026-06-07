@@ -2,6 +2,22 @@
 
 Improvements deliberately deferred during the 1:1 Make.com → Apps Script port of the Gmail collector (see `apps-script/README.md`). Roughly in priority order.
 
+## Roadmap: GAS collector rollout (agreed 2026-06-07)
+
+Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, consumed by Claude from Airtable.
+
+- [ ] **M1 — Apps Script project files into repo**: `appsscript.json` manifest (declares Gmail Advanced Service, scopes, timezone — replaces manual "Services" setup) + `.clasp.json` (scriptId).
+- [ ] **M2 — CI deploy via clasp**: GitHub Action `clasp push` on merge to main; `CLASPRC_JSON` as repo secret. CI deploys only — execution stays on the GAS time trigger / manual runs (decided: no CI-triggered execution, ever). Script Properties and triggers remain runtime state: one-time manual + idempotent `setup()`.
+- [ ] **M3 — Airtable schema-as-code**: `airtable/schema.json` + idempotent apply script in CI (Meta API, PAT with `schema.bases:write`). Additive-only: the API cannot delete tables/fields or change field types — removals stay manual. First apply creates `RawEmails`.
+- [ ] **M4 — Collector E2E (1 email)**: add `DRY_RUN` flag (log would-be writes/labels, touch nothing); then real run with `MAX_MESSAGES=1`, verify RawEmails row + `make-collected` label.
+- [ ] **M5 — Claude dry-run session (Cowork)**: read `Status=New` rows, split into vacancies, screen per Block 2; propose Vacancies rows + Status flips in chat only, zero writes. Second pass writes to `Vacancies_test` before touching real tables.
+- [ ] **M6 — Instructions cutover (bump to VERSION 2.0)**: rewrite Block 1 §1 (intake = RawEmails, Gmail demoted to fallback + discrepancy canary) and §9 (mark-as-read → Status flip); claude.ai project field becomes a bootstrap stub → read `instructions/Claude_project_instructions.md` from the mounted UK_DevOps folder. Local dir primary, fail loudly if folder not attached, no network fallback. Verify the scheduled run's session has the folder attached. Pause Make scenario after parity.
+
+Decisions of record:
+- **Vacancies stays decisions-only** (applied/skipped/flagged) — no full vacancy inventory (Airtable free-tier record cap; ~100 parsed vacancies/day would blow it in weeks). RawEmails needs a **purge job**: delete `Processed` rows older than ~7 days (record deletion is API-supported).
+- **Cross-source vacancy identity rule** (goes into instructions at M6): same title-pattern + rate band + location + stack via a *different* recruiter = same underlying vacancy. Keep one record, append "also via <recruiter> at <rate>" to Notes, never apply through a second channel once an application is in flight; prefer better terms / direct posting before first application; uncertain identity → flag, don't auto-merge. Rationale: duplicate agency submissions can disqualify the candidate.
+- **Instructions file is versioned** (`VERSION: x.y` header, from 1.0): MAJOR = breaking (intake, gates, output contract), MINOR = non-breaking. Claude echoes the loaded version in every batch report.
+
 ## Collector (`apps-script/gmail-collector.gs`)
 
 - [ ] **Fetch via label store instead of search index.** The `q=`-based listing (inherited from Make) reads Gmail's search index, which silently skips unindexed messages — observed 2026-06-07 with securityclearedjobs.com emails: visible in the Gmail UI, invisible to every API query (`from:`, `subject:`, `in:anywhere`). Switch to label-store listing (`getUserLabelByName('job-vacancies')` / `labelIds`-based) to make such orphans structurally impossible.
