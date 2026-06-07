@@ -14,6 +14,13 @@ Improvements deliberately deferred during the 1:1 Make.com → Apps Script port 
 - [ ] **Regression test for the cleaning regex** using `tests/fixtures/email.html` (e.g. clasp + local runner, or an in-project `checkFixture()` assertion function).
 - [ ] **Raise `MAX_MESSAGES` back to ~25** once testing with `1` is done.
 
+### Reliability (details in `GPT_GAS_reliability_checklist.md`)
+
+- [ ] **LockService guard** — prevent overlapping scheduled runs (duplicate writes, label races); release in `finally`.
+- [ ] **Retry wrapper with exponential backoff** (1s/2s/4s, then fail cleanly) for Airtable and other `UrlFetchApp` calls.
+- [ ] **Timeout safety** — track elapsed time, stop cleanly before the Apps Script execution limit, leave the rest for the next run (pairs with the `MAX_MESSAGES` batch size).
+- Upsert-style dedupe and error/state labels from the checklist are already tracked above ("Dedupe on retry", "`make-failed` / `make-processing`").
+
 ## Pipeline integration
 
 - [ ] **Switch the Claude screening pipeline (project instructions Block 1 §1) from Gmail search to RawEmails**: read `Status=New` → screen → flip to `Processed`. Keep the Gmail connector as fallback + discrepancy canary. Do this only after the collector has run validated in parallel with Make.
