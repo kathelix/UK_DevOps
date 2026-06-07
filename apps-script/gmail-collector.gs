@@ -35,6 +35,8 @@ const CONFIG = {
 const CLEAN_REGEX = /(?:^.*?<body[^>]*>|<\/body>.*$|<img\b[^>]*>|\s(?:style|class|id|width|height|align|valign|bgcolor|border|cellpadding|cellspacing|role|aria-[\w-]+|data-[\w-]+)="[^"]*"|<!--[\s\S]*?-->|(?:&#8199;|&#x2007;|&amp;#8199;|&amp;#x2007;|&#65279;|&amp;#65279;|&#9;|&amp;#9;)|(?<=>)\s+(?=<))/gis;
 
 function collectJobEmails() {
+  // Script Property DRY_RUN=true -> log would-be writes/labels, touch nothing.
+  const dryRun = PropertiesService.getScriptProperties().getProperty('DRY_RUN') === 'true';
   const executionId = Utilities.getUuid(); // Sheets column A: {{executionId}}
   const collectedAt = new Date().toISOString(); // Sheets column B: {{now}}
 
@@ -78,6 +80,19 @@ function collectJobEmails() {
         'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
       },
     });
+  }
+
+  if (dryRun) {
+    for (const r of records) {
+      Logger.log(
+        'DRY_RUN would write: %s | %s | %s | html=%s clean=%s | then add label "%s"',
+        r.fields.MessageId, r.fields.FromEmail, r.fields.Subject,
+        r.fields.HtmlLength, r.fields.CleanLength, CONFIG.COLLECTED_LABEL_NAME
+      );
+      Logger.log('DRY_RUN CleanText preview (first 500 chars):\n%s', r.fields.CleanText.substring(0, 500));
+    }
+    Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', records.length);
+    return;
   }
 
   // Write to Airtable first; label as collected ONLY the messages whose batch succeeded
