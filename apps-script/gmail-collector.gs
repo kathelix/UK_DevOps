@@ -22,7 +22,7 @@ const CONFIG = {
   // Module 3 (updateEmailLabels) adds this label after a successful write:
   COLLECTED_LABEL_NAME: 'job-vacancies/make-collected',
   // Make used limit=1 per run; here one run handles a full day's batch:
-  MAX_MESSAGES: 25,
+  MAX_MESSAGES: 1,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
   // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
