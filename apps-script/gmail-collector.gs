@@ -21,6 +21,9 @@ const CONFIG = {
   QUERY: 'label:job-vacancies -label:job-vacancies/make-collected -label:job-vacancies/make-processing -label:job-vacancies/make-failed',
   // Module 3 (updateEmailLabels) adds this label after a successful write:
   COLLECTED_LABEL_NAME: 'job-vacancies/make-collected',
+  // Applied to messages that fail processing (decode errors etc.) so they
+  // don't head-of-line block the queue; excluded by QUERY. Created on demand.
+  FAILED_LABEL_NAME: 'job-vacancies/make-failed',
   // Make used limit=1 per run; here one run handles a full day's batch:
   MAX_MESSAGES: 1,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
@@ -55,31 +58,28 @@ function collectJobEmails() {
 
   const records = []; // {fields:..., messageId:...}
   for (const ref of messageRefs) {
-    const msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
-    const headers = headerMap_(msg.payload.headers || []);
-    const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
-    const htmlBody = extractHtmlBody_(msg.payload) || '';
-    const cleanText = htmlBody.replace(CLEAN_REGEX, '');
-
-    records.push({
-      messageId: msg.id,
-      fields: {
-        'MessageId': msg.id,                                       // C: {{1.id}}
-        'ExecutionId': executionId,                                // A: {{executionId}}
-        'CollectedAt': collectedAt,                                // B: {{now}}
-        'ThreadId': msg.threadId,                                  // D: {{1.threadId}}
-        'EmailDate': new Date(Number(msg.internalDate)).toISOString(), // E: {{1.internalDate}}
-        'FromName': from.name,                                     // F: {{1.fromName}}
-        'FromEmail': from.email,                                   // G: {{1.fromEmail}}
-        'Subject': headers['subject'] || '',                       // H: {{1.subject}}
-        'Snippet': msg.snippet || '',                              // I: {{1.snippet}}
-        'UserLabels': userLabelNames_(msg.labelIds, labelsById),   // J: {{1.userLabelFolders[].name}}
-        'HtmlLength': htmlBody.length,                             // K: {{length(1.htmlBody)}}
-        'CleanLength': cleanText.length,                           // L: {{length(5.text)}}
-        'CleanText': cleanText.substring(0, CONFIG.CLEAN_TEXT_LIMIT), // M: cleaned text (49k Sheets cap dropped)
-        'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
-      },
-    });
+    let msg, headers;
+    try {
+      msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
+      headers = headerMap_(msg.payload.headers || []);
+      processMessage_(msg, headers, records, executionId, collectedAt, labelsById);
+    } catch (e) {
+      // Isolate poisoned messages: log forensics, label make-failed (real runs only)
+      // so the queue is not head-of-line blocked, and continue.
+      Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
+        ref.id,
+        headers ? (headers['from'] || '?') : '?',
+        headers ? (headers['subject'] || '?') : '?',
+        e.message);
+      if (msg && msg.payload) Logger.log('MIME tree: %s', mimeTree_(msg.payload));
+      if (dryRun) {
+        Logger.log('DRY_RUN: would label message %s as %s', ref.id, CONFIG.FAILED_LABEL_NAME);
+      } else {
+        const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
+        Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', ref.id);
+        Logger.log('Labeled %s as %s — excluded from future runs; inspect manually.', ref.id, CONFIG.FAILED_LABEL_NAME);
+      }
+    }
   }
 
   if (dryRun) {
@@ -113,6 +113,32 @@ function collectJobEmails() {
   Logger.log('Collected %s of %s message(s).', written, records.length);
 }
 
+function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
+  const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
+  const htmlBody = extractHtmlBody_(msg.payload) || '';
+  const cleanText = htmlBody.replace(CLEAN_REGEX, '');
+
+  records.push({
+    messageId: msg.id,
+    fields: {
+        'MessageId': msg.id,                                       // C: {{1.id}}
+        'ExecutionId': executionId,                                // A: {{executionId}}
+        'CollectedAt': collectedAt,                                // B: {{now}}
+        'ThreadId': msg.threadId,                                  // D: {{1.threadId}}
+        'EmailDate': new Date(Number(msg.internalDate)).toISOString(), // E: {{1.internalDate}}
+        'FromName': from.name,                                     // F: {{1.fromName}}
+        'FromEmail': from.email,                                   // G: {{1.fromEmail}}
+        'Subject': headers['subject'] || '',                       // H: {{1.subject}}
+        'Snippet': msg.snippet || '',                              // I: {{1.snippet}}
+        'UserLabels': userLabelNames_(msg.labelIds, labelsById),   // J: {{1.userLabelFolders[].name}}
+        'HtmlLength': htmlBody.length,                             // K: {{length(1.htmlBody)}}
+        'CleanLength': cleanText.length,                           // L: {{length(5.text)}}
+        'CleanText': cleanText.substring(0, CONFIG.CLEAN_TEXT_LIMIT), // M: cleaned text (49k Sheets cap dropped)
+        'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
+      },
+    });
+}
+
 // ---------- helpers ----------
 
 function headerMap_(headers) {
@@ -142,16 +168,23 @@ function extractHtmlBody_(payload) {
 }
 
 function decodeB64Url_(data) {
-  // Gmail returns base64url, often unpadded; Apps Script's decoder is strict.
-  // Normalize whitespace, restore padding, fall back to the standard alphabet.
-  let s = String(data || '').replace(/\s+/g, '');
-  while (s.length % 4 !== 0) s += '=';
-  try {
-    return Utilities.newBlob(Utilities.base64DecodeWebSafe(s)).getDataAsString('UTF-8');
-  } catch (e) {
-    const std = s.replace(/-/g, '+').replace(/_/g, '/');
-    return Utilities.newBlob(Utilities.base64Decode(std)).getDataAsString('UTF-8');
+  // Normalize everything to the standard alphabet with correct padding,
+  // and fail with a FORENSIC error instead of "Could not decode string".
+  let s = String(data || '')
+    .replace(/\s+/g, '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .replace(/=+$/, '');
+  const bad = s.match(/[^A-Za-z0-9+\/]/);
+  if (bad) {
+    throw new Error('base64: invalid char ' + JSON.stringify(bad[0]) +
+      ' (code ' + bad[0].charCodeAt(0) + ') at index ' + bad.index + ' of ' + s.length);
   }
+  const rem = s.length % 4;
+  if (rem === 1) throw new Error('base64: impossible length ' + s.length + ' (mod 4 = 1) — data truncated?');
+  if (rem === 2) s += '==';
+  if (rem === 3) s += '=';
+  return Utilities.newBlob(Utilities.base64Decode(s)).getDataAsString('UTF-8');
 }
 
 function getLabelsById_() {
@@ -165,6 +198,31 @@ function getCollectedLabelId_(labelsById) {
     if (labelsById[id].name === CONFIG.COLLECTED_LABEL_NAME) return id;
   }
   throw new Error('Label not found: ' + CONFIG.COLLECTED_LABEL_NAME);
+}
+
+// Find a label by name; create it if missing (e.g. make-failed may not exist yet).
+function getOrCreateLabelId_(name, labelsById) {
+  for (const id in labelsById) {
+    if (labelsById[id].name === name) return id;
+  }
+  const created = Gmail.Users.Labels.create(
+    { name: name, labelListVisibility: 'labelShow', messageListVisibility: 'show' },
+    'me'
+  );
+  labelsById[created.id] = created;
+  Logger.log('Created label: %s (%s)', name, created.id);
+  return created.id;
+}
+
+// Compact one-line MIME structure for failure forensics,
+// e.g. multipart/alternative(text/plain[data:432], text/html[data:51280])
+function mimeTree_(payload) {
+  if (!payload) return '?';
+  const self = payload.mimeType +
+    (payload.body && payload.body.data ? '[data:' + payload.body.data.length + ']' : '') +
+    (payload.body && payload.body.attachmentId ? '[attachment]' : '');
+  const parts = (payload.parts || []).map(mimeTree_);
+  return parts.length ? self + '(' + parts.join(', ') + ')' : self;
 }
 
 // User labels only (type "user"), names joined - mirrors Sheets column J.
