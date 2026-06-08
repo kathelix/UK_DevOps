@@ -136,11 +136,13 @@ function collectJobEmailsLocked_() {
   let written = 0;
   for (let i = 0; i < records.length; i += 10) { // Airtable max 10 records/request
     // Timeout safety (write/label phase): do not START a new upsert+label batch once
-    // over budget — the ~6 min hard limit could otherwise fire mid-batch and leave it
-    // half-labeled. Records left here keep no make-collected label, so the next run
-    // re-collects them; the MessageId upsert makes those re-writes idempotent. The
-    // ~1 min headroom between MAX_RUNTIME_MS (5 min) and the hard limit comfortably
-    // covers the <=10 upserts + <=10 label calls of a batch already in flight.
+    // over budget. Deferred records keep no make-collected label, so the next run
+    // re-collects them and the MessageId upsert makes the re-writes idempotent (no
+    // duplicate rows). Two limits remain, both bounded by that idempotency rather than
+    // eliminated: (1) batch granularity — a batch already in flight still runs up to 10
+    // label calls unchecked, so a hard-limit kill can half-label it (re-collected next
+    // run); (2) if the fetch loop alone exhausts the budget this trips at i=0 and defers
+    // the whole run, stalling forward progress under sustained slow fetch (see TODO.md).
     if (isOverRuntimeBudget_(startMs, Date.now())) {
       Logger.log('Runtime budget (%s ms) exceeded before write; deferring %s record(s) to next run.',
         CONFIG.MAX_RUNTIME_MS, records.length - i);
