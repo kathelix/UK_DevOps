@@ -135,6 +135,17 @@ function collectJobEmailsLocked_() {
   // the existing row on the next run instead of creating a duplicate.
   let written = 0;
   for (let i = 0; i < records.length; i += 10) { // Airtable max 10 records/request
+    // Timeout safety (write/label phase): do not START a new upsert+label batch once
+    // over budget — the ~6 min hard limit could otherwise fire mid-batch and leave it
+    // half-labeled. Records left here keep no make-collected label, so the next run
+    // re-collects them; the MessageId upsert makes those re-writes idempotent. The
+    // ~1 min headroom between MAX_RUNTIME_MS (5 min) and the hard limit comfortably
+    // covers the <=10 upserts + <=10 label calls of a batch already in flight.
+    if (isOverRuntimeBudget_(startMs, Date.now())) {
+      Logger.log('Runtime budget (%s ms) exceeded before write; deferring %s record(s) to next run.',
+        CONFIG.MAX_RUNTIME_MS, records.length - i);
+      break;
+    }
     const batch = records.slice(i, i + 10);
     const ok = airtableUpsert_(batch.map(r => ({ fields: r.fields })));
     if (!ok) {
