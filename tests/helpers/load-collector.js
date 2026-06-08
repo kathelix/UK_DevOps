@@ -39,6 +39,7 @@ const EXPORTS = [
   'isOverRuntimeBudget_',
   'buildUpsertPayload_',
   'airtableUpsert_',
+  'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
 ];
 
 // Minimal Apps Script global stubs. Utilities is backed by Node's Buffer so

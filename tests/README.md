@@ -36,11 +36,17 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
   `buildUpsertPayload_` and `airtableUpsert_` (the PATCH-upsert dedupe contract).
+- **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
+  stubbed Apps Script globals and an injected clock, exercising both timeout
+  `break`s end to end (fetch-phase and write/label-phase deferral) plus the happy
+  path. A unit test of `isOverRuntimeBudget_` alone leaves the `break` that calls it
+  untested — these tests fail if either break is removed (mutation-checked).
 
 ## Not covered (deliberately)
 
-- The `LockService` single-flight guard — pure side effect around the run; would
-  need the whole run mocked, so it's left to manual / live verification.
-- The fetch loop, Gmail / label calls, and the end-to-end flow — integration
-  concerns, not unit. Full modularization for deeper testability is tracked in
-  `TODO.md` ("Modularize for testability").
+- The `LockService` single-flight guard and the `DRY_RUN` path — left to manual /
+  live verification (the guard is a pure side effect around the run).
+- The inner per-label budget granularity (a batch already in flight is not
+  interrupted mid-label) — an accepted, idempotency-bounded limit, not a unit
+  concern. Full modularization for deeper testability is tracked in `TODO.md`
+  ("Modularize for testability").
