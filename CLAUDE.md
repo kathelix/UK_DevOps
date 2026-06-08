@@ -6,12 +6,9 @@ _A reusable Claude Code onboarding file, distilled from a mature project into st
 
 Fill these in per project — this is the only part you must edit.
 
-- **Project:** `<one-line purpose>`
-- **Owner / final say:** `<name or role — called "the owner" below>`
-- **Repo:** `<host/org/name>`
-- **Primary stack:** `<languages / frameworks>`
-- **Key services:** `<external services, if any>`
-- **Environments:** `<e.g. local, staging, production — or "single env">`
+- **Project:** UK DevOps — Job Search Automation
+- **Owner / final say:** Ivan
+- **Repo:** `github.com/kathelix/UK_DevOps/`
 
 ## Documentation & decisions
 
