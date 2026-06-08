@@ -86,7 +86,7 @@ function collectJobEmailsLocked_() {
     // Timeout safety: stop before Apps Script's ~6 min execution limit. Unfetched
     // messages have no make-collected label, so the next run resumes them. Pairs
     // with the MAX_MESSAGES batch size.
-    if (Date.now() - startMs > CONFIG.MAX_RUNTIME_MS) {
+    if (isOverRuntimeBudget_(startMs, Date.now())) {
       Logger.log('Runtime budget (%s ms) exceeded; deferring %s remaining message(s) to next run.',
         CONFIG.MAX_RUNTIME_MS, messageRefs.length - i);
       break;
@@ -147,6 +147,13 @@ function collectJobEmailsLocked_() {
     }
   }
   Logger.log('Collected %s of %s message(s).', written, records.length);
+}
+
+// Timeout-safety predicate (pure, unit-tested): true once a run has used its
+// MAX_RUNTIME_MS budget. Split out of the fetch loop so the boundary is testable
+// without a live clock; called as isOverRuntimeBudget_(startMs, Date.now()).
+function isOverRuntimeBudget_(startMs, nowMs) {
+  return nowMs - startMs > CONFIG.MAX_RUNTIME_MS;
 }
 
 function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
@@ -277,6 +284,18 @@ function userLabelNames_(labelIds, labelsById) {
     .join(', ');
 }
 
+// Build the Airtable upsert request body (pure, unit-tested): merge on
+// CONFIG.DEDUPE_FIELD so a re-collected message updates its row instead of
+// duplicating it. Split out of airtableUpsert_ so the upsert contract can be
+// tested without a live UrlFetchApp call.
+function buildUpsertPayload_(records) {
+  return {
+    performUpsert: { fieldsToMergeOn: [CONFIG.DEDUPE_FIELD] },
+    records: records,
+    typecast: true,
+  };
+}
+
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
 // re-collected message updates its existing row instead of creating a duplicate.
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
@@ -289,11 +308,7 @@ function airtableUpsert_(records) {
     method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
     contentType: 'application/json',
     headers: { Authorization: 'Bearer ' + token },
-    payload: JSON.stringify({
-      performUpsert: { fieldsToMergeOn: [CONFIG.DEDUPE_FIELD] },
-      records: records,
-      typecast: true,
-    }),
+    payload: JSON.stringify(buildUpsertPayload_(records)),
     muteHttpExceptions: true,
   });
   if (resp.getResponseCode() === 200) return true;
