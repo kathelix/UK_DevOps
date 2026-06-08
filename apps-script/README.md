@@ -1,6 +1,6 @@
 # Gmail Collector — Apps Script setup
 
-Faithful port of Make.com scenario "UK DevOps - Gmail Collector" (Gmail → regex clean → store → label as collected). Destination is Airtable instead of Google Sheets. No behavior improvements in this slice.
+Faithful port of Make.com scenario "UK DevOps - Gmail Collector" (Gmail → regex clean → store → label as collected). Destination is Airtable instead of Google Sheets. The 1:1 port has since been hardened with a reliability net — single-flight lock, timeout-safety, and crash-safe upsert dedupe (see §3).
 
 ## 1. Airtable table
 
@@ -50,8 +50,9 @@ Runtime state — stays manual, not deployable:
 
 - **Same query, same labels** as Make (`-label:job-vacancies/make-collected …`, adds `make-collected` on success). Script and Make scenario share state — they can run side by side during transition without double-collecting. Unread status is never touched, same as Make.
 - **Regex verbatim** from the Text parser module, flags `gis` (global, case-insensitive, dot-matches-newline) exactly as configured in Make.
-- **Write ordering** matches Make: store row first, label as collected only on success — a crash between the two can produce a duplicate row on retry (detectable via MessageId), never a lost email.
-- `make-processing` / `make-failed` labels are excluded by the query but never set — exactly as in Make's exported scenario.
+- **Write ordering** matches Make: write the row first, label as collected only on success. The write is an Airtable upsert (`PATCH` + `performUpsert` on `MessageId`), so a crash between the write and the label re-updates the same row on retry instead of creating a duplicate — never a duplicate row, never a lost email.
+- **Reliability net (divergences from Make, additive only):** a `LockService` single-flight guard makes overlapping scheduled runs exit cleanly instead of double-writing or racing labels; the fetch and write/label loops both stop at `CONFIG.MAX_RUNTIME_MS` (5 min, under the ~6 min Apps Script limit) and defer the remainder to the next run. These guard *how* a run terminates, not *what* it collects.
+- `make-processing` is excluded by the query but never set, as in Make. `make-failed` is also excluded; unlike Make, the script *does* set it on a per-message processing failure (e.g. an HTML decode error) to keep one poison message from blocking the queue. Retry-count-based failure handling (label after N failures) remains a `TODO.md` item.
 - `MAX_MESSAGES` is configurable (Make ran with limit=1).
 
 Known drawbacks inherited from the 1:1 port, and planned improvements, are tracked in [`TODO.md`](../TODO.md) at the repo root.
