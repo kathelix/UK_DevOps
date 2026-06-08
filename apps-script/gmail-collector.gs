@@ -26,8 +26,14 @@ const CONFIG = {
   FAILED_LABEL_NAME: 'job-vacancies/make-failed',
   // One run handles a full day's batch (~25/day inflow). Tested at 1 and 5.
   MAX_MESSAGES: 25,
+  // Timeout safety: stop fetching once a run has been going this long, well under
+  // Apps Script's ~6 min limit. Remaining messages are resumed on the next run.
+  MAX_RUNTIME_MS: 300000,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
+  // Upsert merge key (Gmail message id): re-collecting the same message updates
+  // its row instead of duplicating it. Used by airtableUpsert_.
+  DEDUPE_FIELD: 'MessageId',
   // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
   // long-text limit - safety truncation only, not a design choice:
   CLEAN_TEXT_LIMIT: 100000,
@@ -38,10 +44,29 @@ const CONFIG = {
 const CLEAN_REGEX = /(?:^.*?<body[^>]*>|<\/body>.*$|<img\b[^>]*>|\s(?:style|class|id|width|height|align|valign|bgcolor|border|cellpadding|cellspacing|role|aria-[\w-]+|data-[\w-]+)="[^"]*"|<!--[\s\S]*?-->|(?:&#8199;|&#x2007;|&amp;#8199;|&amp;#x2007;|&#65279;|&amp;#65279;|&#9;|&amp;#9;)|(?<=>)\s+(?=<))/gis;
 
 function collectJobEmails() {
+  // Single-flight guard: overlapping scheduled runs cause duplicate writes and
+  // label races. tryLock(0) returns immediately; if another run holds the lock,
+  // exit cleanly and let it finish — this run's messages stay uncollected (no
+  // make-collected label) and are picked up on the next run.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(0)) {
+    Logger.log('Another collector run holds the lock; exiting to avoid overlap.');
+    return;
+  }
+  try {
+    collectJobEmailsLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// One collector run. Always invoked under the script lock (see collectJobEmails).
+function collectJobEmailsLocked_() {
   // Script Property DRY_RUN=true -> log would-be writes/labels, touch nothing.
   const dryRun = PropertiesService.getScriptProperties().getProperty('DRY_RUN') === 'true';
   const executionId = Utilities.getUuid(); // Sheets column A: {{executionId}}
   const collectedAt = new Date().toISOString(); // Sheets column B: {{now}}
+  const startMs = Date.now(); // anchor for the MAX_RUNTIME_MS timeout-safety budget
 
   const listResp = Gmail.Users.Messages.list('me', {
     q: CONFIG.QUERY,
@@ -57,7 +82,16 @@ function collectJobEmails() {
   const collectedLabelId = getCollectedLabelId_(labelsById);
 
   const records = []; // {fields:..., messageId:...}
-  for (const ref of messageRefs) {
+  for (let i = 0; i < messageRefs.length; i++) {
+    // Timeout safety: stop before Apps Script's ~6 min execution limit. Unfetched
+    // messages have no make-collected label, so the next run resumes them. Pairs
+    // with the MAX_MESSAGES batch size.
+    if (Date.now() - startMs > CONFIG.MAX_RUNTIME_MS) {
+      Logger.log('Runtime budget (%s ms) exceeded; deferring %s remaining message(s) to next run.',
+        CONFIG.MAX_RUNTIME_MS, messageRefs.length - i);
+      break;
+    }
+    const ref = messageRefs[i];
     let msg, headers;
     try {
       msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
@@ -95,14 +129,16 @@ function collectJobEmails() {
     return;
   }
 
-  // Write to Airtable first; label as collected ONLY the messages whose batch succeeded
-  // (same ordering as Make: Sheets row -> then label).
+  // Upsert to Airtable first, then label as collected ONLY the messages whose batch
+  // succeeded (same ordering as Make: row -> then label). Upsert keyed on MessageId
+  // makes the write idempotent: a crash between the write and the labeling re-updates
+  // the existing row on the next run instead of creating a duplicate.
   let written = 0;
   for (let i = 0; i < records.length; i += 10) { // Airtable max 10 records/request
     const batch = records.slice(i, i + 10);
-    const ok = airtableCreate_(batch.map(r => ({ fields: r.fields })));
+    const ok = airtableUpsert_(batch.map(r => ({ fields: r.fields })));
     if (!ok) {
-      Logger.log('Airtable write FAILED for batch starting at %s - those messages stay uncollected and will retry next run.', i);
+      Logger.log('Airtable upsert FAILED for batch starting at %s - those messages stay uncollected and will retry next run.', i);
       continue;
     }
     for (const r of batch) {
@@ -241,19 +277,26 @@ function userLabelNames_(labelIds, labelsById) {
     .join(', ');
 }
 
-function airtableCreate_(records) {
+// Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
+// re-collected message updates its existing row instead of creating a duplicate.
+// Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
+function airtableUpsert_(records) {
   const token = PropertiesService.getScriptProperties().getProperty('AIRTABLE_TOKEN');
   if (!token) throw new Error('Script property AIRTABLE_TOKEN is not set.');
   const url = 'https://api.airtable.com/v0/' + CONFIG.AIRTABLE_BASE_ID + '/' +
     encodeURIComponent(CONFIG.AIRTABLE_TABLE);
   const resp = UrlFetchApp.fetch(url, {
-    method: 'post',
+    method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
     contentType: 'application/json',
     headers: { Authorization: 'Bearer ' + token },
-    payload: JSON.stringify({ records: records, typecast: true }),
+    payload: JSON.stringify({
+      performUpsert: { fieldsToMergeOn: [CONFIG.DEDUPE_FIELD] },
+      records: records,
+      typecast: true,
+    }),
     muteHttpExceptions: true,
   });
   if (resp.getResponseCode() === 200) return true;
-  Logger.log('Airtable error %s: %s', resp.getResponseCode(), resp.getContentText().slice(0, 500));
+  Logger.log('Airtable upsert error %s: %s', resp.getResponseCode(), resp.getContentText().slice(0, 500));
   return false;
 }

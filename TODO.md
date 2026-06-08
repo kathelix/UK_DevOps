@@ -21,7 +21,7 @@ Decisions of record:
 ## Collector (`apps-script/gmail-collector.gs`)
 
 - [ ] **Fetch via label store instead of search index.** The `q=`-based listing (inherited from Make) reads Gmail's search index, which silently skips unindexed messages — observed 2026-06-07 with securityclearedjobs.com emails: visible in the Gmail UI, invisible to every API query (`from:`, `subject:`, `in:anywhere`). Switch to label-store listing (`getUserLabelByName('job-vacancies')` / `labelIds`-based) to make such orphans structurally impossible.
-- [ ] **Dedupe on retry.** Write-then-label ordering means a crash between the Airtable write and the labeling re-collects the same message next run. Use Airtable upsert (`performUpsert` on MessageId) or pre-check existing MessageIds. When rows later become per-vacancy instead of per-email, switch the dedupe key to `gmailMessageId + urlHash`.
+- [x] **Dedupe on retry.** Write-then-label ordering means a crash between the Airtable write and the labeling re-collects the same message next run. Use Airtable upsert (`performUpsert` on MessageId) or pre-check existing MessageIds. When rows later become per-vacancy instead of per-email, switch the dedupe key to `gmailMessageId + urlHash`. _(Done 2026-06-08, branch `collector/reliability-net`: `airtableUpsert_` PATCHes with `performUpsert` on MessageId.)_
 - [ ] **Actually use `make-failed` / `make-processing` labels.** The query excludes them (as in Make) but nothing ever sets them; a persistently failing message currently just retries forever. Label it `make-failed` after N failures.
 - [ ] **Failure alerting.** Script emails on error, and/or the screening pipeline treats "0 New rows in RawEmails but unread mail present in Gmail" as a collector failure rather than a quiet day.
 - [ ] **Second cleaning pass.** The regex strips attributes/comments/images but leaves bare tag skeletons (`<td>`, `<tr>`, `<a href>`) and undecoded entities (`&amp;`, `&pound;`). Add a tag-to-text pass (newlines at block boundaries, entity decode) — meaningful token saving for the screening step. Measured 2026-06-07 (NIJobs single-rec, 47.2KB html → 19.4KB clean): ~3.5KB is invisible-entity preheader padding (`&#847;&zwnj;&shy;` walls) the regex doesn't target; real content is only ~5KB.
@@ -33,9 +33,9 @@ Decisions of record:
 
 ### Reliability
 
-- [ ] **LockService guard** — prevent overlapping scheduled runs (duplicate writes, label races); `tryLock`, exit cleanly if held, release in `finally`.
+- [x] **LockService guard** — prevent overlapping scheduled runs (duplicate writes, label races); `tryLock`, exit cleanly if held, release in `finally`. _(Done 2026-06-08, branch `collector/reliability-net`: `tryLock(0)` wrapper around `collectJobEmailsLocked_`.)_
 - [ ] **Retry wrapper with exponential backoff** (1s/2s/4s, then fail cleanly) for external calls: Airtable writes, Gmail API reads, any `UrlFetchApp`.
-- [ ] **Timeout safety** — track elapsed time, stop cleanly before the Apps Script execution limit, leave the rest for the next run (pairs with the `MAX_MESSAGES` batch size).
+- [x] **Timeout safety** — track elapsed time, stop cleanly before the Apps Script execution limit, leave the rest for the next run (pairs with the `MAX_MESSAGES` batch size). _(Done 2026-06-08, branch `collector/reliability-net`: `MAX_RUNTIME_MS` break in the fetch loop.)_
 
 ## Airtable
 
