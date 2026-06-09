@@ -382,6 +382,12 @@ function decodeEmbeddedDestination_(url) {
     if (!rawVal) continue;
     const decoded = decodeComponent_(rawVal);
     if (decoded === null) continue;
+    // A real destination is a single URL token: it never contains whitespace or HTML
+    // delimiters. decodeURIComponent turns %3C / %3E / %22 / %20 into live <, >, ", space, so
+    // an un-guarded decode would let a sender-controlled tracker inject HTML structure that
+    // CLEAN_REGEX then acts on (a decoded "</body>" truncates CleanText). Reject any decoded
+    // value outside the harvest token shape ([^\s"'<>]+) — what we reinsert stays a valid URL.
+    if (/[\s"'<>]/.test(decoded)) continue;
     if (/^https?:\/\//i.test(decoded)) return decoded; // absolute URL destination
     if (decoded.charAt(0) === '/' && decoded.charAt(1) !== '/') {
       const origin = schemeHostOf_(url);

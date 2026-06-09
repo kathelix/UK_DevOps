@@ -114,6 +114,17 @@ test('decode: protocol-relative //host is NOT treated as an absolute path', () =
   assert.equal(gas.decodeEmbeddedDestination_('https://t.test/r?url=%2F%2Fevil.test%2Fx'), null);
 });
 
+test('decode: rejects a value that decodes to HTML delimiters / whitespace (no structure injection)', () => {
+  // %3C/%3E/%22/%20 decode to live <, >, ", space — inserting those could alter the HTML
+  // CLEAN_REGEX sees (a decoded </body> truncates CleanText). Such a value is not a valid URL
+  // token, so it is skipped (left as the original tracker), not decoded.
+  assert.equal(gas.decodeEmbeddedDestination_('https://t.test/r?u=' + encodeURIComponent('https://dest.test/</body>')), null, 'angle brackets');
+  assert.equal(gas.decodeEmbeddedDestination_('https://t.test/r?u=' + encodeURIComponent('https://dest.test/a"x')), null, 'double quote');
+  assert.equal(gas.decodeEmbeddedDestination_('https://t.test/r?u=' + encodeURIComponent('/path with space')), null, 'whitespace');
+  // A clean destination (no delimiters) still decodes — the guard only rejects the unsafe shape.
+  assert.equal(gas.decodeEmbeddedDestination_('https://t.test/r?u=' + encodeURIComponent('https://dest.test/job/9?a=1&b=2')), 'https://dest.test/job/9?a=1&b=2');
+});
+
 // ---------- stripUtm_ (step b) ----------
 
 test('stripUtm_ removes every utm_* param, keeps the rest in order + the #fragment', () => {
@@ -221,6 +232,21 @@ test('cleanLinksInHtml_ does NOT corrupt a decoded destination that embeds anoth
     "A's decoded destination is not corrupted by B's swap");
   // Standalone B IS utm-stripped.
   assert.ok(res.html.includes('href="https://b.test/x"'), 'standalone B is utm-stripped');
+});
+
+test('cleanLinksInHtml_ + CLEAN_REGEX: a tracker decoding to </body> cannot truncate CleanText (F1)', () => {
+  // Codex F1 repro: a sender-controlled tracker whose decoded value contains </body>. The
+  // unsafe value is rejected by decode, so the tracker is left in place (still %-encoded) and
+  // the HTML structure CLEAN_REGEX sees is unchanged — no truncation of trailing content.
+  const tracker = 'https://t.test/r?u=' + encodeURIComponent('https://dest.test/</body>');
+  const html = `<html><body>before <a href="${tracker}">job</a> after</body></html>`;
+  const cleaned = gas.cleanLinksInHtml_(html);
+  assert.equal(cleaned.decoded, 0, 'the unsafe destination is not decoded');
+  const re = gas.CLEAN_REGEX;
+  re.lastIndex = 0;
+  const full = cleaned.html.replace(re, '');
+  assert.ok(full.includes('after'), 'trailing content after the link is preserved (not truncated)');
+  assert.ok(!full.includes('</body>'), 'no injected </body> materializes into CleanText');
 });
 
 test('cleanLinksInHtml_ cleans an href URL even when an HTML entity follows the closing quote', () => {

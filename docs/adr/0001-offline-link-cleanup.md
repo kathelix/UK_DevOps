@@ -38,7 +38,7 @@ the body (both `href="…"` values and bare-text URLs) it does two mechanical th
 2. **Strip `utm_*`** analytics params (name starts with `utm_`, case-insensitive),
    preserving every other param, their order, and any `#fragment`.
 
-Applied (a) then (b); the swap is an in-place `split`/`join` of the original encoded string.
+Applied (a) then (b); the cleaned form is swapped in place over the original encoded HTML in one position-based pass (see Implementation notes).
 `HtmlLength` stays the **original** body length (parity with Make's `length(1.htmlBody)`);
 only `CleanText`/`CleanLength` reflect the cleanup. With neither an embedded destination nor
 a `utm_` param present, the transform is a **byte-identical no-op**. A per-run
