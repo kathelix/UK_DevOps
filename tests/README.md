@@ -30,9 +30,12 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 
 ## What's covered
 
-- **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden
-  regression against a real captured email (`fixtures/email.html`). Regex-only — it tests
-  the regex in isolation, not the link-cleanup stage that now runs before it.
+- **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden regression
+  over a **corpus** of real captured job-alert emails spanning a spread of senders / HTML
+  styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
+  ziprecruiter — sanitized of PII, LF-only). A manifest check asserts every `email-*.html`
+  has a golden entry and vice versa, so a fixture can't sit unread by any test. Regex-only —
+  it tests the regex in isolation, not the link-cleanup stage that runs before it.
 - **`link-cleanup.test.js`** — the offline link cleanup (pure, no network):
   `harvestUrls_` (href + bare-text URLs, trailing-punctuation trim, dedupe),
   `decodeEmbeddedDestination_` (the value-guard decode — absolute URL / absolute-path

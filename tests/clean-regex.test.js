@@ -2,8 +2,10 @@
 
 // Regression coverage for CONFIG.CLEAN_REGEX — the single regex that turns a raw
 // HTML email body into the stored CleanText (a 1:1 port of the Make.com "Text
-// parser" module). The big win: pin its behavior on a real captured email so a
-// future "second cleaning pass" can't silently change what gets stored.
+// parser" module). The big win: pin its behavior on a CORPUS of real captured
+// emails (a spread of senders/HTML styles) so a future "second cleaning pass"
+// can't silently change what gets stored. This file tests the regex ONLY — the
+// offline link-cleanup stage that runs before it is covered in link-cleanup.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -11,7 +13,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadCollector } = require('./helpers/load-collector');
 
-const FIXTURE = path.join(__dirname, 'fixtures', 'email.html');
 const gas = loadCollector();
 const clean = gas.clean;
 
@@ -25,8 +26,8 @@ test('CLEAN_REGEX carries the flags Make exported (/gis)', () => {
 test('each alternative strips what it targets (focused cases)', () => {
   // head: everything up to and including <body ...> is removed
   assert.equal(clean('<html><head><style>x{y:1}</style></head><body>KEEP</body>'), 'KEEP');
-  // tail: </body> and everything after it (the real fixture has no </body>, so
-  // this branch is only covered here)
+  // tail: </body> and everything after it (also exercised by the real corpus below,
+  // several of which end with </body></html>)
   assert.equal(clean('<body>KEEP</body><footer>DROP</footer></html>'), 'KEEP');
   // <img ...>, including self-closing, removed wholesale
   assert.equal(clean('<p>a<img src="x.png" alt="z" />b</p>'), '<p>ab</p>');
@@ -43,24 +44,36 @@ test('each alternative strips what it targets (focused cases)', () => {
   assert.equal(clean('<a href="http://x">Job</a>'), '<a href="http://x">Job</a>');
 });
 
-test('regression: real ZipRecruiter job-alert email cleans to the golden output', () => {
-  const raw = fs.readFileSync(FIXTURE, 'utf8');
-  assert.ok(!/\r/.test(raw), 'fixture must stay LF-only so the golden length is platform-stable');
+// Golden corpus: real captured job-alert emails from a spread of senders (sanitized of PII,
+// LF-only), pinning CLEAN_REGEX behaviour across real-world HTML variety — table-heavy
+// (reed, nijobs), div-heavy (ziprecruiter), Marketing-Cloud (welcometothejungle), digest
+// (joblookup, cv-library). Each entry is [rawLength, cleanLength]. If CLEAN_REGEX or a fixture
+// changes intentionally, eyeball the diff and update the numbers in the SAME commit.
+const FIXTURES_DIR = path.join(__dirname, 'fixtures');
+const GOLDEN = {
+  'email-cv-library.html': [88696, 18008],
+  'email-joblookup.html': [54676, 11866],
+  'email-nijobs.html': [77060, 18085],
+  'email-reed.html': [57460, 7576],
+  'email-welcometothejungle.html': [52858, 5104],
+  'email-ziprecruiter.html': [48248, 26906],
+};
 
-  const out = clean(raw);
-
-  // Cleaning shrinks the body and removes the head/style block, images, comments,
-  // presentational attributes, and inter-tag whitespace.
-  assert.ok(out.length < raw.length, 'cleaning should remove bytes');
-  for (const gone of ['<style', '<head', '@media', 'viewport', '<img', '<!--', 'style="', 'class="']) {
-    assert.ok(!out.includes(gone), `expected ${JSON.stringify(gone)} to be stripped`);
-  }
-  assert.ok(!/>\s+</.test(out), 'no whitespace should remain between tags');
-  // Real content survives the clean.
-  assert.ok(out.includes('Engineer'), 'job-title text should survive cleaning');
-
-  // Golden values. If CLEAN_REGEX or the fixture changes intentionally, eyeball the
-  // diff and update these two numbers in the same commit.
-  assert.equal(raw.length, 55811);
-  assert.equal(out.length, 51222);
+test('fixture corpus exactly matches the golden manifest (no unused or unrecorded fixtures)', () => {
+  // Every email-*.html must have a golden entry and vice versa — so a fixture can never sit in
+  // the repo unread by a test (the trap that let a pre-cleaned, truncated fixture go unnoticed).
+  const onDisk = fs.readdirSync(FIXTURES_DIR).filter(f => /^email-.*\.html$/.test(f)).sort();
+  assert.deepEqual(onDisk, Object.keys(GOLDEN).sort());
 });
+
+for (const [file, [rawLen, cleanLen]] of Object.entries(GOLDEN)) {
+  test(`CLEAN_REGEX golden: ${file}`, () => {
+    const raw = fs.readFileSync(path.join(FIXTURES_DIR, file), 'utf8');
+    assert.ok(!/\r/.test(raw), 'fixture must stay LF-only so golden lengths are platform-stable');
+    const out = clean(raw);
+    assert.ok(out.length < raw.length, 'cleaning should remove bytes');
+    assert.ok(!/>\s+</.test(out), 'no whitespace should remain strictly between tags');
+    assert.equal(raw.length, rawLen, 'raw length drift — eyeball the fixture diff, then update GOLDEN');
+    assert.equal(out.length, cleanLen, 'clean length drift — eyeball the CLEAN_REGEX diff, then update GOLDEN');
+  });
+}
