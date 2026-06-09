@@ -26,9 +26,14 @@ const CONFIG = {
   FAILED_LABEL_NAME: 'job-vacancies/make-failed',
   // One run handles a full day's batch (~25/day inflow). Tested at 1 and 5.
   MAX_MESSAGES: 25,
-  // Timeout safety: stop fetching once a run has been going this long, well under
-  // Apps Script's ~6 min limit. Remaining messages are resumed on the next run.
+  // Timeout safety: stop starting new sub-batches once a run has been going this long,
+  // well under Apps Script's ~6 min limit. Deferred messages resume on the next run.
   MAX_RUNTIME_MS: 300000,
+  // Commit granularity: process the queue in sub-batches of this many messages
+  // (fetch -> upsert -> label, each committed before the next), so a timeout or crash
+  // loses at most one sub-batch and every run makes forward progress. Must stay <= 10
+  // (Airtable's records/request cap) or the per-sub-batch upsert needs splitting.
+  SUB_BATCH_SIZE: 5,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
   // Upsert merge key (Gmail message id): re-collecting the same message updates
@@ -81,85 +86,85 @@ function collectJobEmailsLocked_() {
   const labelsById = getLabelsById_();
   const collectedLabelId = getCollectedLabelId_(labelsById);
 
-  const records = []; // {fields:..., messageId:...}
-  for (let i = 0; i < messageRefs.length; i++) {
-    // Timeout safety: stop before Apps Script's ~6 min execution limit. Unfetched
-    // messages have no make-collected label, so the next run resumes them. Pairs
-    // with the MAX_MESSAGES batch size.
+  // Process the queue in sub-batches of CONFIG.SUB_BATCH_SIZE: fetch -> upsert ->
+  // label, committing each sub-batch before starting the next. The single budget guard
+  // sits at the TOP of the loop, so once over budget we stop *starting* sub-batches and
+  // defer the rest; work already committed in earlier sub-batches is durable. Almost no
+  // time has elapsed at the start, so the first sub-batch effectively always runs —
+  // every run makes forward progress even under slow fetch, and a timeout/crash loses
+  // at most one in-flight sub-batch (re-collected next run, made idempotent by the
+  // MessageId upsert). Residual window: within a started sub-batch the <=SUB_BATCH_SIZE
+  // label calls are unchecked, so a hard-limit kill can still half-label that one
+  // sub-batch — bounded, not eliminated, by the same idempotency.
+  let collected = 0;
+  let inspected = 0;
+  for (let start = 0; start < messageRefs.length; start += CONFIG.SUB_BATCH_SIZE) {
     if (isOverRuntimeBudget_(startMs, Date.now())) {
-      Logger.log('Runtime budget (%s ms) exceeded; deferring %s remaining message(s) to next run.',
-        CONFIG.MAX_RUNTIME_MS, messageRefs.length - i);
+      Logger.log('Runtime budget (%s ms) exceeded; deferring %s message(s) to next run.',
+        CONFIG.MAX_RUNTIME_MS, messageRefs.length - start);
       break;
     }
-    const ref = messageRefs[i];
-    let msg, headers;
-    try {
-      msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
-      headers = headerMap_(msg.payload.headers || []);
-      processMessage_(msg, headers, records, executionId, collectedAt, labelsById);
-    } catch (e) {
-      // Isolate poisoned messages: log forensics, label make-failed (real runs only)
-      // so the queue is not head-of-line blocked, and continue.
-      Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
-        ref.id,
-        headers ? (headers['from'] || '?') : '?',
-        headers ? (headers['subject'] || '?') : '?',
-        e.message);
-      if (msg && msg.payload) Logger.log('MIME tree: %s', mimeTree_(msg.payload));
-      if (dryRun) {
-        Logger.log('DRY_RUN: would label message %s as %s', ref.id, CONFIG.FAILED_LABEL_NAME);
-      } else {
-        const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
-        Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', ref.id);
-        Logger.log('Labeled %s as %s — excluded from future runs; inspect manually.', ref.id, CONFIG.FAILED_LABEL_NAME);
+
+    // Fetch + parse this sub-batch; isolate poisoned messages (label make-failed on
+    // real runs) so one bad message does not block its neighbours or the queue.
+    const records = []; // {fields:..., messageId:...}
+    for (const ref of messageRefs.slice(start, start + CONFIG.SUB_BATCH_SIZE)) {
+      let msg, headers;
+      try {
+        msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
+        headers = headerMap_(msg.payload.headers || []);
+        processMessage_(msg, headers, records, executionId, collectedAt, labelsById);
+      } catch (e) {
+        Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
+          ref.id,
+          headers ? (headers['from'] || '?') : '?',
+          headers ? (headers['subject'] || '?') : '?',
+          e.message);
+        if (msg && msg.payload) Logger.log('MIME tree: %s', mimeTree_(msg.payload));
+        if (dryRun) {
+          Logger.log('DRY_RUN: would label message %s as %s', ref.id, CONFIG.FAILED_LABEL_NAME);
+        } else {
+          const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
+          Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', ref.id);
+          Logger.log('Labeled %s as %s — excluded from future runs; inspect manually.', ref.id, CONFIG.FAILED_LABEL_NAME);
+        }
       }
+    }
+    inspected += records.length;
+    if (records.length === 0) continue;
+
+    if (dryRun) {
+      for (const r of records) {
+        Logger.log(
+          'DRY_RUN would write: %s | %s | %s | html=%s clean=%s | then add label "%s"',
+          r.fields.MessageId, r.fields.FromEmail, r.fields.Subject,
+          r.fields.HtmlLength, r.fields.CleanLength, CONFIG.COLLECTED_LABEL_NAME
+        );
+        Logger.log('DRY_RUN CleanText preview (first 500 chars):\n%s', r.fields.CleanText.substring(0, 500));
+      }
+      continue; // touch nothing
+    }
+
+    // Upsert the sub-batch first (<=SUB_BATCH_SIZE <= Airtable's 10/request cap), then
+    // label as collected ONLY if the upsert succeeded (same ordering as Make: row ->
+    // label). The MessageId upsert makes a re-collected message update its row instead
+    // of duplicating it, so the write-then-label ordering is crash-safe.
+    const ok = airtableUpsert_(records.map(r => ({ fields: r.fields })));
+    if (!ok) {
+      Logger.log('Airtable upsert FAILED for sub-batch starting at %s - those messages stay uncollected and will retry next run.', start);
+      continue;
+    }
+    for (const r of records) {
+      Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
+      collected++;
     }
   }
 
   if (dryRun) {
-    for (const r of records) {
-      Logger.log(
-        'DRY_RUN would write: %s | %s | %s | html=%s clean=%s | then add label "%s"',
-        r.fields.MessageId, r.fields.FromEmail, r.fields.Subject,
-        r.fields.HtmlLength, r.fields.CleanLength, CONFIG.COLLECTED_LABEL_NAME
-      );
-      Logger.log('DRY_RUN CleanText preview (first 500 chars):\n%s', r.fields.CleanText.substring(0, 500));
-    }
-    Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', records.length);
-    return;
+    Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', inspected);
+  } else {
+    Logger.log('Collected %s of %s message(s).', collected, messageRefs.length);
   }
-
-  // Upsert to Airtable first, then label as collected ONLY the messages whose batch
-  // succeeded (same ordering as Make: row -> then label). Upsert keyed on MessageId
-  // makes the write idempotent: a crash between the write and the labeling re-updates
-  // the existing row on the next run instead of creating a duplicate.
-  let written = 0;
-  for (let i = 0; i < records.length; i += 10) { // Airtable max 10 records/request
-    // Timeout safety (write/label phase): do not START a new upsert+label batch once
-    // over budget. Deferred records keep no make-collected label, so the next run
-    // re-collects them and the MessageId upsert makes the re-writes idempotent (no
-    // duplicate rows). Two limits remain, both bounded by that idempotency rather than
-    // eliminated: (1) batch granularity — a batch already in flight still runs up to 10
-    // label calls unchecked, so a hard-limit kill can half-label it (re-collected next
-    // run); (2) if the fetch loop alone exhausts the budget this trips at i=0 and defers
-    // the whole run, stalling forward progress under sustained slow fetch (see TODO.md).
-    if (isOverRuntimeBudget_(startMs, Date.now())) {
-      Logger.log('Runtime budget (%s ms) exceeded before write; deferring %s record(s) to next run.',
-        CONFIG.MAX_RUNTIME_MS, records.length - i);
-      break;
-    }
-    const batch = records.slice(i, i + 10);
-    const ok = airtableUpsert_(batch.map(r => ({ fields: r.fields })));
-    if (!ok) {
-      Logger.log('Airtable upsert FAILED for batch starting at %s - those messages stay uncollected and will retry next run.', i);
-      continue;
-    }
-    for (const r of batch) {
-      Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
-      written++;
-    }
-  }
-  Logger.log('Collected %s of %s message(s).', written, records.length);
 }
 
 // Timeout-safety predicate (pure, unit-tested): true once a run has used its
