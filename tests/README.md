@@ -31,7 +31,19 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 ## What's covered
 
 - **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden
-  regression against a real captured email (`fixtures/email.html`).
+  regression against a real captured email (`fixtures/email.html`). Regex-only — it tests
+  the regex in isolation, not the link-cleanup stage that now runs before it.
+- **`link-cleanup.test.js`** — the offline link cleanup (pure, no network):
+  `harvestUrls_` (href + bare-text URLs, trailing-punctuation trim, dedupe),
+  `decodeEmbeddedDestination_` (the value-guard decode — absolute URL / absolute-path
+  cases, `?r=5`/`?u=alice` rejected, document-order-first incl. the accepted mis-pick,
+  protocol-relative `//` rejected), `stripUtm_` (order/separator/`#fragment` preservation,
+  `&amp;` and `&`, case-insensitive, the "merely contains utm" non-match, parity no-op),
+  `cleanUrl_` (decode-then-utm), and `cleanLinksInHtml_` (all-occurrence swap + the
+  decoded/utm_stripped/bytes_saved metric, incl. the zero case). An **end-to-end** golden
+  on a real cv-library job-alert email (`fixtures/email-cv-library.html`) asserts the
+  cleaner decodes its trackers + strips utm and shrinks the stored `CleanText` further than
+  the regex alone.
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
@@ -53,8 +65,11 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   no silent data loss), **poison isolation** (a bad message is make-failed while
   siblings are collected; an all-poison sub-batch sends no empty upsert), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
-  path, and `DRY_RUN`. Each guard is mutation-checked — removing the budget break, the
-  `if (!ok)` check, the empty-records guard, or the clamp flips an assertion.
+  path, `DRY_RUN`, and the **offline link-cleanup wiring** (`HtmlLength` stays the original
+  body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
+  logged). Each guard is mutation-checked — removing the budget break, the
+  `if (!ok)` check, the empty-records guard, the clamp, or the link-cleanup wiring flips an
+  assertion.
 
 ## Not covered (deliberately)
 

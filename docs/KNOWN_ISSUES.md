@@ -23,3 +23,13 @@ The Meta API cannot delete tables/fields or change field types, so `airtable/app
 ## 4. Aggregator "remote" tags lie
 
 Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise Technical listing: 3 days onsite, Inside IR35, SC/DV preferred). NIJobs prints "Benefits: Work From Home" under descriptions that say "Hybrid from Belfast". Screening rules in `instructions/` v1.1 treat tags as noise — only spec text or web verification confirms remote.
+
+## 5. Offline link cleanup: bare-text URL immediately followed by an HTML entity
+
+**Symptom:** the collector's offline link-cleanup harvest regex (`https?://[^\s"'<>]+`, in `harvestUrls_`) stops only at whitespace / quotes / `<>`. A **bare-text** URL (one not inside an `href="…"`, so not bounded by a quote) immediately followed by a content entity — `&nbsp;`, `&hellip;`, `&#160;`, … — absorbs that entity into the match. If that URL also carries a `utm_` param or an embedded destination (so it gets rewritten), the rewrite can mangle the trailing entity/text.
+
+**Cause:** in an HTML body, `&` is genuinely ambiguous — it is both a raw query separator (`?a=1&b=2`, used as-is by CV-Library / Google Analytics links) **and** the start of an entity (`&nbsp;`). The regex deliberately keeps `&` so real raw-`&` and `&amp;` query separators stay part of the URL; the cost is that a trailing content entity on a *bare-text* URL is indistinguishable from a separator.
+
+**Why not "fixed":** excluding `&` from the harvest class would truncate the real raw-`&` trackers (verified against `tests/fixtures/email-cv-library.html`), which is worse. A full entity-vs-separator disambiguation still cannot resolve `&amp;` in prose.
+
+**Who it affects:** essentially nothing in practice — real job-alert HTML puts URLs in `href="…"` attributes, where the closing quote bounds the URL and no absorption occurs (covered by a test). Bare-text URLs adjacent to entities do not appear in the corpus. Flagged during the offline-link-cleanup review (2026-06-09); revisit only if a real sender surfaces it.

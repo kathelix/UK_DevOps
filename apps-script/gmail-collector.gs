@@ -118,6 +118,11 @@ function collectJobEmailsLocked_() {
   // sub-batch — bounded, not eliminated, by the same idempotency.
   let collected = 0;
   let inspected = 0;
+  // Per-run tally for the offline link-cleanup step (see cleanLinksInHtml_), accumulated
+  // across sub-batches in processMessage_ and logged once after the loop. decoded = embedded
+  // destinations recovered, utmStripped = URLs that had >=1 utm_ param removed, bytesSaved =
+  // total chars removed across all in-place swaps. Pure/offline — no network, no schema field.
+  const linkStats = { decoded: 0, utmStripped: 0, bytesSaved: 0 };
   // Clamp the configured sub-batch size to a safe stride: a 0/negative value would never
   // advance `start` (infinite loop), and a value > 10 exceeds Airtable's records/request
   // cap (the oversized PATCH is rejected 422 and the sub-batch would never commit).
@@ -140,7 +145,7 @@ function collectJobEmailsLocked_() {
       try {
         msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
         headers = headerMap_(msg.payload.headers || []);
-        processMessage_(msg, headers, records, executionId, collectedAt, labelsById);
+        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats);
       } catch (e) {
         Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
           ref.id,
@@ -186,6 +191,11 @@ function collectJobEmailsLocked_() {
       collected++;
     }
   }
+
+  // Offline link-cleanup metric — once per run, log line only (no Airtable field). Logged in
+  // both real and DRY_RUN paths since the cleanup runs in processMessage_ either way.
+  Logger.log('Links: decoded=%s utm_stripped=%s bytes_saved=%s',
+    linkStats.decoded, linkStats.utmStripped, linkStats.bytesSaved);
 
   if (dryRun) {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', inspected);
@@ -238,10 +248,19 @@ function getIntProp_(name, fallback, min, max) {
   return fallback;
 }
 
-function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
+function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats) {
   const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
   const htmlBody = extractHtmlBody_(msg.payload) || '';
-  const cleanText = htmlBody.replace(CLEAN_REGEX, '');
+  // Offline link cleanup (NO network): decode trackers that embed their destination in a
+  // query param (URL/path-guarded) and strip utm_* analytics params, in place, BEFORE
+  // CLEAN_REGEX. With neither present this is a byte-identical no-op, so CleanText matches
+  // the pre-cleanup output exactly. HtmlLength stays the ORIGINAL html length (Make parity);
+  // only CleanText / CleanLength reflect the cleanup.
+  const linkClean = cleanLinksInHtml_(htmlBody);
+  linkStats.decoded += linkClean.decoded;
+  linkStats.utmStripped += linkClean.utmStripped;
+  linkStats.bytesSaved += linkClean.bytesSaved;
+  const cleanText = linkClean.html.replace(CLEAN_REGEX, '');
 
   records.push({
     messageId: msg.id,
@@ -262,6 +281,183 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
         'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
       },
     });
+}
+
+// ---------- offline link cleanup (pure, unit-tested; makes NO network calls) ----------
+// Before CLEAN_REGEX we mechanically clean URLs in the HTML body, click-free: (a) decode
+// trackers that embed their destination in a query param, then (b) strip utm_* analytics
+// params. We deliberately never fetch/follow anything — probing tracker links can trigger
+// side-effect endpoints (one-click unsubscribe, 1-click-apply) and opaque tracker tokens
+// are server-expandable only. Opaque-token resolution stays at the screening layer.
+
+// Trailing punctuation trimmed off a harvested URL (sentence/markup punctuation the greedy
+// match would otherwise swallow). A linear character walk from the end, NOT an anchored regex:
+// a pattern like /[.,…]+$/ backtracks O(n^2) on a long run of trailing-punct chars followed by
+// a non-match, and since the harvest char class is a superset of this set the whole run lands
+// in one token — a sender-controlled URL could exploit that to stall the run. '>', '"', "'"
+// cannot occur (excluded by the harvest char class) but are kept for completeness with the slice.
+const URL_TRAILING_PUNCT = '.,;:!?)]}>"\'';
+function trimTrailingPunct_(s) {
+  let end = s.length;
+  while (end > 0 && URL_TRAILING_PUNCT.indexOf(s.charAt(end - 1)) !== -1) end--;
+  return s.slice(0, end);
+}
+
+// Harvest every URL in the HTML — href="…" values AND bare-text URLs — with one regex, trim
+// trailing punctuation, and dedupe (first occurrence wins, order preserved). The char class
+// stops only at whitespace / quotes / <>, so a query separator — whether the encoded '&amp;'
+// (ZipRecruiter) or a raw '&' (CV-Library, Google Analytics) — stays part of the URL; both
+// occur in real job-alert HTML. We return the original (still entity-encoded) string so the
+// in-place swap replaces every occurrence verbatim.
+// KNOWN LIMITATION: a BARE-TEXT URL (not inside an href="…", so not bounded by a quote)
+// immediately followed by a content entity (&nbsp;, &hellip;, &#160;, …) absorbs that entity
+// into the match — '&' is indistinguishable from a raw query separator here. It only matters if
+// that URL also carries utm_/an embedded destination (so it gets rewritten); href-bounded URLs
+// (the real corpus — see tests/fixtures/email-cv-library.html) are unaffected. Documented in
+// docs/KNOWN_ISSUES.md rather than fixed, because excluding '&' would truncate the real raw-'&'
+// trackers above.
+function harvestUrls_(html) {
+  const re = /https?:\/\/[^\s"'<>]+/g;
+  const seen = {};
+  const out = [];
+  let m;
+  while ((m = re.exec(String(html))) !== null) {
+    const url = trimTrailingPunct_(m[0]);
+    if (url && !Object.prototype.hasOwnProperty.call(seen, url)) {
+      seen[url] = true;
+      out.push(url);
+    }
+  }
+  return out;
+}
+
+// Split a URL into { base, query, fragment }: base is everything before '?'; query is between
+// '?' and '#' WITHOUT the leading '?' (null when absent); fragment includes the leading '#'
+// ('' when absent). Fragment is split off first so a '?' inside a fragment is not treated as a
+// query delimiter.
+function splitUrl_(url) {
+  const s = String(url);
+  const hashAt = s.indexOf('#');
+  const fragment = hashAt === -1 ? '' : s.slice(hashAt);
+  const beforeFrag = hashAt === -1 ? s : s.slice(0, hashAt);
+  const qAt = beforeFrag.indexOf('?');
+  if (qAt === -1) return { base: beforeFrag, query: null, fragment: fragment };
+  return { base: beforeFrag.slice(0, qAt), query: beforeFrag.slice(qAt + 1), fragment: fragment };
+}
+
+// scheme://host of a URL (no path/query/fragment), for prepending to an absolute-path
+// destination. Returns '' if the string is not an absolute http(s) URL.
+function schemeHostOf_(url) {
+  const m = String(url).match(/^(https?:\/\/[^\/?#]+)/i);
+  return m ? m[1] : '';
+}
+
+// URL-decode a single query-param value, returning null if it is malformed (so the caller
+// skips it rather than throwing). decodeURIComponent leaves '+' alone — we are decoding a URL
+// component, not form data, so '+' must stay '+'.
+function decodeComponent_(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (e) {
+    return null;
+  }
+}
+
+// (a) DECODE EMBEDDED DESTINATION. Walk the query params in document order; for the FIRST
+// param whose URL-decoded value is EITHER an absolute http(s) URL OR an absolute path ('/…',
+// not protocol-relative '//…'), return that as the destination — prepending the tracker's own
+// scheme+host for a path. There is NO param-name list: the "value must be a URL/path" guard is
+// the whole filter (decided with Ivan — zero list to maintain, maximally future-proof; the
+// accepted cost is a non-destination URL-valued param earlier in document order being
+// mis-picked, rare in click-trackers). Returns null when no param qualifies (URL unchanged by
+// this step). The guard is what stops false positives on params like ?r=5 or ?u=alice.
+function decodeEmbeddedDestination_(url) {
+  const parts = splitUrl_(url);
+  if (parts.query === null || parts.query === '') return null;
+  const params = parts.query.split(/&amp;|&/); // both separators occur in an HTML-body URL
+  for (const param of params) {
+    const eq = param.indexOf('=');
+    if (eq === -1) continue;
+    const rawVal = param.slice(eq + 1);
+    if (!rawVal) continue;
+    const decoded = decodeComponent_(rawVal);
+    if (decoded === null) continue;
+    if (/^https?:\/\//i.test(decoded)) return decoded; // absolute URL destination
+    if (decoded.charAt(0) === '/' && decoded.charAt(1) !== '/') {
+      const origin = schemeHostOf_(url);
+      if (origin) return origin + decoded; // absolute-path destination -> tracker's own origin
+    }
+  }
+  return null;
+}
+
+// (b) STRIP UTM. Remove every query param whose NAME (case-insensitive) starts with 'utm_',
+// preserving all other params, their order, their original '&'/'&amp;' separators, and any
+// #fragment. Returns the URL UNCHANGED (byte-identical) when no utm_ param is present, so a
+// link with nothing to strip is left exactly as-is (parity). { url, stripped }.
+function stripUtm_(url) {
+  const parts = splitUrl_(url);
+  if (parts.query === null || parts.query === '') return { url: String(url), stripped: false };
+  // Tokenize keeping separators: 'a=1&amp;utm=x&b=2' -> ['a=1','&amp;','utm=x','&','b=2']
+  // (params at even indices, the separator that PRECEDED each at the odd index before it).
+  const tokens = parts.query.split(/(&amp;|&)/);
+  const kept = []; // { raw, sep }
+  let removed = false;
+  for (let i = 0; i < tokens.length; i += 2) {
+    const raw = tokens[i];
+    const eq = raw.indexOf('=');
+    const name = (eq === -1 ? raw : raw.slice(0, eq)).toLowerCase();
+    if (name.indexOf('utm_') === 0) { removed = true; continue; }
+    kept.push({ raw: raw, sep: i === 0 ? '' : tokens[i - 1] });
+  }
+  if (!removed) return { url: String(url), stripped: false };
+  let q = '';
+  for (let i = 0; i < kept.length; i++) q += (i === 0 ? '' : kept[i].sep) + kept[i].raw;
+  const rebuilt = parts.base + (q ? '?' + q : '') + parts.fragment;
+  return { url: rebuilt, stripped: true };
+}
+
+// Clean one URL: decode embedded destination (a) THEN strip utm_ (b) — a decoded destination
+// may itself carry utm. Returns the URL UNCHANGED when neither step changes anything (parity).
+// { url, decoded, utmStripped }.
+function cleanUrl_(url) {
+  const dest = decodeEmbeddedDestination_(url);
+  const decoded = dest !== null;
+  const stripResult = stripUtm_(decoded ? dest : String(url));
+  return { url: stripResult.url, decoded: decoded, utmStripped: stripResult.stripped };
+}
+
+// Clean every URL in the HTML body in place (offline): compute the cleaned form of each UNIQUE
+// URL once (harvestUrls_ dedupes), then swap via ONE position-based pass with the same regex.
+// Using replace() over the ORIGINAL string — rather than repeated split/join on `out` — means a
+// freshly-inserted cleaned destination is never re-scanned, so a URL that is a substring of
+// another (or that a decoded destination happens to contain) can't be corrupted by a later
+// swap. A URL whose cleaned form equals the original is left byte-identical, so html with no
+// qualifying URLs comes back unchanged (parity). decoded / utmStripped are counted once per
+// changed unique URL; bytesSaved is the net chars removed. The regex MUST match harvestUrls_'s.
+// Returns { html, decoded, utmStripped, bytesSaved }.
+function cleanLinksInHtml_(html) {
+  const original = String(html);
+  const changed = {}; // trimmedUrl -> { cleaned, decoded, utmStripped } (only URLs that change)
+  for (const url of harvestUrls_(original)) {
+    const res = cleanUrl_(url);
+    if (res.url !== url) changed[url] = { cleaned: res.url, decoded: res.decoded, utmStripped: res.utmStripped };
+  }
+  let decoded = 0;
+  let utmStripped = 0;
+  const counted = {};
+  const out = original.replace(/https?:\/\/[^\s"'<>]+/g, function (match) {
+    const url = trimTrailingPunct_(match);
+    const info = changed[url];
+    if (!info) return match; // unchanged URL -> leave the occurrence byte-identical
+    if (!Object.prototype.hasOwnProperty.call(counted, url)) {
+      counted[url] = true;
+      if (info.decoded) decoded++;
+      if (info.utmStripped) utmStripped++;
+    }
+    return info.cleaned + match.slice(url.length); // preserve any trimmed trailing punctuation
+  });
+  return { html: out, decoded: decoded, utmStripped: utmStripped, bytesSaved: original.length - out.length };
 }
 
 // ---------- helpers ----------

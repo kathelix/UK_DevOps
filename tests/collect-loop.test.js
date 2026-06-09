@@ -11,7 +11,9 @@
 //   - forward progress (an over-budget run still commits the first sub-batch);
 //   - "label make-collected ONLY if the upsert succeeded" (no silent data loss);
 //   - poison isolation (one bad message is make-failed, siblings still collected);
-//   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop).
+//   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop);
+//   - the offline link-cleanup wiring (HtmlLength stays original, CleanText is cleaned,
+//     the per-run "Links:" metric is logged).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
@@ -54,10 +56,15 @@ function poisonMessage(i) {
 
 // Drive one collector run. getDelta is the per-message fetch cost added to the clock;
 // upsertCode(callIndex) lets a test force a non-200 Airtable response per request.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200 }) {
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null }) {
   const gas = loadCollector();
   const clock = makeClock();
-  const messages = Array.from({ length: n }, (_, i) => (poison.includes(i) ? poisonMessage(i) : fakeMessage(i)));
+  const messages = Array.from({ length: n }, (_, i) => {
+    if (poison.includes(i)) return poisonMessage(i);
+    const m = fakeMessage(i);
+    if (bodyHtml) m.payload.body = { data: Array.from(Buffer.from(bodyHtml(i), 'utf8')) };
+    return m;
+  });
   const labelCalls = []; // { id, label }
   const upserts = [];     // { count, code }
 
@@ -86,7 +93,7 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
         const recs = JSON.parse(opts.payload).records;
         // Airtable rejects > 10 records/request (422); otherwise honour the test's code.
         const code = recs.length > 10 ? 422 : upsertCode(upserts.length);
-        upserts.push({ count: recs.length, code });
+        upserts.push({ count: recs.length, code, records: recs });
         return { getResponseCode: () => code, getContentText: () => (code === 200 ? '' : 'ERR ' + code) };
       },
     },
@@ -179,4 +186,29 @@ test('DRY_RUN: inspects every sub-batch but writes and labels nothing', () => {
   assert.equal(r.collected.length, 0, 'nothing labelled');
   assert.equal(r.upserts.length, 0, 'nothing upserted');
   assert.ok(r.logs.some(l => /DRY_RUN complete: 12 message\(s\) inspected/.test(l)), 'dry-run summary present');
+});
+
+test('offline link cleanup is wired into processMessage_: HtmlLength stays original, CleanText is cleaned, metric logged', () => {
+  // One message whose body carries a cv-library refer tracker (?url= holding a relative
+  // path that itself carries utm). Pins the wiring the pure-function units cannot: that
+  // cleanLinksInHtml_ actually runs BEFORE CLEAN_REGEX, that HtmlLength is the ORIGINAL
+  // length (Make parity) and only CleanText reflects the cleanup, and that the per-run
+  // "Links:" metric is logged. Mutation-checked: setting HtmlLength to the cleaned length,
+  // dropping the cleanLinksInHtml_ call, or removing the log each flips an assertion.
+  // NOTE: this does NOT mutation-check that cleanup runs BEFORE CLEAN_REGEX — for every input
+  // under test the two orders are byte-identical (CLEAN_REGEX only deletes URLs outside <body>),
+  // so the 'before CLEAN_REGEX' ordering is asserted by code comments, not by a test.
+  const tracker = 'http://www.cv-library.co.uk/refer/100145?url=%2Fjob%2F123%2FDevOps-Engineer%3Futm_source%3Dx%26utm_medium%3Demail';
+  const html = `<html><body><a href="${tracker}">DevOps Engineer</a></body></html>`;
+  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, bodyHtml: () => html });
+
+  const fields = r.upserts[0].records[0].fields;
+  assert.equal(fields.HtmlLength, html.length, 'HtmlLength is the ORIGINAL html length, not the cleaned length');
+  assert.ok(fields.CleanText.includes('http://www.cv-library.co.uk/job/123/DevOps-Engineer'), 'destination surfaced in CleanText');
+  assert.ok(!fields.CleanText.includes('/refer/100145?url='), 'the opaque tracker is gone from CleanText');
+  assert.ok(!/utm_/i.test(fields.CleanText), 'no utm_ remains in CleanText');
+  assert.equal(fields.CleanLength, fields.CleanText.length, 'CleanLength matches the cleaned text');
+  assert.ok(fields.CleanLength < fields.HtmlLength, 'cleaning removed bytes');
+  // bytes_saved pinned exactly (not just \d+) so a zeroed-out run-loop accumulator flips this.
+  assert.ok(r.logs.some(l => /^Links: decoded=1 utm_stripped=1 bytes_saved=62$/.test(l)), 'per-run Links metric logged with the actual byte delta');
 });
