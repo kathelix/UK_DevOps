@@ -31,8 +31,9 @@ const CONFIG = {
   MAX_RUNTIME_MS: 300000,
   // Commit granularity: process the queue in sub-batches of this many messages
   // (fetch -> upsert -> label, each committed before the next), so a timeout or crash
-  // loses at most one sub-batch and every run makes forward progress. Must stay <= 10
-  // (Airtable's records/request cap) or the per-sub-batch upsert needs splitting.
+  // loses at most one sub-batch and every run makes forward progress. Clamped at runtime
+  // to [1, 10] (clampSubBatchSize_): >10 exceeds Airtable's records/request cap, <1 would
+  // stall the loop.
   SUB_BATCH_SIZE: 5,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
@@ -98,7 +99,14 @@ function collectJobEmailsLocked_() {
   // sub-batch — bounded, not eliminated, by the same idempotency.
   let collected = 0;
   let inspected = 0;
-  for (let start = 0; start < messageRefs.length; start += CONFIG.SUB_BATCH_SIZE) {
+  // Clamp the configured sub-batch size to a safe stride: a 0/negative value would never
+  // advance `start` (infinite loop), and a value > 10 exceeds Airtable's records/request
+  // cap (the oversized PATCH is rejected 422 and the sub-batch would never commit).
+  const subBatchSize = clampSubBatchSize_(CONFIG.SUB_BATCH_SIZE);
+  if (subBatchSize !== CONFIG.SUB_BATCH_SIZE) {
+    Logger.log('CONFIG.SUB_BATCH_SIZE=%s is out of range [1,10]; using %s.', CONFIG.SUB_BATCH_SIZE, subBatchSize);
+  }
+  for (let start = 0; start < messageRefs.length; start += subBatchSize) {
     if (isOverRuntimeBudget_(startMs, Date.now())) {
       Logger.log('Runtime budget (%s ms) exceeded; deferring %s message(s) to next run.',
         CONFIG.MAX_RUNTIME_MS, messageRefs.length - start);
@@ -108,7 +116,7 @@ function collectJobEmailsLocked_() {
     // Fetch + parse this sub-batch; isolate poisoned messages (label make-failed on
     // real runs) so one bad message does not block its neighbours or the queue.
     const records = []; // {fields:..., messageId:...}
-    for (const ref of messageRefs.slice(start, start + CONFIG.SUB_BATCH_SIZE)) {
+    for (const ref of messageRefs.slice(start, start + subBatchSize)) {
       let msg, headers;
       try {
         msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
@@ -172,6 +180,12 @@ function collectJobEmailsLocked_() {
 // without a live clock; called as isOverRuntimeBudget_(startMs, Date.now()).
 function isOverRuntimeBudget_(startMs, nowMs) {
   return nowMs - startMs > CONFIG.MAX_RUNTIME_MS;
+}
+
+// Clamp the sub-batch stride to [1, 10] (pure, unit-tested): >=1 keeps the loop
+// advancing; <=10 keeps each upsert within Airtable's records/request cap.
+function clampSubBatchSize_(n) {
+  return Math.max(1, Math.min(n, 10));
 }
 
 function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
