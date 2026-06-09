@@ -37,16 +37,18 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
   `buildUpsertPayload_` and `airtableUpsert_` (the PATCH-upsert dedupe contract).
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
-  stubbed Apps Script globals and an injected clock, exercising both timeout
-  `break`s end to end (fetch-phase and write/label-phase deferral) plus the happy
-  path. A unit test of `isOverRuntimeBudget_` alone leaves the `break` that calls it
-  untested — these tests fail if either break is removed (mutation-checked).
+  stubbed Apps Script globals and an injected clock. Covers the sub-batch pipeline's
+  forward-progress guarantee (an over-budget run still commits the first sub-batch),
+  incremental commit (earlier sub-batches survive a mid-run defer), the happy path,
+  and `DRY_RUN`. A unit test of `isOverRuntimeBudget_` alone leaves the `break` that
+  calls it untested — the budget `break` is mutation-checked (removing it makes the
+  over-budget tests commit every message instead of deferring).
 
 ## Not covered (deliberately)
 
-- The `LockService` single-flight guard and the `DRY_RUN` path — left to manual /
-  live verification (the guard is a pure side effect around the run).
-- The inner per-label budget granularity (a batch already in flight is not
-  interrupted mid-label) — an accepted, idempotency-bounded limit, not a unit
-  concern. Full modularization for deeper testability is tracked in `TODO.md`
-  ("Modularize for testability").
+- The `LockService` single-flight guard — left to manual / live verification (a
+  pure side effect around the run).
+- The inner per-label granularity (a sub-batch already in flight is not interrupted
+  mid-label) — an accepted, idempotency-bounded limit, not a unit concern. Full
+  modularization for deeper testability is tracked in `TODO.md` ("Modularize for
+  testability").
