@@ -11,7 +11,9 @@
 //   - forward progress (an over-budget run still commits the first sub-batch);
 //   - "label make-collected ONLY if the upsert succeeded" (no silent data loss);
 //   - poison isolation (one bad message is make-failed, siblings still collected);
-//   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop).
+//   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop);
+//   - tracker-URL resolution wiring (the swapped CleanText + metric fields reach the upsert,
+//     and the MAX_RESOLUTIONS_PER_RUN=0 kill-switch threads through to a no-op).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
@@ -33,13 +35,16 @@ function makeClock() {
   return c;
 }
 
-function fakeMessage(i) {
+function fakeMessage(i, href) {
+  // With an href, the body carries a single <a> (used by the resolution integration tests);
+  // without one, the original minimal body — so the pre-resolution tests are unchanged.
+  const inner = href ? ('<a href="' + href + '">job ' + i + '</a>') : ('hi' + i);
   return {
     id: 'm' + i, threadId: 't' + i, internalDate: '1700000000000', snippet: 's' + i, labelIds: [],
     payload: {
       headers: [{ name: 'From', value: 'Sender ' + i + ' <s' + i + '@x.com>' }, { name: 'Subject', value: 'Subj ' + i }],
       mimeType: 'text/html',
-      body: { data: Array.from(Buffer.from('<html><body>hi' + i + '</body></html>', 'utf8')) },
+      body: { data: Array.from(Buffer.from('<html><body>' + inner + '</body></html>', 'utf8')) },
     },
   };
 }
@@ -54,12 +59,15 @@ function poisonMessage(i) {
 
 // Drive one collector run. getDelta is the per-message fetch cost added to the clock;
 // upsertCode(callIndex) lets a test force a non-200 Airtable response per request.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200 }) {
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200,
+  trackerHrefs = {}, resolveMap = {}, maxResolutionsProp = null }) {
   const gas = loadCollector();
   const clock = makeClock();
-  const messages = Array.from({ length: n }, (_, i) => (poison.includes(i) ? poisonMessage(i) : fakeMessage(i)));
-  const labelCalls = []; // { id, label }
-  const upserts = [];     // { count, code }
+  const messages = Array.from({ length: n }, (_, i) => (poison.includes(i) ? poisonMessage(i) : fakeMessage(i, trackerHrefs[i])));
+  const labelCalls = [];      // { id, label }
+  const upserts = [];         // { count, code }
+  const upsertedRecords = []; // fields actually PATCHed to Airtable (to inspect CleanText etc.)
+  const resolveCalls = [];    // urls hit by the tracker-resolution probe (followRedirects:false)
 
   gas.CONFIG.MAX_RUNTIME_MS = budgetMs;
   gas.CONFIG.SUB_BATCH_SIZE = subBatch;
@@ -82,15 +90,27 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
       },
     },
     UrlFetchApp: {
-      fetch: (_url, opts) => {
+      fetch: (url, opts) => {
+        // Tracker-resolution probe (trackerFetch_ sets followRedirects:false). Serve a canned
+        // 3xx/Location from resolveMap; unmapped urls 200 (a dead end -> unresolved).
+        if (opts.followRedirects === false) {
+          resolveCalls.push(url);
+          const r = resolveMap[url] || { code: 200 };
+          return { getResponseCode: () => r.code, getAllHeaders: () => (r.location ? { Location: r.location } : {}) };
+        }
         const recs = JSON.parse(opts.payload).records;
+        upsertedRecords.push(...recs);
         // Airtable rejects > 10 records/request (422); otherwise honour the test's code.
         const code = recs.length > 10 ? 422 : upsertCode(upserts.length);
         upserts.push({ count: recs.length, code });
         return { getResponseCode: () => code, getContentText: () => (code === 200 ? '' : 'ERR ' + code) };
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? 'tok' : null) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) =>
+      k === 'DRY_RUN' ? (dryRun ? 'true' : null)
+      : k === 'AIRTABLE_TOKEN' ? 'tok'
+      : k === 'MAX_RESOLUTIONS_PER_RUN' ? maxResolutionsProp
+      : null }) },
     Utilities: {
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
@@ -105,6 +125,8 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     collected: labelCalls.filter(c => c.label === L_COLLECTED).map(c => c.id),
     failed: labelCalls.filter(c => c.label === L_FAILED).map(c => c.id),
     upserts,
+    upsertedRecords,
+    resolveCalls,
     logs: gas.logs.map(fmt),
   };
 }
@@ -179,4 +201,45 @@ test('DRY_RUN: inspects every sub-batch but writes and labels nothing', () => {
   assert.equal(r.collected.length, 0, 'nothing labelled');
   assert.equal(r.upserts.length, 0, 'nothing upserted');
   assert.ok(r.logs.some(l => /DRY_RUN complete: 12 message\(s\) inspected/.test(l)), 'dry-run summary present');
+});
+
+test('resolution wiring: a tracker href is resolved and the canonical reaches Airtable CleanText', () => {
+  // End-to-end: collectJobEmailsLocked_ builds resolveCtx, threads it through processMessage_,
+  // and the swapped CleanText + metric fields land in the upsert. A unit test of
+  // resolveTrackersInHtml_ alone cannot catch a dead wire here.
+  const tracker = 'https://clicks.reed.co.uk/f/a/Xy/job';
+  const canon = 'https://www.reed.co.uk/jobs/devops-engineer/777';
+  const r = runCollector({
+    n: 1, budgetMs: 1e9, getDelta: 1,
+    trackerHrefs: { 0: tracker },
+    resolveMap: { [tracker]: { code: 302, location: canon } },
+  });
+  assert.equal(r.collected.length, 1, 'the message is collected');
+  assert.deepEqual(r.resolveCalls, [tracker], 'exactly one resolution probe, for the tracker');
+  const fields = r.upsertedRecords[0].fields;
+  assert.ok(fields.CleanText.includes(canon), 'canonical is swapped into the STORED CleanText');
+  assert.ok(!fields.CleanText.includes('clicks.reed.co.uk'), 'the tracker is gone from CleanText');
+  assert.equal(fields.TrackersFound, 1, 'metric field populated');
+  assert.equal(fields.TrackersResolved, 1);
+  assert.ok(r.logs.some(l => /Trackers: found=1 resolved=1 \(100%\)/.test(l)), 'run logs the resolution summary');
+});
+
+test('resolution kill-switch: MAX_RESOLUTIONS_PER_RUN=0 wires through to a no-op (tracker survives in CleanText)', () => {
+  // Mutation check on the cap knob: neutering the maxResolutions===0 short-circuit (or the
+  // getIntProp_ wiring) would let a probe fire and the tracker be swapped, flipping these.
+  const tracker = 'https://clicks.reed.co.uk/f/a/Xy/job';
+  const canon = 'https://www.reed.co.uk/jobs/devops-engineer/777';
+  const r = runCollector({
+    n: 1, budgetMs: 1e9, getDelta: 1,
+    trackerHrefs: { 0: tracker },
+    resolveMap: { [tracker]: { code: 302, location: canon } },
+    maxResolutionsProp: '0',
+  });
+  assert.equal(r.collected.length, 1, 'still collected (resolution is orthogonal to collection)');
+  assert.deepEqual(r.resolveCalls, [], 'ZERO resolution probes when disabled');
+  const fields = r.upsertedRecords[0].fields;
+  assert.ok(fields.CleanText.includes(tracker), 'the tracker stays in CleanText (byte-identical to pre-slice)');
+  assert.equal(fields.TrackersFound, 0);
+  assert.equal(fields.TrackersResolved, 0);
+  assert.ok(r.logs.some(l => /Trackers: resolution disabled/.test(l)), 'disabled state logged');
 });

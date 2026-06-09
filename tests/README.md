@@ -46,6 +46,15 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   wiring** (unset → 25 parity, a valid override reaches Gmail, garbage → 25). Each is
   mutation-checked — neutering the early return, the `maxResults: maxMessages` wiring, or
   the warning flips an assertion.
+- **`resolver.test.js`** — tracker-URL resolution (slice `feature/tracker-url-resolution`):
+  `harvestHrefs_` / `dedupe_` (pull + dedupe href values), `decodeEntities_` (`&amp;` → `&`
+  before fetch), `hostOf_` / `pathOf_`, `classifyTracker_` (exact + `*.suffix` wildcard +
+  path-pinned shared hosts), `isJunkLink_` (unsubscribe/manage/pixel/cv-upload rejected even
+  on a tracker host), `resolveTracker_` (the header-only 3xx hop loop — single/multi-hop,
+  max-hops, non-3xx, missing/relative Location, exception), `resolveTrackersInHtml_` (the
+  per-message path: in-place swap, swap-all-occurrences, the found/resolved metric, the
+  **shared cap**, dry-run detect-don't-click, and the **`maxResolutions=0` byte-identical
+  no-op**), and `logTrackerSummary_`. The fetch is injected so no real network is touched.
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
@@ -53,8 +62,11 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   no silent data loss), **poison isolation** (a bad message is make-failed while
   siblings are collected; an all-poison sub-batch sends no empty upsert), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
-  path, and `DRY_RUN`. Each guard is mutation-checked — removing the budget break, the
-  `if (!ok)` check, the empty-records guard, or the clamp flips an assertion.
+  path, `DRY_RUN`, and the **tracker-resolution wiring** (the swapped CleanText + the
+  `TrackersFound`/`TrackersResolved` fields reach the upsert; `MAX_RESOLUTIONS_PER_RUN=0`
+  threads through to a no-op). Each guard is mutation-checked — removing the budget break, the
+  `if (!ok)` check, the empty-records guard, the clamp, the resolved-HTML wiring, or the
+  kill-switch short-circuit flips an assertion.
 
 ## Not covered (deliberately)
 

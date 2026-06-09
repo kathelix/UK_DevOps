@@ -47,6 +47,50 @@ const CONFIG = {
   // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
   // long-text limit - safety truncation only, not a design choice:
   CLEAN_TEXT_LIMIT: 100000,
+
+  // --- Tracker-URL resolution (slice feature/tracker-url-resolution) ---
+  // Resolve known email tracking-redirect hrefs to their canonical destination and swap
+  // them IN PLACE inside the HTML before CLEAN_REGEX, so CleanText carries real links
+  // instead of trackers (and shrinks — a tracker is often ~10x its canonical). Only the
+  // hosts in TRACKERS are ever network-resolved; that bounds the calls/clicks AND defines
+  // the resolution-rate metric's denominator. See docs/OPERATIONS.md.
+  //
+  // Per-run resolution cap (the default). Runtime-tunable via the MAX_RESOLUTIONS_PER_RUN
+  // Script Property (integer 0–MAX_RESOLUTIONS_CAP, resolved by getIntProp_; 0 = resolution
+  // disabled = the collector behaves exactly as pre-slice — a kill-switch / A-B knob). The
+  // cap is shared across the whole run: once hit, later messages still DETECT their trackers
+  // (counted found-not-resolved) but skip the network resolve.
+  MAX_RESOLUTIONS_PER_RUN: 100,
+  // Upper bound getIntProp_ accepts for the MAX_RESOLUTIONS_PER_RUN property (misconfig
+  // guard; the real limiter is MAX_RUNTIME_MS). Out-of-range values fall back to the default.
+  MAX_RESOLUTIONS_CAP: 1000,
+  // Follow at most this many 3xx hops per tracker URL before giving up (leaving the original).
+  RESOLVE_MAX_HOPS: 5,
+  // Browser-ish User-Agent for the redirect probes — some trackers 403 obvious bots, and we
+  // only read the Location header (we never load the destination page; see resolveTracker_).
+  RESOLVE_USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  // Known tracker host patterns (starter set harvested from this inbox; extend via the
+  // per-host run log). host: exact ('clicks.reed.co.uk') or wildcard ('*.jobmails.io' →
+  // the apex and any subdomain). Optional path: only URLs whose path starts with it count
+  // (so a shared host like joblookup.com only resolves its /dispatch redirector, not real
+  // listing pages). label: the per-host bucket in the run's "Trackers:" log.
+  TRACKERS: [
+    { host: 'clicks.reed.co.uk', label: 'reed' },
+    { host: 'click.nijobs.com', label: 'nijobs' },
+    { host: '*.ct.sendgrid.net', label: 'sendgrid' },
+    { host: '*.jobmails.io', label: 'jobmails' },
+    { host: '*.pstmrk.it', label: 'postmark' },
+    { host: 'www.alertsclk.com', label: 'alertsclk' },
+    { host: 'joblookup.com', path: '/dispatch', label: 'joblookup' },
+    { host: 'uk.whatjobs.com', path: '/jbe', label: 'whatjobs' },
+    { host: 'alerts.jobs.co.uk', path: '/click', label: 'jobsco' },
+    { host: 'alerts.talentsource24.com', label: 'talentsource24' },
+  ],
+  // Never resolve these even on a tracker host — they are not job links and clicking them
+  // has side effects (an unsubscribe one-click can actually unsubscribe). Matched as a
+  // case-insensitive substring of the decoded URL. Junk links are excluded from BOTH the
+  // network resolve and the found/resolved metric (TrackersFound is post-junk-filter).
+  RESOLVE_JUNK_REGEX: /(unsubscribe|manage[-_]?alert|email[-_]?settings|preference|view[-_]?in[-_]?browser|tracking[-_]?pixel|\/pixel|\bbeacon\b|cv[-_]?upload|upload[-_]?cv|opt[-_]?out)/i,
 };
 
 // Module 5 (regexp:Replace) - pattern verbatim.
@@ -80,7 +124,12 @@ function collectJobEmailsLocked_() {
   // default); 0 is an explicit "process nothing this run" switch — distinct from DRY_RUN,
   // which still fetches + cleans and only skips writes/labels.
   const maxMessages = getIntProp_('MAX_MESSAGES', CONFIG.MAX_MESSAGES, 0, 500);
-  Logger.log('Run config: MAX_MESSAGES=%s (source default %s).', maxMessages, CONFIG.MAX_MESSAGES);
+  // Per-run tracker-resolution cap, tunable from Script Properties without a redeploy. Same
+  // getIntProp_ contract as MAX_MESSAGES (unset/blank/garbage/out-of-range → CONFIG default).
+  // 0 = resolution disabled (kill-switch); distinct from MAX_MESSAGES=0, which skips the run.
+  const maxResolutions = getIntProp_('MAX_RESOLUTIONS_PER_RUN', CONFIG.MAX_RESOLUTIONS_PER_RUN, 0, CONFIG.MAX_RESOLUTIONS_CAP);
+  Logger.log('Run config: MAX_MESSAGES=%s (source default %s); MAX_RESOLUTIONS_PER_RUN=%s (source default %s).',
+    maxMessages, CONFIG.MAX_MESSAGES, maxResolutions, CONFIG.MAX_RESOLUTIONS_PER_RUN);
   if (maxMessages === 0) {
     Logger.log('MAX_MESSAGES=0 — processing disabled this run; no fetch, no writes, no labels.');
     return; // deliberate no-op; lock released by the finally wrapper in collectJobEmails.
@@ -105,6 +154,19 @@ function collectJobEmailsLocked_() {
 
   const labelsById = getLabelsById_();
   const collectedLabelId = getCollectedLabelId_(labelsById);
+
+  // Run-scoped tracker-resolution state, threaded into processMessage_. The cap (used vs
+  // maxResolutions) is shared across every message in the run; the per-host tally and the
+  // found/resolved/attempted totals feed the end-of-run "Trackers:" log. dryRun is honoured
+  // inside resolveTrackersInHtml_: a dry run still DETECTS trackers (so the preview reports
+  // the would-be count) but never clicks or swaps — clicking is an external side effect.
+  const resolveCtx = {
+    maxResolutions: maxResolutions,
+    dryRun: dryRun,
+    fetchFn: trackerFetch_,
+    used: 0, attempted: 0, found: 0, resolved: 0,
+    tally: {}, // { <label>: { found, resolved } }
+  };
 
   // Process the queue in sub-batches of CONFIG.SUB_BATCH_SIZE: fetch -> upsert ->
   // label, committing each sub-batch before starting the next. The single budget guard
@@ -140,7 +202,7 @@ function collectJobEmailsLocked_() {
       try {
         msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
         headers = headerMap_(msg.payload.headers || []);
-        processMessage_(msg, headers, records, executionId, collectedAt, labelsById);
+        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, resolveCtx);
       } catch (e) {
         Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
           ref.id,
@@ -163,9 +225,9 @@ function collectJobEmailsLocked_() {
     if (dryRun) {
       for (const r of records) {
         Logger.log(
-          'DRY_RUN would write: %s | %s | %s | html=%s clean=%s | then add label "%s"',
+          'DRY_RUN would write: %s | %s | %s | html=%s clean=%s trackersFound=%s | then add label "%s"',
           r.fields.MessageId, r.fields.FromEmail, r.fields.Subject,
-          r.fields.HtmlLength, r.fields.CleanLength, CONFIG.COLLECTED_LABEL_NAME
+          r.fields.HtmlLength, r.fields.CleanLength, r.fields.TrackersFound, CONFIG.COLLECTED_LABEL_NAME
         );
         Logger.log('DRY_RUN CleanText preview (first 500 chars):\n%s', r.fields.CleanText.substring(0, 500));
       }
@@ -187,6 +249,7 @@ function collectJobEmailsLocked_() {
     }
   }
 
+  logTrackerSummary_(resolveCtx);
   if (dryRun) {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', inspected);
   } else {
@@ -238,10 +301,17 @@ function getIntProp_(name, fallback, min, max) {
   return fallback;
 }
 
-function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
+function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, resolveCtx) {
   const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
   const htmlBody = extractHtmlBody_(msg.payload) || '';
-  const cleanText = htmlBody.replace(CLEAN_REGEX, '');
+  // Resolve known tracker hrefs to their canonical destination and swap them in place,
+  // working on the HTML BEFORE CLEAN_REGEX (href values carry entity-encoded ampersands —
+  // resolveTrackersInHtml_ decodes to fetch but swaps the original encoded string). With
+  // resolution disabled or no trackers present, resolution.html === htmlBody, so cleanText
+  // is byte-identical to pre-slice. HtmlLength stays the ORIGINAL html length (parity with
+  // Make's length(1.htmlBody)); only CleanText/CleanLength reflect the swap's shrinkage.
+  const resolution = resolveTrackersInHtml_(htmlBody, resolveCtx);
+  const cleanText = resolution.html.replace(CLEAN_REGEX, '');
 
   records.push({
     messageId: msg.id,
@@ -256,9 +326,11 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
         'Subject': headers['subject'] || '',                       // H: {{1.subject}}
         'Snippet': msg.snippet || '',                              // I: {{1.snippet}}
         'UserLabels': userLabelNames_(msg.labelIds, labelsById),   // J: {{1.userLabelFolders[].name}}
-        'HtmlLength': htmlBody.length,                             // K: {{length(1.htmlBody)}}
-        'CleanLength': cleanText.length,                           // L: {{length(5.text)}}
+        'HtmlLength': htmlBody.length,                             // K: {{length(1.htmlBody)}} — original html
+        'CleanLength': cleanText.length,                           // L: {{length(5.text)}} — post-swap, post-clean
         'CleanText': cleanText.substring(0, CONFIG.CLEAN_TEXT_LIMIT), // M: cleaned text (49k Sheets cap dropped)
+        'TrackersFound': resolution.found,                         // distinct known trackers detected (post junk-filter)
+        'TrackersResolved': resolution.resolved,                   // of those, how many reached a canonical + were swapped
         'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
       },
     });
@@ -364,6 +436,217 @@ function userLabelNames_(labelIds, labelsById) {
     .filter(l => l && l.type === 'user')
     .map(l => l.name)
     .join(', ');
+}
+
+// ---------- tracker-URL resolution ----------
+
+// Harvest, classify, junk-filter, resolve and in-place-swap tracker hrefs in one HTML body.
+// Returns { html, found, resolved } for this message and mutates the run-scoped ctx
+// (shared cap `used`/`maxResolutions`, the `attempted`/`found`/`resolved` totals, and the
+// per-host `tally`). Side-effect-free w.r.t. ctx when disabled. The fetch is taken from
+// ctx.fetchFn so tests can inject canned 302/Location sequences (no real network).
+//
+// Contract preserved for parity: when resolution is disabled (maxResolutions === 0) OR the
+// body has no known, non-junk tracker hrefs, the returned html is the input unchanged, so
+// the downstream CleanText is byte-identical to pre-slice.
+function resolveTrackersInHtml_(htmlBody, ctx) {
+  // Kill-switch / pre-slice parity: no harvest, no network, byte-identical output.
+  if (!ctx || ctx.maxResolutions === 0) return { html: htmlBody, found: 0, resolved: 0 };
+
+  // Dedupe within the message on the exact (still-encoded) href string: resolve each once,
+  // and a split/join swap then replaces ALL of its occurrences in the body.
+  const uniqueHrefs = dedupe_(harvestHrefs_(htmlBody));
+  let html = htmlBody;
+  let found = 0;
+  let resolved = 0;
+
+  for (const rawHref of uniqueHrefs) {
+    const url = decodeEntities_(rawHref); // real URL (href values carry &amp; etc.)
+    const tracker = classifyTracker_(url);
+    if (!tracker) continue;               // not a known tracker host → leave untouched, uncounted
+    if (isJunkLink_(url)) continue;       // unsubscribe/manage/pixel/cv-upload → never resolve, uncounted
+
+    found++;
+    ctx.found++;
+    bumpTally_(ctx.tally, tracker.label, 'found');
+
+    if (ctx.dryRun) continue;                       // dry run: count the would-be work, never click/swap
+    if (ctx.used >= ctx.maxResolutions) continue;   // shared cap hit → found-not-resolved (counted above)
+
+    ctx.used++;
+    ctx.attempted++;
+    const canonical = resolveTracker_(url, ctx.fetchFn);
+    if (!canonical) continue;                        // unresolved → original tracker stays in place
+
+    resolved++;
+    ctx.resolved++;
+    bumpTally_(ctx.tally, tracker.label, 'resolved');
+    html = html.split(rawHref).join(canonical);      // swap the ORIGINAL encoded string, all occurrences
+  }
+
+  return { html: html, found: found, resolved: resolved };
+}
+
+// All href attribute values in an HTML string (both quote styles), still entity-encoded and
+// in document order. Empty hrefs are skipped. Pure.
+function harvestHrefs_(html) {
+  const out = [];
+  const re = /href\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+  let m;
+  while ((m = re.exec(String(html))) !== null) {
+    const v = (m[1] !== undefined ? m[1] : m[2]);
+    if (v) out.push(v);
+  }
+  return out;
+}
+
+// Order-preserving de-duplication of a string array. Pure.
+function dedupe_(arr) {
+  const seen = {};
+  const out = [];
+  for (const s of arr) {
+    if (!Object.prototype.hasOwnProperty.call(seen, s)) { seen[s] = true; out.push(s); }
+  }
+  return out;
+}
+
+// Decode the HTML entities that appear in href values so we fetch the real URL. The
+// dominant case is &amp; → & between query params; numeric (&#38; / &#x26;) and the other
+// common named entities are handled too. Pure. (Operates only on harvested href strings, so
+// the figure-space/BOM entities CLEAN_REGEX targets are not a concern here.)
+function decodeEntities_(s) {
+  return String(s)
+    .replace(/&#x([0-9a-fA-F]+);/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/&#(\d+);/g, function (_, d) { return String.fromCharCode(parseInt(d, 10)); })
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+// Classify a (decoded) URL against CONFIG.TRACKERS. Returns { label } if its host matches a
+// tracker pattern (exact or '*.suffix' wildcard) AND, when the pattern pins a path, the URL's
+// path starts with it; otherwise null. Pure.
+function classifyTracker_(url) {
+  const h = hostOf_(url);
+  if (!h) return null;
+  for (const t of CONFIG.TRACKERS) {
+    let hostOk;
+    if (t.host.charAt(0) === '*' && t.host.charAt(1) === '.') {
+      const suffix = t.host.slice(2);                    // '*.jobmails.io' → 'jobmails.io'
+      hostOk = (h === suffix) || h.slice(-(suffix.length + 1)) === ('.' + suffix);
+    } else {
+      hostOk = (h === t.host);
+    }
+    if (!hostOk) continue;
+    if (t.path && pathOf_(url).indexOf(t.path) !== 0) continue; // path pinned but doesn't match
+    return { label: t.label || 'other' };
+  }
+  return null;
+}
+
+// True if a (decoded) URL is a non-job link we must never resolve even on a tracker host.
+// Pure; matches CONFIG.RESOLVE_JUNK_REGEX as a case-insensitive substring.
+function isJunkLink_(url) {
+  return CONFIG.RESOLVE_JUNK_REGEX.test(String(url));
+}
+
+// Resolve one tracker URL to its canonical destination by following 3xx redirects via header
+// reads ONLY (we never load the destination page, so destination CAPTCHA/bot-walls are
+// irrelevant). Returns the first non-tracker URL reached, or null if unresolved — a non-3xx
+// response, a missing/relative Location, still-a-tracker after RESOLVE_MAX_HOPS hops, or any
+// fetch exception all leave the original in place. fetchFn(url) is injected for testability.
+function resolveTracker_(url, fetchFn) {
+  let current = url;
+  for (let hop = 0; hop < CONFIG.RESOLVE_MAX_HOPS; hop++) {
+    let resp;
+    try {
+      resp = fetchFn(current);
+    } catch (e) {
+      return null; // network/timeout exception → unresolved, keep the original
+    }
+    const code = resp.getResponseCode();
+    if (code < 300 || code >= 400) return null;            // non-3xx → never reached a canonical
+    const loc = locationHeader_(resp);
+    if (!loc || !/^https?:\/\//i.test(loc)) return null;   // no Location, or relative (v1 doesn't join) → unresolved
+    if (!classifyTracker_(loc)) return loc;                // first non-tracker host reached → canonical
+    current = loc;                                          // still a tracker → keep following
+  }
+  return null;                                             // max hops, still a tracker → unresolved
+}
+
+// Production fetch for resolveTracker_: a single non-following 3xx probe with a browser-ish
+// UA. muteHttpExceptions so a 4xx/5xx returns a response (→ unresolved) instead of throwing.
+// NB: UrlFetchApp has no per-call timeout (~60s default); a hanging tracker can cost up to
+// ~60s/hop. The per-run MAX_RESOLUTIONS cap and the MAX_RUNTIME_MS budget bound the blast
+// radius (the run defers the rest) — see docs/OPERATIONS.md and the slice PR.
+function trackerFetch_(url) {
+  return UrlFetchApp.fetch(url, {
+    method: 'get',
+    followRedirects: false,
+    muteHttpExceptions: true,
+    headers: { 'User-Agent': CONFIG.RESOLVE_USER_AGENT },
+  });
+}
+
+// Case-insensitive Location header read from a UrlFetchApp-style response. Handles both
+// getAllHeaders() (V8) and the older getHeaders(), and an array value (repeated header).
+function locationHeader_(resp) {
+  const headers = (resp.getAllHeaders ? resp.getAllHeaders() : (resp.getHeaders ? resp.getHeaders() : {})) || {};
+  for (const k in headers) {
+    if (k.toLowerCase() === 'location') {
+      const v = headers[k];
+      return Array.isArray(v) ? (v[0] || '') : (v || '');
+    }
+  }
+  return '';
+}
+
+// Lowercased host of an http(s) URL, port stripped. '' if not an http(s) URL. Pure.
+function hostOf_(url) {
+  const m = /^https?:\/\/([^\/?#]+)/i.exec(String(url));
+  return m ? m[1].toLowerCase().replace(/:\d+$/, '') : '';
+}
+
+// Lowercased path of an http(s) URL (the part after the host, up to ? or #), defaulting to
+// '/' when absent. Used only for tracker path-prefix matching. Pure.
+function pathOf_(url) {
+  const m = /^https?:\/\/[^\/?#]*([^?#]*)/i.exec(String(url));
+  const p = m ? m[1] : '';
+  return (p || '/').toLowerCase();
+}
+
+// Increment a per-host tally bucket ({ found, resolved }), creating it on first use.
+function bumpTally_(tally, label, key) {
+  const t = tally[label] || (tally[label] = { found: 0, resolved: 0 });
+  t[key]++;
+}
+
+// End-of-run structured resolution log: overall rate + per-host found/resolved so we can see
+// which tracker families fail and extend CONFIG.TRACKERS. attempted=N is shown only when the
+// per-run cap stopped us short of `found`.
+function logTrackerSummary_(ctx) {
+  if (!ctx || ctx.maxResolutions === 0) {
+    Logger.log('Trackers: resolution disabled (MAX_RESOLUTIONS_PER_RUN=0).');
+    return;
+  }
+  if (ctx.found === 0) {
+    Logger.log('Trackers: found=0 (no known trackers this run).');
+    return;
+  }
+  const perHost = Object.keys(ctx.tally).sort()
+    .map(function (h) { return h + ' ' + ctx.tally[h].resolved + '/' + ctx.tally[h].found; })
+    .join(', ');
+  if (ctx.dryRun) {
+    Logger.log('Trackers: found=%s (dry run — resolution skipped, nothing clicked) | %s', ctx.found, perHost);
+    return;
+  }
+  const pct = Math.round((ctx.resolved / ctx.found) * 100);
+  const attemptedStr = (ctx.attempted < ctx.found) ? (' attempted=' + ctx.attempted) : '';
+  // The '%' rides inside a %s argument (pct + '%') rather than a literal %% — Logger.log's
+  // handling of %% is not worth relying on, and this renders identically either way.
+  Logger.log('Trackers: found=%s resolved=%s (%s)%s | %s', ctx.found, ctx.resolved, pct + '%', attemptedStr, perHost);
 }
 
 // Build the Airtable upsert request body (pure, unit-tested): merge on

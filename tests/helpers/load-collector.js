@@ -42,6 +42,17 @@ const EXPORTS = [
   'getIntProp_',
   'buildUpsertPayload_',
   'airtableUpsert_',
+  // Tracker-URL resolution (slice feature/tracker-url-resolution):
+  'harvestHrefs_',
+  'dedupe_',
+  'decodeEntities_',
+  'classifyTracker_',
+  'isJunkLink_',
+  'hostOf_',
+  'pathOf_',
+  'resolveTracker_',
+  'resolveTrackersInHtml_',
+  'logTrackerSummary_',
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
 ];
 

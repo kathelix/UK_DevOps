@@ -14,7 +14,7 @@ flowchart LR
     E -->|applies, replies| D
 ```
 
-Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails daily, strips the HTML noise with a regex, and stores clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan applies to the flagged few and tells Claude, which logs the outcome.
+Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails daily, strips the HTML noise with a regex, resolves known tracking-redirect links to their canonical job URL in place (shrinking the stored text and handing the pipeline real links, not trackers), and stores the clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan applies to the flagged few and tells Claude, which logs the outcome.
 
 ## Components
 

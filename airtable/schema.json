@@ -19,6 +19,8 @@
         { "name": "HtmlLength", "type": "number", "options": { "precision": 0 } },
         { "name": "CleanLength", "type": "number", "options": { "precision": 0 } },
         { "name": "CleanText", "type": "multilineText", "description": "Regex-cleaned body; truncated only at Airtable's 100k long-text limit" },
+        { "name": "TrackersFound", "type": "number", "options": { "precision": 0 }, "description": "Distinct known-tracker URLs detected in this email, post junk-filter (resolution-rate denominator)" },
+        { "name": "TrackersResolved", "type": "number", "options": { "precision": 0 }, "description": "Of TrackersFound, how many resolved to a canonical (non-tracker) URL and were swapped into CleanText in place" },
         { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "New", "color": "yellowBright" }, { "name": "Processed", "color": "greenBright" }, { "name": "Error", "color": "redBright" } ] } }
       ]
     },
