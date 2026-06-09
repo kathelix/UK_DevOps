@@ -1,7 +1,7 @@
 # ADR 0002 — Keep custom HTML/URL handling on Apps Script; no third-party library
 
 - **Status:** Accepted — 2026-06-10
-- **Deciders:** Ivan (owner); Architect (Claude Cowork); Implementer (Claude Code)
+- **Deciders:** Ivan (owner); Architect (Claude Cowork); Implementer (Claude Code); Reviewer (Codex)
 - **Relates to:** ADR 0001 (the offline link cleanup whose code prompted the question)
 
 _ADRs are an append-only log. To revisit this, add a new ADR that supersedes it — do not rewrite this file._
