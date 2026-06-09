@@ -17,6 +17,7 @@ Decisions of record:
 - **Vacancies stays decisions-only** (applied/skipped/flagged) — no full vacancy inventory (Airtable free-tier record cap; ~100 parsed vacancies/day would blow it in weeks). RawEmails needs a **purge job**: delete `Processed` rows older than ~7 days (record deletion is API-supported).
 - **Cross-source vacancy identity rule** (goes into instructions at M6): same title-pattern + rate band + location + stack via a *different* recruiter = same underlying vacancy. Keep one record, append "also via <recruiter> at <rate>" to Notes, never apply through a second channel once an application is in flight; prefer better terms / direct posting before first application; uncertain identity → flag, don't auto-merge. Rationale: duplicate agency submissions can disqualify the candidate.
 - **Instructions file is versioned** (`VERSION: x.y` header, from 1.0): MAJOR = breaking (intake, gates, output contract), MINOR = non-breaking. Claude echoes the loaded version in every batch report.
+- **Custom HTML/URL handling, no third-party library** while on Apps Script — GAS has no dependency/build story (clasp pushes one raw file; the `vm` test loader needs it dependency-free), byte-parity with Make is easier with surgical string ops than a normalising URL/HTML library, and `CLEAN_REGEX` is a 1:1 port. Revisit at the second-cleaning-pass or an off-GAS service. See `docs/adr/0002-custom-parsing-no-library.md`.
 
 ## Collector (`apps-script/gmail-collector.gs`)
 
