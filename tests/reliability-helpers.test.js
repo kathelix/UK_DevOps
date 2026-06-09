@@ -23,6 +23,16 @@ test('isOverRuntimeBudget_ is true only after the budget is exceeded (strict >)'
   assert.equal(isOverRuntimeBudget_(start, start + budget + 1), true);  // 1 ms over
 });
 
+test('clampSubBatchSize_ keeps the sub-batch stride in [1, 10]', () => {
+  const { clampSubBatchSize_ } = loadCollector();
+  assert.equal(clampSubBatchSize_(5), 5);    // shipped value, untouched
+  assert.equal(clampSubBatchSize_(1), 1);
+  assert.equal(clampSubBatchSize_(10), 10);  // Airtable's records/request cap (boundary)
+  assert.equal(clampSubBatchSize_(0), 1);    // a 0 stride would never advance the loop
+  assert.equal(clampSubBatchSize_(-3), 1);
+  assert.equal(clampSubBatchSize_(25), 10);  // >10 would 422 the oversized upsert
+});
+
 test('buildUpsertPayload_ pins the upsert contract (merge on MessageId, typecast, passthrough)', () => {
   const { buildUpsertPayload_, CONFIG } = loadCollector();
   const records = [{ fields: { MessageId: 'm1' } }, { fields: { MessageId: 'm2' } }];
