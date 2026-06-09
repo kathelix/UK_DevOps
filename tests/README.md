@@ -35,18 +35,23 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
-  `buildUpsertPayload_` and `airtableUpsert_` (the PATCH-upsert dedupe contract).
+  `clampSubBatchSize_` (the `[1,10]` stride clamp), `buildUpsertPayload_` and
+  `airtableUpsert_` (the PATCH-upsert dedupe contract).
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
-  stubbed Apps Script globals and an injected clock, exercising both timeout
-  `break`s end to end (fetch-phase and write/label-phase deferral) plus the happy
-  path. A unit test of `isOverRuntimeBudget_` alone leaves the `break` that calls it
-  untested — these tests fail if either break is removed (mutation-checked).
+  stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
+  invariants — forward progress (an over-budget run still commits the first sub-batch),
+  incremental commit, **upsert-failure** (a rejected sub-batch is NOT make-collected —
+  no silent data loss), **poison isolation** (a bad message is make-failed while
+  siblings are collected; an all-poison sub-batch sends no empty upsert), the
+  **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
+  path, and `DRY_RUN`. Each guard is mutation-checked — removing the budget break, the
+  `if (!ok)` check, the empty-records guard, or the clamp flips an assertion.
 
 ## Not covered (deliberately)
 
-- The `LockService` single-flight guard and the `DRY_RUN` path — left to manual /
-  live verification (the guard is a pure side effect around the run).
-- The inner per-label budget granularity (a batch already in flight is not
-  interrupted mid-label) — an accepted, idempotency-bounded limit, not a unit
-  concern. Full modularization for deeper testability is tracked in `TODO.md`
-  ("Modularize for testability").
+- The `LockService` single-flight guard — left to manual / live verification (a
+  pure side effect around the run).
+- The inner per-label granularity (a sub-batch already in flight is not interrupted
+  mid-label) — an accepted, idempotency-bounded limit, not a unit concern. Full
+  modularization for deeper testability is tracked in `TODO.md` ("Modularize for
+  testability").

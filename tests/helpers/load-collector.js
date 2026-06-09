@@ -37,6 +37,7 @@ const EXPORTS = [
   'parseFrom_',
   'decodeB64Url_',
   'isOverRuntimeBudget_',
+  'clampSubBatchSize_',
   'buildUpsertPayload_',
   'airtableUpsert_',
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
