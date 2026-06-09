@@ -1,25 +1,25 @@
 'use strict';
 
-// Integration coverage for the timeout-safety BREAKS in collectJobEmailsLocked_.
+// Integration coverage for the sub-batch pipeline in collectJobEmailsLocked_.
 //
-// The reliability-helpers tests pin isOverRuntimeBudget_ as a pure predicate, but a
-// green predicate test does NOT prove the loop actually breaks: deleting either
-// `break` left `node --test` green (confirmed by mutation). These tests drive the
-// whole run with stubbed Apps Script globals and an injected, monotonic clock so the
-// fetch-loop and write/label-loop budget guards are exercised end to end.
+// The run processes the queue in sub-batches of CONFIG.SUB_BATCH_SIZE, each doing
+// fetch -> upsert -> label and committed before the next, with a single budget guard
+// at the top of the loop. These tests drive the whole run with stubbed Apps Script
+// globals and an injected clock (advanced per Gmail get(), modelling fetch latency).
 //
-// The clock advances by `getDelta` on each Gmail get() (the per-message fetch cost);
-// CONFIG.MAX_RUNTIME_MS is lowered per-scenario. Because the budget check sits at the
-// TOP of each loop iteration, scenarios are tuned so the guard trips at a known point.
+// The headline property is FORWARD PROGRESS: because the first sub-batch effectively
+// always runs, an over-budget run still commits at least one sub-batch rather than
+// deferring everything (the livelock the two-phase design could hit). A unit test of
+// isOverRuntimeBudget_ does not prove this — deleting the loop's `break` is caught
+// here (mutation-checked: removing it makes the over-budget tests label all 12).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadCollector } = require('./helpers/load-collector');
 
 const RealDate = Date;
+const SUB_BATCH = 5;
 
-// A controllable clock: Date.now() reads a mutable counter; new Date(...) still works
-// (for collectedAt / EmailDate). Only Gmail.get advances it, modelling fetch latency.
 function makeClock() {
   const c = { t: 0 };
   const FakeDate = function (...args) { return args.length ? new RealDate(...args) : new RealDate(0); };
@@ -41,15 +41,16 @@ function fakeMessage(i) {
   };
 }
 
-// Drive one collector run; return observable side effects.
-function runCollector({ n, budgetMs, getDelta }) {
+// Drive one collector run; getDelta is the per-message fetch cost added to the clock.
+function runCollector({ n, budgetMs, getDelta, dryRun = false }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => fakeMessage(i));
-  const labelled = [];   // message ids that got make-collected
+  const labelled = [];   // ids that got make-collected
   const upserts = [];    // Airtable upsert requests
 
   gas.CONFIG.MAX_RUNTIME_MS = budgetMs;
+  gas.CONFIG.SUB_BATCH_SIZE = SUB_BATCH;
   gas.setGlobals({
     Date: clock.Date,
     Gmail: {
@@ -66,7 +67,7 @@ function runCollector({ n, budgetMs, getDelta }) {
       },
     },
     UrlFetchApp: { fetch: (url, opts) => { upserts.push({ url, opts }); return { getResponseCode: () => 200, getContentText: () => '' }; } },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'AIRTABLE_TOKEN' ? 'tok' : null) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? 'tok' : null) }) },
     Utilities: {
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
@@ -76,33 +77,39 @@ function runCollector({ n, budgetMs, getDelta }) {
 
   gas.collectJobEmailsLocked_();
 
-  // Render Logger.log's printf-style entries (template + %s args) to plain strings.
   const fmt = (args) => { let i = 1; return String(args[0]).replace(/%s/g, () => (i < args.length ? String(args[i++]) : '%s')); };
   return { labelled, upserts, logs: gas.logs.map(fmt) };
 }
 
-test('under budget: every fetched message is upserted then labelled', () => {
+test('under budget: every message is upserted then labelled, in sub-batches', () => {
   const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1 });
-  assert.equal(r.labelled.length, 12, 'all 12 messages labelled make-collected');
-  assert.equal(r.upserts.length, 2, '12 records => 2 Airtable batches (10 + 2)');
-  assert.equal(r.upserts[0].opts.method, 'patch', 'write is a PATCH upsert');
-  assert.ok(r.logs.some(l => l.includes('Collected 12 of 12')), 'collected log present');
+  assert.equal(r.labelled.length, 12, 'all 12 labelled make-collected');
+  assert.equal(r.upserts.length, 3, '12 messages / sub-batch 5 => 3 upserts (5 + 5 + 2)');
+  assert.equal(r.upserts[0].opts.method, 'patch', 'each write is a PATCH upsert');
+  assert.ok(r.logs.some(l => l.includes('Collected 12 of 12')), 'collected summary present');
 });
 
-test('write/label phase honours the budget: over budget at write => defer all, label none', () => {
-  // n=11, budget=100, getDelta=10: fetch checks see 0..100 (all pass; strict >), the
-  // 11th get pushes the clock to 110, so the write loop's first check (110 > 100) breaks.
-  const r = runCollector({ n: 11, budgetMs: 100, getDelta: 10 });
-  assert.equal(r.labelled.length, 0, 'no message labelled (whole batch deferred)');
-  assert.equal(r.upserts.length, 0, 'no Airtable write started');
-  assert.ok(r.logs.some(l => /exceeded before write; deferring 11 record\(s\)/.test(l)), 'write-phase deferral logged');
-  assert.ok(!r.logs.some(l => /remaining message/.test(l)), 'fetch loop did not break (it completed)');
-  // The 11 records keep no make-collected label, so the next run re-collects them;
-  // the MessageId upsert makes those re-writes idempotent (no duplicate rows).
+test('forward progress: over budget after the first sub-batch still commits that sub-batch', () => {
+  // budget=100, getDelta=25: sub-batch 0's check sees 0 (runs); its 5 gets push the
+  // clock to 125, so sub-batch 1's check (125 > 100) breaks. Exactly one sub-batch
+  // commits — never zero (the old two-phase design could defer all), never all 12.
+  const r = runCollector({ n: 12, budgetMs: 100, getDelta: 25 });
+  assert.equal(r.labelled.length, SUB_BATCH, 'first sub-batch (5) committed despite the budget');
+  assert.equal(r.upserts.length, 1, 'one sub-batch upserted');
+  assert.ok(r.logs.some(l => /deferring 7 message\(s\)/.test(l)), 'remaining 7 deferred to next run');
 });
 
-test('fetch phase honours the budget: trips mid-fetch and defers the remainder', () => {
-  // n=10, budget=100, getDelta=40: check at i=3 sees 120 > 100 => break, 7 deferred.
-  const r = runCollector({ n: 10, budgetMs: 100, getDelta: 40 });
-  assert.ok(r.logs.some(l => /deferring 7 remaining message\(s\)/.test(l)), 'fetch-phase deferral of 7 logged');
+test('incremental commit: over budget mid-run keeps earlier sub-batches committed', () => {
+  // budget=100, getDelta=11: checks see 0, 55 (both run), then 110 > 100 => break.
+  const r = runCollector({ n: 12, budgetMs: 100, getDelta: 11 });
+  assert.equal(r.labelled.length, 2 * SUB_BATCH, 'first two sub-batches (10) committed');
+  assert.equal(r.upserts.length, 2, 'two sub-batches upserted');
+  assert.ok(r.logs.some(l => /deferring 2 message\(s\)/.test(l)), 'remaining 2 deferred');
+});
+
+test('DRY_RUN: inspects every sub-batch but writes and labels nothing', () => {
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, dryRun: true });
+  assert.equal(r.labelled.length, 0, 'nothing labelled');
+  assert.equal(r.upserts.length, 0, 'nothing upserted');
+  assert.ok(r.logs.some(l => /DRY_RUN complete: 12 message\(s\) inspected/.test(l)), 'dry-run summary present');
 });
