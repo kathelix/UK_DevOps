@@ -24,10 +24,14 @@ const CONFIG = {
   // Applied to messages that fail processing (decode errors etc.) so they
   // don't head-of-line block the queue; excluded by QUERY. Created on demand.
   FAILED_LABEL_NAME: 'job-vacancies/make-failed',
-  // One run handles a full day's batch (~25/day inflow). Tested at 1 and 5.
+  // Per-run fetch cap (the default). Overridable at runtime via the MAX_MESSAGES Script
+  // Property — integer 0–500, where 0 = processing disabled — without a code change or
+  // redeploy (resolved by getIntProp_; see docs/OPERATIONS.md). One run handles a full
+  // day's batch (~25/day inflow). Tested at 1 and 5.
   MAX_MESSAGES: 25,
   // Timeout safety: stop starting new sub-batches once a run has been going this long,
   // well under Apps Script's ~6 min limit. Deferred messages resume on the next run.
+  // TODO: could be made runtime-tunable via getIntProp_('MAX_RUNTIME_MS', …) with its own bounds; deferred — isOverRuntimeBudget_ reads CONFIG directly, and timeout behaviour is out of the MAX_MESSAGES slice's scope.
   MAX_RUNTIME_MS: 300000,
   // Commit granularity: process the queue in sub-batches of this many messages
   // (fetch -> upsert -> label, each committed before the next), so a timeout or crash
@@ -70,13 +74,28 @@ function collectJobEmails() {
 function collectJobEmailsLocked_() {
   // Script Property DRY_RUN=true -> log would-be writes/labels, touch nothing.
   const dryRun = PropertiesService.getScriptProperties().getProperty('DRY_RUN') === 'true';
+
+  // Per-run fetch cap, tunable from Script Properties without a redeploy. Unset / blank /
+  // garbage / out-of-range falls back to CONFIG.MAX_MESSAGES (parity with the shipped
+  // default); 0 is an explicit "process nothing this run" switch — distinct from DRY_RUN,
+  // which still fetches + cleans and only skips writes/labels.
+  const maxMessages = getIntProp_('MAX_MESSAGES', CONFIG.MAX_MESSAGES, 0, 500);
+  Logger.log('Run config: MAX_MESSAGES=%s (source default %s).', maxMessages, CONFIG.MAX_MESSAGES);
+  if (maxMessages === 0) {
+    Logger.log('MAX_MESSAGES=0 — processing disabled this run; no fetch, no writes, no labels.');
+    return; // deliberate no-op; lock released by the finally wrapper in collectJobEmails.
+    // NB: fetch-nothing is the early return, NOT maxResults:0 — that value is ambiguous
+    // (Gmail may treat 0 as unset and apply its default page size), so returning is the
+    // unambiguous "fetch nothing". The 0 never reaches the list call below.
+  }
+
   const executionId = Utilities.getUuid(); // Sheets column A: {{executionId}}
   const collectedAt = new Date().toISOString(); // Sheets column B: {{now}}
   const startMs = Date.now(); // anchor for the MAX_RUNTIME_MS timeout-safety budget
 
   const listResp = Gmail.Users.Messages.list('me', {
     q: CONFIG.QUERY,
-    maxResults: CONFIG.MAX_MESSAGES,
+    maxResults: maxMessages,
   });
   const messageRefs = (listResp.messages || []);
   if (messageRefs.length === 0) {
@@ -186,6 +205,37 @@ function isOverRuntimeBudget_(startMs, nowMs) {
 // advancing; <=10 keeps each upsert within Airtable's records/request cap.
 function clampSubBatchSize_(n) {
   return Math.max(1, Math.min(n, 10));
+}
+
+// Parse a Script Property value as an integer in [min, max] (pure, unit-tested).
+// Returns `raw` as an integer ONLY if, after trimming, it is all digits (/^\d+$/) and
+// lands within [min, max]; otherwise returns `fallback`. Deliberately strict and
+// non-clamping: a sign, decimal point, blank, or out-of-range value is a misconfig, not
+// something to coerce or nudge to a bound — so it cleanly falls back to the default.
+function parseIntProp_(raw, fallback, min, max) {
+  if (raw == null) return fallback;
+  const s = String(raw).trim();
+  if (!/^\d+$/.test(s)) return fallback;        // non-digits / sign / decimal / blank -> default
+  const n = parseInt(s, 10);
+  return (n >= min && n <= max) ? n : fallback; // out of range -> default (no clamping)
+}
+
+// Read an integer Script Property, delegating validation to parseIntProp_. When the
+// property IS set to a non-blank value that parseIntProp_ rejects, log a warning (name,
+// bad value, accepted range) so the misconfig is visible in Executions. Unset or blank
+// falls back silently — clearing the field is not a misconfig.
+function getIntProp_(name, fallback, min, max) {
+  const raw = PropertiesService.getScriptProperties().getProperty(name);
+  // `null` fallback doubles as a "rejected" sentinel: parseIntProp_ only ever returns an
+  // integer in [min, max] for a valid `raw`, so a null result means raw was absent/invalid
+  // — this distinguishes a rejected value from a valid one that happens to equal `fallback`.
+  const parsed = parseIntProp_(raw, null, min, max);
+  if (parsed !== null) return parsed;
+  if (raw != null && String(raw).trim() !== '') {
+    Logger.log('Ignoring Script property %s=%s — not an integer in [%s, %s]; using default %s.',
+      name, JSON.stringify(raw), min, max, fallback);
+  }
+  return fallback;
 }
 
 function processMessage_(msg, headers, records, executionId, collectedAt, labelsById) {
