@@ -37,6 +37,15 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
   `clampSubBatchSize_` (the `[1,10]` stride clamp), `buildUpsertPayload_` and
   `airtableUpsert_` (the PATCH-upsert dedupe contract).
+- **`max-messages.test.js`** — the runtime-tunable `MAX_MESSAGES` Script Property:
+  `parseIntProp_` (the strict, non-clamping `[0,500]` parser — `0`/`"50"`/`" 50 "`
+  accepted, decimal/sign/garbage/out-of-range → default), `getIntProp_` (warns on a
+  set-but-invalid value, silent on unset/blank or a valid value equal to the default),
+  and an integration pass over `collectJobEmailsLocked_` pinning the **`0` short-circuit**
+  (no `Gmail.Users.Messages.list` call, no writes, no labels) and the **`maxResults`
+  wiring** (unset → 25 parity, a valid override reaches Gmail, garbage → 25). Each is
+  mutation-checked — neutering the early return, the `maxResults: maxMessages` wiring, or
+  the warning flips an assertion.
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
