@@ -1,0 +1,3 @@
+# Keep test fixtures byte-for-byte stable across platforms so the cleaning-regex
+# golden-length assertions in tests/clean-regex.test.js hold on CI as well as locally.
+tests/fixtures/** text eol=lf

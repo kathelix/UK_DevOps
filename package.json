@@ -1,0 +1,9 @@
+{
+  "name": "uk-devops",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Repo tooling and tests for the UK_DevOps Gmail collector (Apps Script). Node-only; never deployed by clasp (lives outside the clasp rootDir).",
+  "scripts": {
+    "test": "node --test"
+  }
+}
