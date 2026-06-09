@@ -81,6 +81,11 @@ If these are your own projects you may end each PR body and comment with a perso
 
 Every non-trivial PR ends with a brief retrospective — run it unprompted, don't wait to be asked. It is the **genuinely last step**: only after Codex's review is resolved _and_ the owner has approved, immediately before you execute the merge — not right after opening the PR, so it can capture lessons from the whole lifecycle including the review rounds. Capture what worked, what didn't, and what to change. Fold any lesson that generalizes into a durable convention **into this AGENTS.md, in the same PR**, so the change and the lesson it produced live together. Keep it proportional: a typo fix has nothing to capture; a long multi-round PR may yield several.
 
+## Test fixtures from real captures
+
+- A fixture built from real user data (a captured email, an API response, a log) carries PII beyond the obvious literals. Per-recipient **opaque tokens** — unsubscribe hashes, click-tracking IDs, profile UUIDs — identify the user even when no name or address is in sight, and the identity is often **encoded inside a token** (e.g. a tracking JWT whose base64 payload contains the recipient's email). Grepping for the literal address/name is not enough: redact every per-recipient token, then verify by also searching for **encoded forms** (the base64 of the address, etc.), not just the plaintext. Normalise to LF so golden lengths stay platform-stable.
+- A fixture no test reads is a latent trap: it drifts unvalidated and gets silently adopted later (a pre-cleaned, truncated email once slipped in as a golden nobody had checked). Tie fixtures to tests with a **manifest/coverage check** (every fixture has a golden entry and vice versa), and before pinning a real capture as a golden confirm it is a faithful **raw** capture, not something already processed.
+
 ## Working principles
 
 - Prefer standard, built-in mechanisms over bespoke scripts unless there's a concrete reason.
