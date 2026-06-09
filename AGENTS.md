@@ -1,6 +1,6 @@
 # AGENTS.md — Portable agent working guide
 
-_A reusable Codex onboarding file, distilled from a mature project into stack-agnostic habits. Drop it in a new repo's root, fill the **Project context** block below, and delete any section that doesn't apply. Codex reads this file automatically; other assistants read their own (e.g. `AGENTS.md`) — copy or symlink as needed. It pairs with `.Codex/settings.json`, a conservative read-only permission starter._
+_A reusable Codex onboarding file, distilled from a mature project into stack-agnostic habits. Drop it in a new repo's root, fill the **Project context** block below, and delete any section that doesn't apply. Codex reads this file automatically; other assistants read their own (e.g. `AGENTS.md`) — copy or symlink as needed. It pairs with `.claude/settings.json`, a conservative read-only permission starter._
 
 ## Project context
 
@@ -9,6 +9,17 @@ Fill these in per project — this is the only part you must edit.
 - **Project:** UK DevOps — Job Search Automation
 - **Owner / final say:** Ivan
 - **Repo:** `github.com/kathelix/UK_DevOps/`
+
+## Agent roles & slice workflow
+
+Work moves in **slices**, one role per agent:
+
+- **Architect — Claude Cowork.** Owns the whole-system view and the roadmap; cuts the next slice and hands it to the Implementer as a self-contained **markdown prompt** (scope, old→new behaviour to preserve, acceptance criteria/tests, guardrails, out-of-scope). Does **not** push, open PRs, or merge.
+- **Implementer — Claude Code.** Takes one prompt, works it on its own branch + PR, then resolves Codex's review. After the owner approves, performs the (squash) merge, watches CI to green, and reconciles the local checkout to `main` (per *GitHub PR hygiene*).
+- **Reviewer — Codex.** Reviews each PR. **Architectural** findings — intake contract, screening gates, output shape — are referred back to the Architect before they're resolved; code-quality findings the Implementer fixes directly.
+- **Owner — Ivan.** Final review/approval on every PR; reports "slice done" back to the Architect, who proposes the next slice.
+
+The merge *decision* remains the owner's — Claude Code only executes a merge the owner has approved on that PR; nothing auto-merges. `CLAUDE.md` is canonical; this section mirrors it so Codex and Claude Code read identical rules.
 
 ## Documentation & decisions
 
@@ -78,4 +89,4 @@ Every non-trivial PR ends with a brief retrospective before merge — run it unp
 
 ## Appendix — Codex permissions
 
-This template ships a companion `.Codex/settings.json` with a conservative, stack-agnostic allowlist: read-only inspection (`find`, `grep`, read-only `git` and `gh`, `command -v`), scratch space under `/tmp`, and self-editing of `.Codex/`. Mutating git/gh and filesystem operations are deliberately left out so they stay prompt-gated. Add project-specific commands (build, test, your package manager) as you confirm they're safe.
+This template ships a companion `.claude/settings.json` with a conservative, stack-agnostic allowlist: read-only inspection (`find`, `grep`, read-only `git` and `gh`, `command -v`), scratch space under `/tmp`, and self-editing of `.claude/`. Mutating git/gh and filesystem operations are deliberately left out so they stay prompt-gated. Add project-specific commands (build, test, your package manager) as you confirm they're safe.

@@ -10,6 +10,17 @@ Fill these in per project — this is the only part you must edit.
 - **Owner / final say:** Ivan
 - **Repo:** `github.com/kathelix/UK_DevOps/`
 
+## Agent roles & slice workflow
+
+Work moves in **slices**, one role per agent:
+
+- **Architect — Claude Cowork.** Owns the whole-system view and the roadmap; cuts the next slice and hands it to the Implementer as a self-contained **markdown prompt** (scope, old→new behaviour to preserve, acceptance criteria/tests, guardrails, out-of-scope). Does **not** push, open PRs, or merge.
+- **Implementer — Claude Code.** Takes one prompt, works it on its own branch + PR, then resolves Codex's review. After the owner approves, performs the (squash) merge, watches CI to green, and reconciles the local checkout to `main` (per *GitHub PR hygiene*).
+- **Reviewer — Codex.** Reviews each PR. **Architectural** findings — intake contract, screening gates, output shape — are referred back to the Architect before they're resolved; code-quality findings the Implementer fixes directly.
+- **Owner — Ivan.** Final review/approval on every PR; reports "slice done" back to the Architect, who proposes the next slice.
+
+The merge *decision* remains the owner's — Claude Code only executes a merge the owner has approved on that PR; nothing auto-merges. This file is canonical; keep the same section in `AGENTS.md` so Codex reads identical rules.
+
 ## Documentation & decisions
 
 - If the project keeps design docs, treat them as the source of truth and keep code from getting ahead of them: decide, then spec, then implement. A common split is a stable high-level design (the "why"), a concrete technical spec (the "what" — versions, names, constraints), and a backlog (implementation status). Update the spec before writing the code it describes.
