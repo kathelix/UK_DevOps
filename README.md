@@ -14,7 +14,7 @@ flowchart LR
     E -->|applies, replies| D
 ```
 
-Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails daily, strips the HTML noise with a regex, and stores clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan applies to the flagged few and tells Claude, which logs the outcome.
+Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails daily, cleans the links offline (decodes trackers that embed their destination in a `?url=`-style param and strips `utm_*` analytics params — no network calls, no clicking), strips the remaining HTML noise with a regex, and stores clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan applies to the flagged few and tells Claude, which logs the outcome.
 
 ## Components
 
@@ -32,8 +32,8 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 - `apps-script/` — the collector script, manifest, setup guide
 - `airtable/` — desired schema + idempotent apply script (additive-only)
 - `instructions/` — Claude's pipeline instructions (`VERSION`-ed, source of truth)
-- `docs/` — project brief, daily workflow, design notes, known issues, operations runbook
-- `tests/` — fixtures for the cleaning regex
+- `docs/` — project brief, daily workflow, design notes, known issues, operations runbook, ADRs (`adr/`)
+- `tests/` — `node:test` harness + fixtures for the collector (cleaning regex, offline link cleanup, parsers, reliability helpers)
 - `TODO.md` — roadmap (M1–M6 rollout), improvement backlog, decisions of record
 
 ## Status

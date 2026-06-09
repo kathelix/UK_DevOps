@@ -42,6 +42,15 @@ const EXPORTS = [
   'getIntProp_',
   'buildUpsertPayload_',
   'airtableUpsert_',
+  // offline link cleanup (pure)
+  'trimTrailingPunct_',
+  'harvestUrls_',
+  'splitUrl_',
+  'schemeHostOf_',
+  'decodeEmbeddedDestination_',
+  'stripUtm_',
+  'cleanUrl_',
+  'cleanLinksInHtml_',
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
 ];
 
