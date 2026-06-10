@@ -61,6 +61,7 @@ The single most valuable habit: never report something you have not just verifie
 - **Check both comment surfaces.** PR feedback lives in two places: top-level conversation comments and inline review comments on specific lines. Automated reviewers usually post inline. Check both before concluding a PR has no findings.
 - **Merge is the owner's decision — never the agent's.** Get the PR merge-ready (CI green, findings resolved, body accurate) and hand it over. No `--auto`, no poll-and-merge, no "it was green so I merged it." A "merge it" instruction is per-PR, not standing. When asked to merge, default to squash. After a merge: switch to the main branch, `pull --ff-only`, delete the old branch.
 - **Attribution:** every PR comment or description an AI agent posts starts with a short italic line naming the agent, on its own line at the very top — e.g. `_Posted by Codex_`. On a shared account this is the only way a later reader tells AI-authored comments from the owner's.
+- **Agent-specific footers:** Do not add another agent's footer to Codex-authored PR bodies or comments. When reviewing another agent's PR body or comments, check that agent's repo instructions before flagging attribution/footer text. In this repo, `CLAUDE.md` is canonical for Claude Code, including any Claude-specific optional footer; Codex should treat that footer as expected when present on Claude-authored PR bodies/comments, but must not emit it itself.
 
 ## PR review discipline
 
