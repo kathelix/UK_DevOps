@@ -51,6 +51,7 @@ const EXPORTS = [
   'stripUtm_',
   'cleanUrl_',
   'cleanLinksInHtml_',
+  'collapseTableWrappers_', // single-child table-wrapper unwrap (pure; applied after CLEAN_REGEX)
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
   // RawEmails purge job (pure helpers + the lock-free run, driven by tests/purge.test.js)
   'resolvePurgeThresholds_',
