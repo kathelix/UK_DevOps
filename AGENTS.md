@@ -30,6 +30,7 @@ The merge *decision* remains the owner's — Claude Code only executes a merge t
 ## Branching & commits
 
 - Feature work goes on a branch; open a PR to the main branch. Use descriptive names (`feature/`, `fix/`, `chore/`).
+- When creating a branch, branch explicitly from the intended base (`git checkout -b <name> origin/main`) and verify it before committing (`git log -1`, `git merge-base --is-ancestor`) — don't trust the session's start-of-conversation git snapshot, which can be stale. Run parallel agent sessions in separate git worktrees so their branches can't collide.
 - Don't start feature work on the main branch — not even docs-only edits. The only exception is a tiny mechanical change the owner has explicitly approved for direct-to-main.
 - Commit subjects: short, imperative, no trailing period (e.g. `Add upload retry, persist draft state`).
 - When you address review feedback or follow-ups on a branch, make a **new commit** rather than amending the original — separate commits let a reviewer reconstruct which change answered which round. Amend only for trivial typo cleanup, and say so first.
