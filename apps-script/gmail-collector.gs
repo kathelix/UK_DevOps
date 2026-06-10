@@ -109,7 +109,11 @@ function collectJobEmailsLocked_() {
   // default); 0 is an explicit "process nothing this run" switch — distinct from DRY_RUN,
   // which still fetches + cleans and only skips writes/labels.
   const maxMessages = getIntProp_('MAX_MESSAGES', CONFIG.MAX_MESSAGES, 0, 500);
-  Logger.log('Run config: MAX_MESSAGES=%s (source default %s).', maxMessages, CONFIG.MAX_MESSAGES);
+  // NB: numeric args to Logger.log are String()-wrapped throughout this file. On the live
+  // GAS runtime '%s' marshals a JS number to a Java Double, so an integer prints as "114.0";
+  // String(114) -> "114" preserves the documented integer log format. (The Node test harness
+  // substitutes %s the JS way, so it can't catch this — observed live 2026-06-10.)
+  Logger.log('Run config: MAX_MESSAGES=%s (source default %s).', String(maxMessages), String(CONFIG.MAX_MESSAGES));
   if (maxMessages === 0) {
     Logger.log('MAX_MESSAGES=0 — processing disabled this run; no fetch, no writes, no labels.');
     return; // deliberate no-op; lock released by the finally wrapper in collectJobEmails.
@@ -164,12 +168,12 @@ function collectJobEmailsLocked_() {
   // cap (the oversized PATCH is rejected 422 and the sub-batch would never commit).
   const subBatchSize = clampSubBatchSize_(CONFIG.SUB_BATCH_SIZE);
   if (subBatchSize !== CONFIG.SUB_BATCH_SIZE) {
-    Logger.log('CONFIG.SUB_BATCH_SIZE=%s is out of range [1,10]; using %s.', CONFIG.SUB_BATCH_SIZE, subBatchSize);
+    Logger.log('CONFIG.SUB_BATCH_SIZE=%s is out of range [1,10]; using %s.', String(CONFIG.SUB_BATCH_SIZE), String(subBatchSize));
   }
   for (let start = 0; start < messageRefs.length; start += subBatchSize) {
     if (isOverRuntimeBudget_(startMs, Date.now())) {
       Logger.log('Runtime budget (%s ms) exceeded; deferring %s message(s) to next run.',
-        CONFIG.MAX_RUNTIME_MS, messageRefs.length - start);
+        String(CONFIG.MAX_RUNTIME_MS), String(messageRefs.length - start));
       break;
     }
 
@@ -206,7 +210,7 @@ function collectJobEmailsLocked_() {
         Logger.log(
           'DRY_RUN would write: %s | %s | %s | html=%s clean=%s | then add label "%s"',
           r.fields.MessageId, r.fields.FromEmail, r.fields.Subject,
-          r.fields.HtmlLength, r.fields.CleanLength, CONFIG.COLLECTED_LABEL_NAME
+          String(r.fields.HtmlLength), String(r.fields.CleanLength), CONFIG.COLLECTED_LABEL_NAME
         );
         Logger.log('DRY_RUN CleanText preview (first 500 chars):\n%s', r.fields.CleanText.substring(0, 500));
       }
@@ -219,7 +223,7 @@ function collectJobEmailsLocked_() {
     // of duplicating it, so the write-then-label ordering is crash-safe.
     const ok = airtableUpsert_(records.map(r => ({ fields: r.fields })), upsertFailures);
     if (!ok) {
-      Logger.log('Airtable upsert FAILED for sub-batch starting at %s - those messages stay uncollected and will retry next run.', start);
+      Logger.log('Airtable upsert FAILED for sub-batch starting at %s - those messages stay uncollected and will retry next run.', String(start));
       continue;
     }
     for (const r of records) {
@@ -231,12 +235,12 @@ function collectJobEmailsLocked_() {
   // Offline link-cleanup metric — once per run, log line only (no Airtable field). Logged in
   // both real and DRY_RUN paths since the cleanup runs in processMessage_ either way.
   Logger.log('Links: decoded=%s utm_stripped=%s bytes_saved=%s',
-    linkStats.decoded, linkStats.utmStripped, linkStats.bytesSaved);
+    String(linkStats.decoded), String(linkStats.utmStripped), String(linkStats.bytesSaved));
 
   if (dryRun) {
-    Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', inspected);
+    Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
   } else {
-    Logger.log('Collected %s of %s message(s).', collected, messageRefs.length);
+    Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
     if (upsertFailures.count > 0) {
       // Thrown only AFTER the loop and the summary logs: every successful sub-batch is
       // already committed and labelled, so no work is lost — the throw exists purely to
@@ -285,7 +289,7 @@ function getIntProp_(name, fallback, min, max) {
   if (parsed !== null) return parsed;
   if (raw != null && String(raw).trim() !== '') {
     Logger.log('Ignoring Script property %s=%s — not an integer in [%s, %s]; using default %s.',
-      name, JSON.stringify(raw), min, max, fallback);
+      name, JSON.stringify(raw), String(min), String(max), String(fallback));
   }
   return fallback;
 }
@@ -651,7 +655,7 @@ function airtableUpsert_(records, failures) {
     muteHttpExceptions: true,
   });
   if (resp.getResponseCode() === 200) return true;
-  Logger.log('Airtable upsert error %s: %s', resp.getResponseCode(), resp.getContentText().slice(0, 500));
+  Logger.log('Airtable upsert error %s: %s', String(resp.getResponseCode()), resp.getContentText().slice(0, 500));
   if (failures) {
     failures.count++;
     if (!failures.first) failures.first = resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500);
@@ -696,14 +700,14 @@ function purgeRawEmailsLocked_() {
   );
   if (t.fellBack) {
     Logger.log('Purge thresholds misconfigured (high %s <= low %s); using defaults high=%s low=%s.',
-      t.rejectedHigh, t.rejectedLow, t.high, t.low);
+      String(t.rejectedHigh), String(t.rejectedLow), String(t.high), String(t.low));
   }
 
   // Total record count: a paginated single-field list is the cheapest REST way to
   // count (~2 calls at steady state; there is no count endpoint).
   const count = airtableListRecords_('fields%5B%5D=MessageId&pageSize=100').length;
   if (count <= t.high) {
-    Logger.log('Purge: count=%s high=%s — nothing to do.', count, t.high);
+    Logger.log('Purge: count=%s high=%s — nothing to do.', String(count), String(t.high));
     return;
   }
 
@@ -723,7 +727,7 @@ function purgeRawEmailsLocked_() {
       throw new Error('Purge: count=' + count + ' >= PURGE_EMERGENCY=' + CONFIG.PURGE_EMERGENCY +
         ' with 0 eligible rows — base is nearly at the 1,000-record cap and the purge cannot help; manual action required.');
     }
-    Logger.log('Purge: over high-water (%s) but 0 eligible rows — capacity risk, manual action may be needed.', count);
+    Logger.log('Purge: over high-water (%s) but 0 eligible rows — capacity risk, manual action may be needed.', String(count));
     return;
   }
 
@@ -731,9 +735,9 @@ function purgeRawEmailsLocked_() {
 
   if (dryRun) {
     Logger.log('DRY_RUN: would delete %s of %s eligible row(s), oldest first: %s',
-      plan.length, eligibleIds.length, plan.join(', '));
+      String(plan.length), String(eligibleIds.length), plan.join(', '));
     Logger.log('Purge: count=%s high=%s low=%s eligible=%s deleted=0 remaining=%s (DRY_RUN — nothing deleted)',
-      count, t.high, t.low, eligibleIds.length, count);
+      String(count), String(t.high), String(t.low), String(eligibleIds.length), String(count));
     return;
   }
 
@@ -746,7 +750,7 @@ function purgeRawEmailsLocked_() {
     Utilities.sleep(250);
   }
   Logger.log('Purge: count=%s high=%s low=%s eligible=%s deleted=%s remaining=%s',
-    count, t.high, t.low, eligibleIds.length, deleted, count - deleted);
+    String(count), String(t.high), String(t.low), String(eligibleIds.length), String(deleted), String(count - deleted));
 }
 
 // Resolve the high/low-water pair (pure, unit-tested): HIGH must exceed LOW for the
