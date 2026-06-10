@@ -51,7 +51,7 @@ The collector carries hand-written string logic: `CLEAN_REGEX` (HTML noise strip
 ## 5. Data model (Airtable)
 
 - **Vacancies stays decisions-only** (applied/skipped/flagged) — no full vacancy inventory. **Rejected:** storing every parsed vacancy — the Airtable free-tier record cap; ~100 parsed vacancies/day would blow it in weeks.
-- **RawEmails is a transient queue and needs a purge job:** delete `Processed` rows older than ~7 days (record deletion is API-supported, unlike schema deletion).
+- **RawEmails is a transient queue:** `Processed` rows are purged after ~7 days (record deletion is API-supported, unlike schema deletion), keeping the queue inside the record cap. The purge job is backlog work (`TODO.md` → Airtable).
 - **Schema-as-code, additive-only.** `airtable/schema.json` + an idempotent apply script in CI (Meta API). The API cannot delete tables/fields or change field types — removals stay manual. Caveat: matching is by field **name** until ID-matching lands (`TODO.md` → Airtable), so a UI rename re-creates the field as a duplicate on the next run — treat `schema.json` as the authority on names; see [KNOWN_ISSUES §3](KNOWN_ISSUES.md).
 
 ## 6. Screening layer
