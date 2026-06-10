@@ -10,13 +10,17 @@
  *   1. script.google.com -> New project -> paste this file.
  *   2. Left sidebar "Services" (+) -> add "Gmail API" (Advanced Gmail Service).
  *   3. Project Settings -> Script Properties -> add:
- *        AIRTABLE_TOKEN = <your Airtable PAT with data.records:write on the Job Search base>
+ *        AIRTABLE_TOKEN = <your Airtable PAT with data.records:read+write on the Job
+ *          Search base — read is required by purgeRawEmails (count/list); re-scope or
+ *          replace an older write-only PAT before enabling the purge trigger>
  *   4. Create the Airtable table (see gmail-collector-setup.md for the field list).
  *   5. Run collectJobEmails() once manually -> authorize scopes.
- *   6. Triggers -> Add trigger -> collectJobEmails, time-driven, every 30 minutes
- *      (deliberate, decided 2026-06-10: small frequent batches instead of one daily sweep).
- *   7. Triggers -> Add trigger -> purgeRawEmails, time-driven, daily 3-4am
- *      (the RawEmails janitor — see the purge section at the bottom of this file).
+ *   6. Triggers -> Add trigger -> collectJobEmails, time-driven. Cadence is tuned in
+ *      the GAS console and recorded ONCE in docs/TECH_DESIGN.md section 7 — triggers
+ *      are runtime state; the console is the live authority.
+ *   7. Triggers -> Add trigger -> purgeRawEmails, time-driven, nightly (time recorded
+ *      in the same TECH_DESIGN section; the RawEmails janitor — see the purge section
+ *      at the bottom of this file).
  */
 
 const CONFIG = {
@@ -47,7 +51,7 @@ const CONFIG = {
   // Upsert merge key (Gmail message id): re-collecting the same message updates
   // its row instead of duplicating it. Used by airtableUpsert_.
   DEDUPE_FIELD: 'MessageId',
-  // --- RawEmails purge job (purgeRawEmails; own daily ~03:30 trigger) ---
+  // --- RawEmails purge job (purgeRawEmails; own nightly trigger, docs/TECH_DESIGN.md §7) ---
   // The Airtable FREE plan caps a base at 1,000 records across ALL tables, so RawEmails
   // shares the budget with Vacancies (crossed 2026-06-10 — see docs/KNOWN_ISSUES.md).
   // When the RawEmails count exceeds the high-water mark, the purge deletes the oldest
@@ -658,8 +662,9 @@ function airtableUpsert_(records, failures) {
 // ---------- RawEmails purge job (janitor) ----------
 // Keeps RawEmails inside its share of the Airtable free plan's 1,000-records-per-BASE
 // cap (shared across all tables — crossed 2026-06-10, see docs/KNOWN_ISSUES.md). Runs
-// on its OWN daily time trigger (~03:30 Europe/London; manual setup, runtime state —
-// docs/OPERATIONS.md). Over the high-water mark it deletes the OLDEST eligible rows
+// on its OWN nightly time trigger (manual setup, runtime state; time recorded in
+// docs/TECH_DESIGN.md §7, runbook in docs/OPERATIONS.md). Over the high-water mark it
+// deletes the OLDEST eligible rows
 // down to the low-water mark; eligibility (Status='Processed' AND old enough) is
 // enforced server-side by purgeEligibilityFormula_, so Status='New' rows structurally
 // cannot be deleted. Any Airtable non-200 throws: Failed execution -> failure email.
