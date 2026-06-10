@@ -156,6 +156,10 @@ function collectJobEmailsLocked_() {
   // destinations recovered, utmStripped = URLs that had >=1 utm_ param removed, bytesSaved =
   // total chars removed across all in-place swaps. Pure/offline — no network, no schema field.
   const linkStats = { decoded: 0, utmStripped: 0, bytesSaved: 0 };
+  // Same per-run tally for the table-wrapper unwrap (collapseTableWrappers_, applied after
+  // CLEAN_REGEX in processMessage_): wrapper tables collapsed + chars dropped, logged once
+  // after the loop next to the Links: line.
+  const unwrapStats = { tables: 0, bytesSaved: 0 };
   // Fail-loudly accumulator, filled in by airtableUpsert_ on each non-200 sub-batch.
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity
   // contract: failed messages stay unlabelled and retry next run), but a run with any
@@ -185,7 +189,7 @@ function collectJobEmailsLocked_() {
       try {
         msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
         headers = headerMap_(msg.payload.headers || []);
-        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats);
+        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats);
       } catch (e) {
         Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
           ref.id,
@@ -236,6 +240,9 @@ function collectJobEmailsLocked_() {
   // both real and DRY_RUN paths since the cleanup runs in processMessage_ either way.
   Logger.log('Links: decoded=%s utm_stripped=%s bytes_saved=%s',
     String(linkStats.decoded), String(linkStats.utmStripped), String(linkStats.bytesSaved));
+  // Table-wrapper unwrap rollup (per-email lines carry msg=<id>; this run total doesn't).
+  Logger.log('Unwrap: tables=%s bytes_saved=%s',
+    String(unwrapStats.tables), String(unwrapStats.bytesSaved));
 
   if (dryRun) {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
@@ -294,7 +301,7 @@ function getIntProp_(name, fallback, min, max) {
   return fallback;
 }
 
-function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats) {
+function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats) {
   const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
   const htmlBody = extractHtmlBody_(msg.payload) || '';
   // Offline link cleanup (NO network): decode trackers that embed their destination in a
@@ -306,7 +313,15 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
   linkStats.decoded += linkClean.decoded;
   linkStats.utmStripped += linkClean.utmStripped;
   linkStats.bytesSaved += linkClean.bytesSaved;
-  const cleanText = linkClean.html.replace(CLEAN_REGEX, '');
+  // Collapse layout-only single-child table wrappers AFTER CLEAN_REGEX (bare-tag matching
+  // is simpler post-regex; see the stage banner above collapseTableWrappers_). Byte-identical
+  // no-op when nothing matches. The per-email metric logs in real and DRY_RUN runs alike —
+  // the unwrap runs here either way; numeric args String()-wrapped (PR #12 convention).
+  const unwrap = collapseTableWrappers_(linkClean.html.replace(CLEAN_REGEX, ''));
+  unwrapStats.tables += unwrap.tables;
+  unwrapStats.bytesSaved += unwrap.bytesSaved;
+  Logger.log('Unwrap: msg=%s tables=%s bytes_saved=%s', msg.id, String(unwrap.tables), String(unwrap.bytesSaved));
+  const cleanText = unwrap.html;
 
   records.push({
     messageId: msg.id,
@@ -510,6 +525,219 @@ function cleanLinksInHtml_(html) {
     return info.cleaned + match.slice(url.length); // preserve any trimmed trailing punctuation
   });
   return { html: out, decoded: decoded, utmStripped: utmStripped, bytesSaved: original.length - out.length };
+}
+
+// ---------- collapse single-child table wrappers (pure, unit-tested) ----------
+// Job-alert senders wrap content in layout-only single-child table chains —
+// <table><tr><td>…one element…</td></tr></table>, often several levels deep
+// (issue #13; live example jobs4 2026-06-10 opens with a triple wrapper). After
+// CLEAN_REGEX these skeletons carry zero information but still cost screening
+// tokens on every email. This stage collapses them: a <table> whose content is
+// exactly one <tr> (optionally via a single <tbody>) holding exactly one <td>,
+// whose content is exactly ONE element and no non-whitespace text, is replaced
+// by that element, repeated to fixpoint. Runs in processMessage_ AFTER
+// CLEAN_REGEX (bare-tag matching is simpler post-regex); only CleanText /
+// CleanLength reflect it — HtmlLength stays the original body length (Make
+// parity). Semantics ported from the retired v3 Python design §3.5
+// (BeautifulSoup collapse_table_wrappers) as a pure string/stack function — no
+// DOM library, per the no-library policy (docs/TECH_DESIGN.md §4).
+//
+// Conservative by construction:
+//   - A table collapses only when its whole skeleton chain tokenizes into
+//     strictly matched open/close pairs; any unmatched tag, stray close, or
+//     stray text leaves it untouched (malformed HTML is a no-op, never a
+//     mangle, and the kept element is preserved VERBATIM — unparsed).
+//   - Content tables never match: multi-row, multi-cell, <th>, or a <td>
+//     mixing text with elements.
+//   - Tags are tokenized as <td[^>]*> — CLEAN_REGEX strips a fixed attribute
+//     list, so colspan/rowspan/lang/title etc. survive; never assume bare tags.
+//   - Byte-identical no-op when nothing matches (parity, as link cleanup).
+
+// HTML void elements: an open tag of one of these is a complete element child,
+// not an unclosed pair. (<img> is stripped by CLEAN_REGEX before this stage but
+// the function stays standalone-correct.)
+const VOID_TAGS = {
+  area: 1, base: 1, br: 1, col: 1, embed: 1, hr: 1, img: 1, input: 1,
+  link: 1, meta: 1, param: 1, source: 1, track: 1, wbr: 1,
+};
+
+// Fixpoint pass cap (issue #13 guardrail). Each pass strictly shrinks the
+// string, so the loop terminates on its own; the cap additionally bounds the
+// work on pathological nesting. One pass collapses every OUTERMOST wrapper, so
+// passes consumed = deepest wrapper chain, not total wrapper count — real
+// emails run 3-4 deep, 25 is generous headroom.
+const MAX_UNWRAP_PASSES = 25;
+
+// Scan one tag starting at s[at] === '<'. Returns { type:'open'|'close'|'void',
+// name, start, end } or null when this is not a well-formed tag (no valid name
+// — e.g. '<!--', '<3', '< ' — or EOF before '>'); the caller folds a null back
+// into text, which downstream treats as content (disables collapsing around it
+// rather than guessing). Quote-aware: a '>' inside a quoted attribute value
+// does not end the tag.
+function scanTag_(s, at) {
+  const n = s.length;
+  let i = at + 1;
+  let type = 'open';
+  if (s.charAt(i) === '/') { type = 'close'; i++; }
+  const nameStart = i;
+  while (i < n && /[a-zA-Z0-9-]/.test(s.charAt(i))) i++;
+  const name = s.slice(nameStart, i).toLowerCase();
+  if (!/^[a-z]/.test(name)) return null;
+  let quote = '';
+  while (i < n) {
+    const c = s.charAt(i);
+    if (quote !== '') {
+      if (c === quote) quote = '';
+    } else if (c === '"' || c === "'") {
+      quote = c;
+    } else if (c === '>') {
+      const selfClose = type === 'open' && s.charAt(i - 1) === '/';
+      const isVoid = type === 'open' && (selfClose || VOID_TAGS[name] === 1);
+      return { type: isVoid ? 'void' : type, name: name, start: at, end: i + 1 };
+    }
+    i++;
+  }
+  return null; // EOF inside the tag
+}
+
+// Tokenize html into tags and text runs: [{ type:'open'|'close'|'void'|'text',
+// name, start, end }] with positions into the input string. Output is emitted
+// only as verbatim slices of the input, so tokenizing is lossless.
+function tokenizeHtml_(s) {
+  const tokens = [];
+  let textStart = 0;
+  let i = 0;
+  while (i < s.length) {
+    if (s.charAt(i) !== '<') { i++; continue; }
+    const tag = scanTag_(s, i);
+    if (tag === null) { i++; continue; } // not a tag: the '<' stays text
+    if (textStart < i) tokens.push({ type: 'text', name: '', start: textStart, end: i });
+    tokens.push(tag);
+    i = tag.end;
+    textStart = i;
+  }
+  if (textStart < s.length) tokens.push({ type: 'text', name: '', start: textStart, end: s.length });
+  return tokens;
+}
+
+// Pair open/close tags with a strict stack: a close tag matches ONLY the
+// innermost open tag of the same name (proper nesting; no recovery guessing —
+// on a mismatch both sides stay unmatched and childrenOf_ reports the region
+// broken). Returns match[k] = partner token index, or -1 when unmatched.
+function matchPairs_(tokens) {
+  const match = new Array(tokens.length).fill(-1);
+  const stack = []; // indices of pending open tokens
+  for (let k = 0; k < tokens.length; k++) {
+    const t = tokens[k];
+    if (t.type === 'open') {
+      stack.push(k);
+    } else if (t.type === 'close') {
+      if (stack.length > 0 && tokens[stack[stack.length - 1]].name === t.name) {
+        const o = stack.pop();
+        match[o] = k;
+        match[k] = o;
+      }
+    }
+  }
+  return match;
+}
+
+// Direct children of the matched pair opening at openIdx. Whitespace-only text
+// is skipped; kids holds the open/void token index of each direct child
+// element (a matched open jumps its whole subtree — internals stay opaque and
+// verbatim). broken = an unmatched tag sits directly inside this node; such a
+// node is never collapsed.
+function childrenOf_(s, tokens, match, openIdx) {
+  const out = { broken: false, hasText: false, kids: [] };
+  const closeIdx = match[openIdx];
+  let k = openIdx + 1;
+  while (k < closeIdx) {
+    const t = tokens[k];
+    if (t.type === 'text') {
+      if (/\S/.test(s.slice(t.start, t.end))) out.hasText = true;
+      k++;
+    } else if (t.type === 'void') {
+      out.kids.push(k);
+      k++;
+    } else if (t.type === 'open' && match[k] !== -1) {
+      out.kids.push(k);
+      k = match[k] + 1;
+    } else {
+      out.broken = true; // unmatched open, or a stray close
+      return out;
+    }
+  }
+  return out;
+}
+
+// Test one matched <table> against the wrapper pattern: exactly one <tr>
+// (optionally via a single <tbody>) holding exactly one <td> whose content is
+// exactly one element and no non-whitespace text. Returns the token index of
+// the element to keep, or -1 when this is a content table (multi-row,
+// multi-cell, <th>, mixed text) or malformed.
+function wrapperKeepChild_(s, tokens, match, tableIdx) {
+  const tableKids = childrenOf_(s, tokens, match, tableIdx);
+  if (tableKids.broken || tableKids.hasText || tableKids.kids.length !== 1) return -1;
+  let trIdx = tableKids.kids[0];
+  if (tokens[trIdx].type === 'open' && tokens[trIdx].name === 'tbody') {
+    const tbodyKids = childrenOf_(s, tokens, match, trIdx);
+    if (tbodyKids.broken || tbodyKids.hasText || tbodyKids.kids.length !== 1) return -1;
+    trIdx = tbodyKids.kids[0];
+  }
+  if (tokens[trIdx].type !== 'open' || tokens[trIdx].name !== 'tr') return -1;
+  const trKids = childrenOf_(s, tokens, match, trIdx);
+  if (trKids.broken || trKids.hasText || trKids.kids.length !== 1) return -1;
+  const tdIdx = trKids.kids[0];
+  if (tokens[tdIdx].type !== 'open' || tokens[tdIdx].name !== 'td') return -1;
+  const tdKids = childrenOf_(s, tokens, match, tdIdx);
+  if (tdKids.broken || tdKids.hasText || tdKids.kids.length !== 1) return -1;
+  return tdKids.kids[0];
+}
+
+// One collapse pass: tokenize, pair-match, find every wrapper table, apply the
+// OUTERMOST collapses (a nested wrapper sits inside a kept element and is taken
+// by the next pass). Returns { html, collapsed }; html is the SAME string when
+// nothing collapsed, keeping the no-op byte-identical.
+function collapseTableWrappersOnce_(s) {
+  const tokens = tokenizeHtml_(s);
+  const match = matchPairs_(tokens);
+  const repl = []; // { from, to, keepFrom, keepTo } in document order
+  for (let k = 0; k < tokens.length; k++) {
+    if (tokens[k].type !== 'open' || tokens[k].name !== 'table' || match[k] === -1) continue;
+    const keep = wrapperKeepChild_(s, tokens, match, k);
+    if (keep === -1) continue;
+    const keepTo = tokens[keep].type === 'void' ? tokens[keep].end : tokens[match[keep]].end;
+    repl.push({ from: tokens[k].start, to: tokens[match[k]].end, keepFrom: tokens[keep].start, keepTo: keepTo });
+  }
+  if (repl.length === 0) return { html: s, collapsed: 0 };
+  let out = '';
+  let pos = 0;
+  let collapsed = 0;
+  for (const r of repl) {
+    if (r.from < pos) continue; // nested inside a collapse already applied this pass
+    out += s.slice(pos, r.from) + s.slice(r.keepFrom, r.keepTo);
+    pos = r.to;
+    collapsed++;
+  }
+  out += s.slice(pos);
+  return { html: out, collapsed: collapsed };
+}
+
+// Collapse single-child table wrappers to fixpoint (capped). Pure; returns
+// { html, tables, bytesSaved } — tables = wrapper tables removed, bytesSaved =
+// chars dropped (skeleton tags + the whitespace between them). With nothing to
+// unwrap the output is byte-identical to the input and both metrics are 0.
+function collapseTableWrappers_(html) {
+  const original = String(html);
+  let s = original;
+  let tables = 0;
+  for (let pass = 0; pass < MAX_UNWRAP_PASSES; pass++) {
+    const r = collapseTableWrappersOnce_(s);
+    if (r.collapsed === 0) break;
+    tables += r.collapsed;
+    s = r.html;
+  }
+  return { html: s, tables: tables, bytesSaved: original.length - s.length };
 }
 
 // ---------- helpers ----------

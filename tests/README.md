@@ -47,6 +47,18 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   on a real cv-library job-alert email (`fixtures/email-cv-library.html`) asserts the
   cleaner decodes its trackers + strips utm and shrinks the stored `CleanText` further than
   the regex alone.
+- **`table-unwrap.test.js`** — the single-child table-wrapper unwrap (`collapseTableWrappers_`,
+  pure, applied after `CLEAN_REGEX`): the wrapper pattern collapses (plain, via single
+  `<tbody>`, attr-bearing skeleton tags, mixed case, whitespace between skeleton tags, a void
+  child, a quote-aware `">"`-in-attribute tag, sibling wrappers, nested chains, a wrapper
+  around a content table), content tables never touched (multi-row, multi-cell, `th`,
+  `thead`, text+element / text-only / empty `td`, literal entities count as text), malformed
+  HTML degrades to a byte-identical no-op (unclosed/stray/EOF tags; junk inside the KEPT
+  element is opaque and fine), the parity no-op, the `MAX_UNWRAP_PASSES` cap (25-deep
+  collapses fully, 30-deep leaves exactly the innermost 5), and the **value-pinning corpus
+  test**: every fixture through the full pipeline (link cleanup → `CLEAN_REGEX` → unwrap)
+  with per-fixture wrapper counts / bytes saved golden-pinned (ziprecruiter pinned at 0 and
+  byte-identical), so a silent drop in the win is a visible regression.
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
@@ -70,11 +82,13 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   before the throw), **poison isolation** (a bad message is make-failed while
   siblings are collected; an all-poison sub-batch sends no empty upsert), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
-  path, `DRY_RUN`, and the **offline link-cleanup wiring** (`HtmlLength` stays the original
+  path, `DRY_RUN`, the **offline link-cleanup wiring** (`HtmlLength` stays the original
   body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
-  logged). Each guard is mutation-checked — removing the budget break, the
+  logged), and the **table-wrapper unwrap wiring** (wrappers collapse out of `CleanText`,
+  `HtmlLength` stays original, the per-email and per-run `Unwrap:` metrics log in real AND
+  `DRY_RUN` runs). Each guard is mutation-checked — removing the budget break, the
   `if (!ok)` check, the final fail-loudly throw, the empty-records guard, the clamp, or
-  the link-cleanup wiring flips an assertion.
+  either cleaning-stage wiring flips an assertion.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
   `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,

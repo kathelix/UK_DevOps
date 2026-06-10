@@ -13,7 +13,9 @@
 //   - poison isolation (one bad message is make-failed, siblings still collected);
 //   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop);
 //   - the offline link-cleanup wiring (HtmlLength stays original, CleanText is cleaned,
-//     the per-run "Links:" metric is logged).
+//     the per-run "Links:" metric is logged);
+//   - the table-wrapper unwrap wiring (wrappers collapse out of CleanText, the per-email
+//     and per-run "Unwrap:" metrics log in real AND DRY_RUN runs).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
@@ -235,4 +237,31 @@ test('offline link cleanup is wired into processMessage_: HtmlLength stays origi
   assert.ok(fields.CleanLength < fields.HtmlLength, 'cleaning removed bytes');
   // bytes_saved pinned exactly (not just \d+) so a zeroed-out run-loop accumulator flips this.
   assert.ok(r.logs.some(l => /^Links: decoded=1 utm_stripped=1 bytes_saved=62$/.test(l)), 'per-run Links metric logged with the actual byte delta');
+});
+
+test('table-wrapper unwrap is wired in AFTER CLEAN_REGEX: wrappers collapse out of CleanText, Unwrap metrics logged (real + DRY_RUN)', () => {
+  // One message wrapped in a double single-child table chain (the issue #13 live shape).
+  // CLEAN_REGEX leaves the bare skeleton; collapseTableWrappers_ must then collapse it, so
+  // CleanText is just the kept element while HtmlLength stays the ORIGINAL body length.
+  // Mutation-checked: dropping the collapseTableWrappers_ call flips the CleanText asserts
+  // and both log asserts; zeroing the run accumulator flips the rollup line; the DRY_RUN
+  // pass pins "metrics in both paths" (the unwrap + its per-email line live in
+  // processMessage_, the rollup logs before the DRY_RUN summary branch).
+  const wrapped = '<table><tr><td><table><tr><td><p>DevOps role</p></td></tr></table></td></tr></table>';
+  const html = `<html><body>${wrapped}</body></html>`;
+  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, bodyHtml: () => html });
+
+  const fields = r.upserts[0].records[0].fields;
+  assert.equal(fields.HtmlLength, html.length, 'HtmlLength is the ORIGINAL html length (Make parity)');
+  assert.equal(fields.CleanText, '<p>DevOps role</p>', 'both wrapper tables collapsed out of CleanText');
+  assert.equal(fields.CleanLength, fields.CleanText.length, 'CleanLength matches the unwrapped text');
+  // Per-email line and per-run rollup, bytes pinned exactly: the skeleton is 84 chars, the
+  // kept element 18, so 66 bytes drop. (msg= distinguishes the per-email line from the rollup.)
+  assert.ok(r.logs.some(l => /^Unwrap: msg=m0 tables=2 bytes_saved=66$/.test(l)), 'per-email Unwrap line logged');
+  assert.ok(r.logs.some(l => /^Unwrap: tables=2 bytes_saved=66$/.test(l)), 'per-run Unwrap rollup logged');
+
+  const dry = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, bodyHtml: () => html, dryRun: true });
+  assert.equal(dry.upserts.length, 0, 'DRY_RUN writes nothing');
+  assert.ok(dry.logs.some(l => /^Unwrap: msg=m0 tables=2 bytes_saved=66$/.test(l)), 'per-email Unwrap line logs in DRY_RUN too');
+  assert.ok(dry.logs.some(l => /^Unwrap: tables=2 bytes_saved=66$/.test(l)), 'per-run Unwrap rollup logs in DRY_RUN too');
 });
