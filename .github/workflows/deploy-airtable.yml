@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'airtable/**'
+      - '.nvmrc'
       - '.github/workflows/deploy-airtable.yml'
 
 permissions:
@@ -18,7 +19,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .nvmrc
 
       - name: Apply schema (additive-only)
         env:

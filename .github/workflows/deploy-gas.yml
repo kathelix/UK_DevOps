@@ -7,6 +7,7 @@ on:
       - 'apps-script/**'
       - '.clasp.json'
       - '.claspignore'
+      - '.nvmrc'
       - '.github/workflows/deploy-gas.yml'
 
 permissions:
@@ -20,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 24
+          node-version-file: .nvmrc
 
       - name: Install clasp
         run: npm install -g @google/clasp

@@ -94,6 +94,7 @@ Every non-trivial PR ends with a brief retrospective — run it unprompted, don'
 - Prefer single-command forms with path flags (`git -C <dir>`, `npm --prefix <dir>`) over `cd <dir> && ...` chains — cleaner logs, error attribution, and allowlist matching.
 - Treat generated files as a rendered contract, not noise: if a generated artifact and its source disagree, fix the **source** and regenerate; inspect the generated diff for unintended drift before committing.
 - When you remove a check (a test, a guard, a CI filter), design its replacement in the same change — don't leave a silent gap.
+- Conversely, when you add a file that a contract must react to — a CI trigger `paths:` filter, a lint/format glob, a manifest or coverage list — wire it into that contract in the same change. A new source-of-truth file the build consumes but no trigger watches is the same silent gap in mirror image: it can change and nothing re-runs.
 
 ## Appendix — Claude Code permissions
 
