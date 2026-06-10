@@ -42,9 +42,10 @@ One-time bootstrap (local):
 
 Runtime state — stays manual, not deployable:
 
-1. GAS editor → Project Settings → Script Properties → `AIRTABLE_TOKEN` = PAT with `data.records:write` on the base.
+1. GAS editor → Project Settings → Script Properties → `AIRTABLE_TOKEN` = PAT with `data.records:read+write` on the base (read is required by `purgeRawEmails`, which counts and lists records before deleting — re-scope or replace an older write-only PAT before enabling the purge trigger).
 2. Run `collectJobEmails` once → authorize scopes → check Logger + the RawEmails table.
-3. Triggers → Add → `collectJobEmails`, time-driven, daily 4am–5am (before the screening run).
+3. Triggers → Add → `collectJobEmails`, time-driven — cadence is tuned in the GAS console and recorded once in `docs/TECH_DESIGN.md` §7.
+4. Triggers → Add → `purgeRawEmails`, time-driven, day timer, nightly window per the same `TECH_DESIGN` §7 (the RawEmails janitor — runbook in `docs/OPERATIONS.md`).
 
 ## 3. Parity notes
 

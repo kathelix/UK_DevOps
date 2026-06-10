@@ -56,7 +56,9 @@ function poisonMessage(i) {
 
 // Drive one collector run. getDelta is the per-message fetch cost added to the clock;
 // upsertCode(callIndex) lets a test force a non-200 Airtable response per request.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null }) {
+// expectThrow: true captures a thrown run-ending error into r.threw (the fail-loudly
+// contract); without it any throw propagates and fails the calling test.
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null, expectThrow = false }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -105,13 +107,20 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     },
   });
 
-  gas.collectJobEmailsLocked_();
+  let threw = null;
+  try {
+    gas.collectJobEmailsLocked_();
+  } catch (e) {
+    if (!expectThrow) throw e; // an unexpected throw must fail the calling test
+    threw = e;
+  }
 
   const fmt = (args) => { let i = 1; return String(args[0]).replace(/%s/g, () => (i < args.length ? String(args[i++]) : '%s')); };
   return {
     collected: labelCalls.filter(c => c.label === L_COLLECTED).map(c => c.id),
     failed: labelCalls.filter(c => c.label === L_FAILED).map(c => c.id),
     upserts,
+    threw,
     logs: gas.logs.map(fmt),
   };
 }
@@ -141,17 +150,32 @@ test('incremental commit: over budget mid-run keeps earlier sub-batches committe
   assert.ok(r.logs.some(l => /deferring 2 message\(s\)/.test(l)), 'remaining 2 deferred');
 });
 
-test('upsert failure: a sub-batch whose upsert is rejected is NOT labelled (no silent data loss)', () => {
-  // 422 on the FIRST sub-batch only; the rest succeed. The PR's core invariant is
-  // "label make-collected ONLY if the upsert succeeded" — mislabelling the failed
-  // batch would drop never-written rows forever (QUERY excludes make-collected).
-  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 422 : 200) });
+test('upsert failure: the failed sub-batch is NOT labelled, successes commit, and the run ends FAILED (fail loudly)', () => {
+  // 422 on the FIRST sub-batch only; the rest succeed. Two invariants, both mutation-checked:
+  //   1. "label make-collected ONLY if the upsert succeeded" — mislabelling the failed
+  //      batch would drop never-written rows forever (QUERY excludes make-collected).
+  //   2. Fail-loudly: a run with >=1 failed sub-batch must THROW after the loop (GAS
+  //      failure emails fire only on Failed executions; a silent "Completed" would hide
+  //      a hard write-block). The successful sub-batches' labels are applied BEFORE the
+  //      throw — deleting the final throw flips the r.threw assert while every
+  //      commit/label assert still passes.
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 422 : 200), expectThrow: true });
   assert.equal(r.collected.length, 7, 'only the 7 successfully-upserted messages are make-collected');
   for (const id of ['m0', 'm1', 'm2', 'm3', 'm4']) {
     assert.ok(!r.collected.includes(id), `${id} (its upsert 422'd) must NOT be make-collected`);
   }
   assert.ok(r.logs.some(l => /Airtable upsert FAILED for sub-batch starting at 0/.test(l)), 'failure logged');
-  assert.ok(r.logs.some(l => l.includes('Collected 7 of 12')), 'summary counts only the committed');
+  assert.ok(r.logs.some(l => l.includes('Collected 7 of 12')), 'summary still logged before the throw');
+  assert.ok(r.threw, 'a run with a failed sub-batch must end by throwing (Failed execution)');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 422: ERR 422$/, 'count + first error text in the message');
+});
+
+test('fail loudly: multiple failed sub-batches are counted, the FIRST error text wins, successes still commit', () => {
+  // Sub-batches 0 (422) and 2 (500) fail; sub-batch 1 succeeds and is labelled.
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 422 : i === 2 ? 500 : 200), expectThrow: true });
+  assert.equal(r.collected.length, SUB_BATCH, 'the one successful sub-batch is still labelled');
+  assert.ok(r.threw, 'run ends Failed');
+  assert.match(r.threw.message, /^2 sub-batch upsert\(s\) failed; first: 422: ERR 422$/, 'failure count aggregated, first error preserved');
 });
 
 test('poison isolation: a bad message is make-failed while its siblings are make-collected', () => {
