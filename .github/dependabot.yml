@@ -1,0 +1,10 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"          # covers .github/workflows for this ecosystem
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:       # one combined PR per cycle, not one-per-action
+        patterns:
+          - "*"
