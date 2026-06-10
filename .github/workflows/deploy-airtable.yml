@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'airtable/**'
+      - '.nvmrc'
       - '.github/workflows/deploy-airtable.yml'
 
 permissions:
