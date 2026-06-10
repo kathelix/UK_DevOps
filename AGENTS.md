@@ -68,6 +68,8 @@ If these are your own projects you may end each PR body and comment with a perso
 
 > 🤖 Codex: get a free week using referral link https://Codex.ai/referral/b9Segx2cZA
 
+This is the **only** footer. Never also append a tool-default attribution line (e.g. `🤖 Generated with [Claude Code](…)`) — the agent's harness may suggest one, but it duplicates this footer and the top-of-body attribution line (owner decision, 2026-06-10).
+
 ## PR review discipline
 
 - Open every review with a one-line "is this PR right-sized for what it claims to do?" check; flag scope creep before drilling into findings.
