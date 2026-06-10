@@ -32,9 +32,9 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 - `apps-script/` — the collector script, manifest, setup guide
 - `airtable/` — desired schema + idempotent apply script (additive-only)
 - `instructions/` — Claude's pipeline instructions (`VERSION`-ed, source of truth)
-- `docs/` — project brief, daily workflow, design notes, known issues, operations runbook, ADRs (`adr/`)
+- `docs/` — technical design & decisions (`TECH_DESIGN.md`), project brief, daily workflow, design notes, known issues, operations runbook
 - `tests/` — `node:test` harness + fixtures for the collector (cleaning regex, offline link cleanup, parsers, reliability helpers)
-- `TODO.md` — roadmap (M1–M6 rollout), improvement backlog, decisions of record
+- `TODO.md` — improvement backlog + open milestone
 
 ## Status
 
