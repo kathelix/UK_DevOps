@@ -25,7 +25,8 @@ The merge *decision* remains the owner's — Claude Code only executes a merge t
 
 - If the project keeps design docs, treat them as the source of truth and keep code from getting ahead of them: decide, then spec, then implement. A common split is a stable high-level design (the "why"), a concrete technical spec (the "what" — versions, names, constraints), and a backlog (implementation status). Update the spec before writing the code it describes.
 - Mark a backlog or spec item done in the **same commit** that implements it — never let recorded status drift from reality.
-- Record any decision that is architectural, security-relevant, hard to reverse, or likely to need explaining later as a short ADR (Architecture Decision Record) under `docs/adr/`. ADRs are an append-only log: supersede, don't rewrite history.
+- Record decisions that are architectural, security-relevant, hard to reverse, or likely to need explaining later in `docs/TECH_DESIGN.md`, in the section they belong to — including rejected alternatives and revisit triggers, so settled questions aren't re-litigated. Update it in the same PR as the change it describes. It is a living document: edit in place; history lives in git.
+- When deleting or consolidating prose, sweep for dependents in the same change: re-home work items embedded in the prose (obligations not formatted as tasks) into the backlog, and reword backlog items contingent on anything the change supersedes — a sweep keyed to task markers alone misses both.
 
 ## Branching & commits
 
