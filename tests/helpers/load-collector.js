@@ -52,6 +52,12 @@ const EXPORTS = [
   'cleanUrl_',
   'cleanLinksInHtml_',
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
+  // RawEmails purge job (pure helpers + the lock-free run, driven by tests/purge.test.js)
+  'resolvePurgeThresholds_',
+  'buildPurgePlan_',
+  'chunk_',
+  'purgeEligibilityFormula_',
+  'purgeRawEmailsLocked_',
 ];
 
 // Minimal Apps Script global stubs. Utilities is backed by Node's Buffer so

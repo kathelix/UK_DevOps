@@ -44,7 +44,8 @@ Runtime state — stays manual, not deployable:
 
 1. GAS editor → Project Settings → Script Properties → `AIRTABLE_TOKEN` = PAT with `data.records:write` on the base.
 2. Run `collectJobEmails` once → authorize scopes → check Logger + the RawEmails table.
-3. Triggers → Add → `collectJobEmails`, time-driven, daily 4am–5am (before the screening run).
+3. Triggers → Add → `collectJobEmails`, time-driven, every 30 minutes (deliberate, 2026-06-10: small frequent batches instead of one daily sweep).
+4. Triggers → Add → `purgeRawEmails`, time-driven, day timer, 3am–4am (the RawEmails janitor — see `docs/OPERATIONS.md`).
 
 ## 3. Parity notes
 

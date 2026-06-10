@@ -33,3 +33,11 @@ Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise T
 **Why not "fixed":** excluding `&` from the harvest class would truncate the real raw-`&` trackers (verified against `tests/fixtures/email-cv-library.html`), which is worse. A full entity-vs-separator disambiguation still cannot resolve `&amp;` in prose.
 
 **Who it affects:** essentially nothing in practice — real job-alert HTML puts URLs in `href="…"` attributes, where the closing quote bounds the URL and no absorption occurs (covered by a test). Bare-text URLs adjacent to entities do not appear in the corpus. Flagged during the offline-link-cleanup review (2026-06-09); revisit only if a real sender surfaces it.
+
+## 6. Airtable free-plan record cap is per base across all tables — and enforcement lags the notification
+
+**Symptom:** Airtable notified that the Job Search base was over its 1,000-record limit (observed 2026-06-10, notification at 11:13) after the collector swept a ~3-week backlog: RawEmails 940 + Vacancies 77 + Vacancies_test 1 = 1,018. Record **creation was still succeeding ≥5 hours after** the notification — the cap is announced before it is enforced, and the enforcement timing is unspecified.
+
+**Cause / contract:** the free plan's 1,000-record cap is a **per-base budget shared by every table in the base**, not a per-table limit. Any one table's growth spends everyone's headroom.
+
+**Handling:** the nightly `purgeRawEmails` job keeps RawEmails at ≤ 700 (high-water; see [OPERATIONS — RawEmails purge](OPERATIONS.md#rawemails-purge-janitor)), and the collector fails loudly on upsert failures so a hard write-block at the cap can't stall the pipeline silently. Capacity budget and allocation: `TECH_DESIGN.md` §5. Don't read "writes still succeed" as "we're under the cap".

@@ -13,7 +13,10 @@
  *        AIRTABLE_TOKEN = <your Airtable PAT with data.records:write on the Job Search base>
  *   4. Create the Airtable table (see gmail-collector-setup.md for the field list).
  *   5. Run collectJobEmails() once manually -> authorize scopes.
- *   6. Triggers -> Add trigger -> collectJobEmails, time-driven, daily 4-5am.
+ *   6. Triggers -> Add trigger -> collectJobEmails, time-driven, every 30 minutes
+ *      (deliberate, decided 2026-06-10: small frequent batches instead of one daily sweep).
+ *   7. Triggers -> Add trigger -> purgeRawEmails, time-driven, daily 3-4am
+ *      (the RawEmails janitor — see the purge section at the bottom of this file).
  */
 
 const CONFIG = {
@@ -44,6 +47,28 @@ const CONFIG = {
   // Upsert merge key (Gmail message id): re-collecting the same message updates
   // its row instead of duplicating it. Used by airtableUpsert_.
   DEDUPE_FIELD: 'MessageId',
+  // --- RawEmails purge job (purgeRawEmails; own daily ~03:30 trigger) ---
+  // The Airtable FREE plan caps a base at 1,000 records across ALL tables, so RawEmails
+  // shares the budget with Vacancies (crossed 2026-06-10 — see docs/KNOWN_ISSUES.md).
+  // When the RawEmails count exceeds the high-water mark, the purge deletes the oldest
+  // eligible rows until the count is back at the low-water mark. Both runtime-tunable
+  // via Script Properties of the same names (getIntProp_, bounds [0, 1000]; a resolved
+  // HIGH <= LOW is incoherent and falls back to BOTH defaults).
+  PURGE_HIGH_WATER: 700,
+  PURGE_LOW_WATER: 500,
+  // Hard eligibility floor (deliberately NOT runtime-tunable): only Status='Processed'
+  // rows with CollectedAt older than this many days are ever deleted. Status='New' rows
+  // (the unscreened queue) are NEVER deleted in code — an emergency purge of
+  // unprocessed rows is a manual/owner action, not a code path. Enforced server-side
+  // by purgeEligibilityFormula_.
+  PURGE_MIN_AGE_DAYS: 2,
+  // Capacity alarm: at/above this count with NOTHING eligible to purge, throw so the
+  // execution ends Failed and the GAS failure email fires BEFORE Airtable starts
+  // blocking writes at the 1,000-record cap.
+  PURGE_EMERGENCY: 950,
+  // Records per REST DELETE request — the REST API's cap (NB: differs from the
+  // Airtable scripting-environment batch cap of 50).
+  PURGE_DELETE_BATCH: 10,
   // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
   // long-text limit - safety truncation only, not a design choice:
   CLEAN_TEXT_LIMIT: 100000,
@@ -123,6 +148,13 @@ function collectJobEmailsLocked_() {
   // destinations recovered, utmStripped = URLs that had >=1 utm_ param removed, bytesSaved =
   // total chars removed across all in-place swaps. Pure/offline — no network, no schema field.
   const linkStats = { decoded: 0, utmStripped: 0, bytesSaved: 0 };
+  // Fail-loudly accumulator, filled in by airtableUpsert_ on each non-200 sub-batch.
+  // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity
+  // contract: failed messages stay unlabelled and retry next run), but a run with any
+  // failed sub-batch must END Failed: GAS failure emails fire only on Failed
+  // executions, so a hard Airtable write-block would otherwise stall RawEmails
+  // silently while every run shows "Completed". Re-raised after the summary logs.
+  const upsertFailures = { count: 0, first: '' };
   // Clamp the configured sub-batch size to a safe stride: a 0/negative value would never
   // advance `start` (infinite loop), and a value > 10 exceeds Airtable's records/request
   // cap (the oversized PATCH is rejected 422 and the sub-batch would never commit).
@@ -181,7 +213,7 @@ function collectJobEmailsLocked_() {
     // label as collected ONLY if the upsert succeeded (same ordering as Make: row ->
     // label). The MessageId upsert makes a re-collected message update its row instead
     // of duplicating it, so the write-then-label ordering is crash-safe.
-    const ok = airtableUpsert_(records.map(r => ({ fields: r.fields })));
+    const ok = airtableUpsert_(records.map(r => ({ fields: r.fields })), upsertFailures);
     if (!ok) {
       Logger.log('Airtable upsert FAILED for sub-batch starting at %s - those messages stay uncollected and will retry next run.', start);
       continue;
@@ -201,6 +233,12 @@ function collectJobEmailsLocked_() {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', inspected);
   } else {
     Logger.log('Collected %s of %s message(s).', collected, messageRefs.length);
+    if (upsertFailures.count > 0) {
+      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is
+      // already committed and labelled, so no work is lost — the throw exists purely to
+      // flip the execution to Failed and trigger the GAS failure notification.
+      throw new Error(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+    }
   }
 }
 
@@ -580,15 +618,28 @@ function buildUpsertPayload_(records) {
   };
 }
 
+// Shared Airtable REST plumbing: the RawEmails table endpoint and the bearer token
+// (throws if the Script Property is unset — fail loud, no silent skip).
+function airtableUrl_() {
+  return 'https://api.airtable.com/v0/' + CONFIG.AIRTABLE_BASE_ID + '/' +
+    encodeURIComponent(CONFIG.AIRTABLE_TABLE);
+}
+
+function airtableToken_() {
+  const token = PropertiesService.getScriptProperties().getProperty('AIRTABLE_TOKEN');
+  if (!token) throw new Error('Script property AIRTABLE_TOKEN is not set.');
+  return token;
+}
+
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
 // re-collected message updates its existing row instead of creating a duplicate.
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
-function airtableUpsert_(records) {
-  const token = PropertiesService.getScriptProperties().getProperty('AIRTABLE_TOKEN');
-  if (!token) throw new Error('Script property AIRTABLE_TOKEN is not set.');
-  const url = 'https://api.airtable.com/v0/' + CONFIG.AIRTABLE_BASE_ID + '/' +
-    encodeURIComponent(CONFIG.AIRTABLE_TABLE);
-  const resp = UrlFetchApp.fetch(url, {
+// `failures` (optional) is the run's fail-loudly accumulator: on a non-200 the count
+// is incremented and the first error's text captured, so the caller can end the
+// execution Failed after the loop (see collectJobEmailsLocked_).
+function airtableUpsert_(records, failures) {
+  const token = airtableToken_();
+  const resp = UrlFetchApp.fetch(airtableUrl_(), {
     method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
     contentType: 'application/json',
     headers: { Authorization: 'Bearer ' + token },
@@ -597,5 +648,174 @@ function airtableUpsert_(records) {
   });
   if (resp.getResponseCode() === 200) return true;
   Logger.log('Airtable upsert error %s: %s', resp.getResponseCode(), resp.getContentText().slice(0, 500));
+  if (failures) {
+    failures.count++;
+    if (!failures.first) failures.first = resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500);
+  }
   return false;
+}
+
+// ---------- RawEmails purge job (janitor) ----------
+// Keeps RawEmails inside its share of the Airtable free plan's 1,000-records-per-BASE
+// cap (shared across all tables — crossed 2026-06-10, see docs/KNOWN_ISSUES.md). Runs
+// on its OWN daily time trigger (~03:30 Europe/London; manual setup, runtime state —
+// docs/OPERATIONS.md). Over the high-water mark it deletes the OLDEST eligible rows
+// down to the low-water mark; eligibility (Status='Processed' AND old enough) is
+// enforced server-side by purgeEligibilityFormula_, so Status='New' rows structurally
+// cannot be deleted. Any Airtable non-200 throws: Failed execution -> failure email.
+
+function purgeRawEmails() {
+  // Same script lock as the collector — the purge must never run concurrently with a
+  // collector run (interleaved deletes vs upserts). tryLock(0): if the lock is held,
+  // skip this night entirely; the next nightly run catches up.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(0)) {
+    Logger.log('Another run holds the script lock; skipping this purge run.');
+    return;
+  }
+  try {
+    purgeRawEmailsLocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// One purge run. Always invoked under the script lock (see purgeRawEmails).
+function purgeRawEmailsLocked_() {
+  // Reuses the collector's DRY_RUN Script Property: log the full plan, delete nothing.
+  const dryRun = PropertiesService.getScriptProperties().getProperty('DRY_RUN') === 'true';
+
+  const t = resolvePurgeThresholds_(
+    getIntProp_('PURGE_HIGH_WATER', CONFIG.PURGE_HIGH_WATER, 0, 1000),
+    getIntProp_('PURGE_LOW_WATER', CONFIG.PURGE_LOW_WATER, 0, 1000)
+  );
+  if (t.fellBack) {
+    Logger.log('Purge thresholds misconfigured (high %s <= low %s); using defaults high=%s low=%s.',
+      t.rejectedHigh, t.rejectedLow, t.high, t.low);
+  }
+
+  // Total record count: a paginated single-field list is the cheapest REST way to
+  // count (~2 calls at steady state; there is no count endpoint).
+  const count = airtableListRecords_('fields%5B%5D=MessageId&pageSize=100').length;
+  if (count <= t.high) {
+    Logger.log('Purge: count=%s high=%s — nothing to do.', count, t.high);
+    return;
+  }
+
+  // Over high water: list what is actually deletable, oldest first (server-side sort).
+  const eligibleIds = airtableListRecords_(
+    'fields%5B%5D=MessageId&pageSize=100' +
+    '&filterByFormula=' + encodeURIComponent(purgeEligibilityFormula_()) +
+    '&sort%5B0%5D%5Bfield%5D=CollectedAt&sort%5B0%5D%5Bdirection%5D=asc'
+  ).map(r => r.id);
+
+  if (eligibleIds.length === 0) {
+    // Pre-M6 this is the NORMAL state: nothing is ever Status='Processed' until the
+    // screening cutover, so the purge can only watch. But at the emergency threshold
+    // the watchdog must bark: throw -> Failed execution -> failure email, before
+    // Airtable starts blocking writes at the cap.
+    if (count >= CONFIG.PURGE_EMERGENCY) {
+      throw new Error('Purge: count=' + count + ' >= PURGE_EMERGENCY=' + CONFIG.PURGE_EMERGENCY +
+        ' with 0 eligible rows — base is nearly at the 1,000-record cap and the purge cannot help; manual action required.');
+    }
+    Logger.log('Purge: over high-water (%s) but 0 eligible rows — capacity risk, manual action may be needed.', count);
+    return;
+  }
+
+  const plan = buildPurgePlan_(count, t.high, t.low, eligibleIds);
+
+  if (dryRun) {
+    Logger.log('DRY_RUN: would delete %s of %s eligible row(s), oldest first: %s',
+      plan.length, eligibleIds.length, plan.join(', '));
+    Logger.log('Purge: count=%s high=%s low=%s eligible=%s deleted=0 remaining=%s (DRY_RUN — nothing deleted)',
+      count, t.high, t.low, eligibleIds.length, count);
+    return;
+  }
+
+  let deleted = 0;
+  for (const batch of chunk_(plan, CONFIG.PURGE_DELETE_BATCH)) {
+    airtableDeleteRecords_(batch); // throws on non-200 (no retry wrapper in this slice)
+    deleted += batch.length;
+    // Pace the delete burst under Airtable's 5 req/s/base rate limit: a full purge is
+    // dozens of back-to-back DELETEs, and a 429 would fail the run mid-plan.
+    Utilities.sleep(250);
+  }
+  Logger.log('Purge: count=%s high=%s low=%s eligible=%s deleted=%s remaining=%s',
+    count, t.high, t.low, eligibleIds.length, deleted, count - deleted);
+}
+
+// Resolve the high/low-water pair (pure, unit-tested): HIGH must exceed LOW for the
+// plan to make sense; an inverted or equal pair (a Script Property misconfig) falls
+// back to BOTH CONFIG defaults rather than trusting half of a bad pair.
+function resolvePurgeThresholds_(high, low) {
+  if (high <= low) {
+    return {
+      high: CONFIG.PURGE_HIGH_WATER, low: CONFIG.PURGE_LOW_WATER,
+      fellBack: true, rejectedHigh: high, rejectedLow: low,
+    };
+  }
+  return { high: high, low: low, fellBack: false };
+}
+
+// Build the delete plan (pure, unit-tested): [] at/below the high-water mark;
+// otherwise enough of the oldest eligible ids (eligibleIds arrives sorted CollectedAt
+// asc) to bring the count down to the low-water mark, capped at what is eligible.
+function buildPurgePlan_(count, high, low, eligibleIds) {
+  if (count <= high) return [];
+  return eligibleIds.slice(0, Math.max(0, count - low));
+}
+
+// Split an array into consecutive slices of `size` (pure; the last may be shorter).
+function chunk_(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+// THE eligibility guard, applied server-side via filterByFormula: only rows that are
+// BOTH Status='Processed' AND at least PURGE_MIN_AGE_DAYS old are ever listed for
+// deletion, so an unprocessed (Status='New') row can never enter the delete plan.
+// Pinned verbatim by tests/purge.test.js — do not weaken without an owner decision.
+function purgeEligibilityFormula_() {
+  return "AND({Status}='Processed', IS_BEFORE({CollectedAt}, DATEADD(NOW(), -" +
+    CONFIG.PURGE_MIN_AGE_DAYS + ", 'days')))";
+}
+
+// GET all records matching `query` (a pre-encoded query string), following Airtable's
+// offset pagination to exhaustion. Returns the raw record objects. Purge contract:
+// any non-200 throws (Failed execution -> failure email), never a silent partial list.
+function airtableListRecords_(query) {
+  const token = airtableToken_();
+  const records = [];
+  let offset = null;
+  do {
+    const url = airtableUrl_() + '?' + query + (offset ? '&offset=' + encodeURIComponent(offset) : '');
+    const resp = UrlFetchApp.fetch(url, {
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true,
+    });
+    if (resp.getResponseCode() !== 200) {
+      throw new Error('Airtable list error ' + resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500));
+    }
+    const page = JSON.parse(resp.getContentText());
+    for (const r of (page.records || [])) records.push(r);
+    offset = page.offset || null;
+  } while (offset);
+  return records;
+}
+
+// DELETE one batch of record ids — at most PURGE_DELETE_BATCH (10), the REST API's
+// records-per-DELETE cap. Throws on any non-200 (same fail-loud contract as the list).
+function airtableDeleteRecords_(ids) {
+  const token = airtableToken_();
+  const url = airtableUrl_() + '?' + ids.map(id => 'records%5B%5D=' + encodeURIComponent(id)).join('&');
+  const resp = UrlFetchApp.fetch(url, {
+    method: 'delete',
+    headers: { Authorization: 'Bearer ' + token },
+    muteHttpExceptions: true,
+  });
+  if (resp.getResponseCode() !== 200) {
+    throw new Error('Airtable delete error ' + resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500));
+  }
 }

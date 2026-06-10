@@ -4,9 +4,12 @@
 
 | Time (Europe/London) | What | Where |
 |---|---|---|
-| ~04:30 (4–5am window) | Collector run: Gmail → clean → RawEmails, label `make-collected` | GAS time trigger |
+| Every 30 min | Collector run: Gmail → clean → RawEmails, label `make-collected` | GAS time trigger |
+| 03:30 (3–4am window) | RawEmails purge: delete oldest `Processed` rows when over high-water | GAS time trigger |
 | 06:00 | Screening run: read job alerts, screen, write Vacancies, daily report | Claude Cowork scheduled task |
 | Ad hoc | Ivan reviews flags, applies, reports back; Claude logs Applied/Skipped | Chat |
+
+The 30-minute collector cadence is **deliberate** (decided 2026-06-10, replacing the original ~04:30 daily run): small frequent batches instead of one big sweep, so a backlog can never pile up into a single run.
 
 During the **parallel-run period** the screening run still reads Gmail directly (authoritative); RawEmails is shadow data. Do not write RawEmails-sourced decisions to the real Vacancies table until M6 cutover.
 
@@ -28,6 +31,19 @@ PAT names appear in Airtable record revision history — name them for the actor
 - **Manual run:** GAS editor → run `collectJobEmails`. Safe to run repeatedly — already-collected messages are excluded by the `make-collected` label.
 - **Health check:** GAS left sidebar → Executions (durations, failures). Airtable RawEmails should grow by roughly the day's email volume (~25). Trigger failures email Ivan ("Notify me immediately" setting).
 - **Failed message:** processing failures are labeled `job-vacancies/make-failed` (excluded from future runs) with forensics in the execution log (error, MIME tree). Inspect the email in Gmail, fix the script if systematic, remove the label to retry.
+- **Upsert failures end the run Failed (fail-loudly).** Mid-run behaviour is unchanged — a failed Airtable sub-batch upsert is logged, its messages stay unlabelled and retry next run — but the execution now ends **Failed** (`N sub-batch upsert(s) failed; first: …`) so the GAS failure email fires. Previously a hard Airtable write-block (e.g. at the record cap) stalled RawEmails silently while every run showed "Completed". A red collector execution with this message means *some* messages weren't written; they are not lost.
+
+## RawEmails purge (janitor)
+
+The Airtable free plan caps a **base** at 1,000 records across **all** tables (`KNOWN_ISSUES.md` §6), so `purgeRawEmails` (same script file) trims RawEmails nightly: when the record count exceeds the high-water mark it deletes the **oldest** eligible rows until the count is back at the low-water mark. Eligible = `Status='Processed'` AND `CollectedAt` older than 2 days (`PURGE_MIN_AGE_DAYS`), enforced server-side via `filterByFormula` — `Status='New'` rows are **never** deleted by code; an emergency purge of unprocessed rows is a manual/owner action.
+
+- **Trigger setup (one-time, manual — runtime state, never deployed by CI):** GAS editor → Triggers → Add trigger → function `purgeRawEmails`, time-driven, day timer, 3am–4am. Same pattern as the collector trigger.
+- **Script Properties (optional tuning):** `PURGE_HIGH_WATER` (default 700) and `PURGE_LOW_WATER` (default 500), integers 0–1000, read each run with the standard validation (invalid → default, logged `Ignoring Script property …`). If the resolved pair has HIGH ≤ LOW, the run logs `Purge thresholds misconfigured …` and falls back to **both** defaults.
+- **Log line** (Executions panel), once per run: `Purge: count=N high=H low=L eligible=E deleted=D remaining=R`. At/below high water: `Purge: count=N high=H — nothing to do.`
+- **Starvation (the normal state pre-M6):** over high-water with 0 eligible rows (nothing is ever `Processed` until the screening cutover) logs `capacity risk, manual action may be needed` and exits cleanly. At `count ≥ 950` (`PURGE_EMERGENCY`) with 0 eligible the run **throws** → Failed execution → failure email, before Airtable starts blocking writes at the cap.
+- **DRY_RUN:** the shared `DRY_RUN=true` Script Property makes the purge log the full plan (count, eligible, the exact ids it would delete) and delete nothing.
+- **Failures:** any non-200 from Airtable (list or delete) throws → Failed execution → failure email. No retry/backoff yet (`TODO.md` → Reliability). Deletes are paced (~4 req/s) under Airtable's 5 req/s/base rate limit.
+- **Concurrency:** the purge shares the collector's script lock and never runs concurrently with a collector run — whichever starts second skips cleanly (a skipped night catches up the next one).
 
 ## Collector: offline link cleanup
 
@@ -60,7 +76,8 @@ Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run re
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| Collector run red in Executions | Airtable API change/outage, expired PAT | Read execution log; messages stay uncollected and retry next run — no data loss by design (write-then-label ordering) |
+| Collector run red in Executions | Airtable API change/outage, expired PAT, or any sub-batch upsert failure (fail-loudly is by design) | Read execution log; messages stay uncollected and retry next run — no data loss by design (write-then-label ordering) |
+| Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm: manually purge old rows or accelerate M6 (nothing is `Processed` pre-cutover) |
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |
 | RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then canary check |

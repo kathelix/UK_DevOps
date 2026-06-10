@@ -65,19 +65,33 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
   incremental commit, **upsert-failure** (a rejected sub-batch is NOT make-collected —
-  no silent data loss), **poison isolation** (a bad message is make-failed while
+  no silent data loss — and the run then ends by **throwing** after the summary logs:
+  Failed execution → GAS failure email, with the successful sub-batches' labels applied
+  before the throw), **poison isolation** (a bad message is make-failed while
   siblings are collected; an all-poison sub-batch sends no empty upsert), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
   path, `DRY_RUN`, and the **offline link-cleanup wiring** (`HtmlLength` stays the original
   body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
   logged). Each guard is mutation-checked — removing the budget break, the
-  `if (!ok)` check, the empty-records guard, the clamp, or the link-cleanup wiring flips an
-  assertion.
+  `if (!ok)` check, the final fail-loudly throw, the empty-records guard, the clamp, or
+  the link-cleanup wiring flips an assertion.
+- **`purge.test.js`** — the RawEmails purge job: pure helpers
+  (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
+  `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,
+  `chunk_` — the 10-records-per-DELETE REST cap, `purgeEligibilityFormula_` — the
+  Processed-only + min-age guard pinned **verbatim**), plus an integration pass over
+  `purgeRawEmailsLocked_` with a paginating Airtable stub: oldest-first deletes down to
+  low-water, the exact `filterByFormula` + `sort` in the outgoing request (so
+  `Status='New'` rows structurally cannot be deleted), the count≤high no-op
+  (mutation-checked with eligible rows present), the starvation warning vs the
+  `PURGE_EMERGENCY` throw (949/950 boundary), `DRY_RUN` (full plan logged, nothing
+  deleted), runtime-tunable thresholds, and fail-loud non-200 list/delete throws.
 
 ## Not covered (deliberately)
 
-- The `LockService` single-flight guard — left to manual / live verification (a
-  pure side effect around the run).
+- The `LockService` single-flight guards (`collectJobEmails` and `purgeRawEmails`
+  wrappers) — left to manual / live verification (pure side effect around the
+  locked runs).
 - The inner per-label granularity (a sub-batch already in flight is not interrupted
   mid-label) — an accepted, idempotency-bounded limit, not a unit concern. Full
   modularization for deeper testability is tracked in `TODO.md` ("Modularize for
