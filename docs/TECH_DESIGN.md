@@ -46,7 +46,7 @@ The collector carries hand-written string logic: `CLEAN_REGEX` (HTML noise strip
 
 **Accepted cost:** we own the parsing edge cases. This bit during PR #6 — an HTML injection via a decoded `</body>`, a trailing-punctuation ReDoS, a bare-text-URL entity absorption — all now pinned by regression tests, but the class of risk is ours to carry.
 
-**Revisit when:** adopt the platform `URL` + a real HTML→text parser when either (a) the cleaning ambition grows materially — the backlog's **second cleaning pass** (tag→text, entity decode, block-boundary newlines) is genuinely hard to hand-roll well — or (b) the cleaning moves **off Apps Script** to a Node/Python service (see [v3_design.md](v3_design.md)), where the constraints above vanish. The inflection point is "the runtime changed" or "the ambition grew" — not "the code got fiddly". Those two tend to arrive together, and that is the natural moment to bring in libraries rather than retrofitting a bundler onto the single-file GAS collector now.
+**Revisit when:** adopt the platform `URL` + a real HTML→text parser when either (a) the cleaning ambition grows materially — the backlog's **second cleaning pass** (tag→text, entity decode, block-boundary newlines) is genuinely hard to hand-roll well — or (b) the cleaning moves **off Apps Script** to a future Node/Python service, where the constraints above vanish. The inflection point is "the runtime changed" or "the ambition grew" — not "the code got fiddly". Those two tend to arrive together, and that is the natural moment to bring in libraries rather than retrofitting a bundler onto the single-file GAS collector now.
 
 ## 5. Data model (Airtable)
 

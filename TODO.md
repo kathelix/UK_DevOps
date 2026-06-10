@@ -15,6 +15,8 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 - [ ] **Failure alerting — screening-side canary.** The screening pipeline treats "0 New rows in RawEmails but unread mail present in Gmail" as a collector failure rather than a quiet day. _(The script half is done: collector and purge executions now end Failed on any upsert/list/delete failure, so GAS failure emails fire.)_
 - [ ] **Second cleaning pass.** The regex strips attributes/comments/images but leaves bare tag skeletons (`<td>`, `<tr>`, `<a href>`) and undecoded entities (`&amp;`, `&pound;`). Add a tag-to-text pass (newlines at block boundaries, entity decode) — meaningful token saving for the screening step. Measured 2026-06-07 (NIJobs single-rec, 47.2KB html → 19.4KB clean): ~3.5KB is invisible-entity preheader padding (`&#847;&zwnj;&shy;` walls) the regex doesn't target; real content is only ~5KB.
 - [ ] **Modularize for testability** — split into `config / gmail / parser / airtable / main`; keep cleaning, link-extraction and dedupe as pure functions (no Gmail/Airtable side effects) so they run against `tests/fixtures/` locally. _(Remaining: the full module split — `buildUpsertPayload_` and `isOverRuntimeBudget_` are already extracted as pure, unit-tested helpers.)_
+- [ ] Collapse single-child table wrappers in CleanText — Issue #13
+- [ ] Per-sender footer cutoff with template-change alarm — Issue #14
 
 ### Reliability
 
@@ -29,7 +31,3 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 - [ ] **Switch the Claude screening pipeline (project instructions Block 1 §1) from Gmail search to RawEmails**: read `Status=New` → screen → flip to `Processed`. Keep the Gmail connector as fallback + discrepancy canary. Do this only after the collector has run validated in parallel with Make.
 - [ ] **Decommission the Make.com scenario** once parity is confirmed (it also burns the 1,000 free ops/month).
 - [ ] **Refactor Make.com leftovers after decommission** — rename state labels `job-vacancies/make-collected|processing|failed` → tool-neutral (preferred, e.g. `job-vacancies/collected|…`) or `gas-*`. Also sweep other relics: `UK_DevOps_Gmail_Collector.blueprint.json` at repo root (archive into `docs/` or delete), "Make" wording in `apps-script/README.md` parity notes and script comments.
-
-## Docs
-
-- [ ] **Reconcile `docs/v3_design.md`** — it assumes Make.com remains the orchestrator with a Python cleanup service; the Apps Script collector changes that premise (no per-run credit costs, cleanup can grow in-script or still move to a service later).
