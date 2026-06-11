@@ -82,6 +82,34 @@ Unwrap: tables=<N> bytes_saved=<B>
 
 Both zero is the expected case for senders with div-based layouts (ziprecruiter in the fixture corpus) — a no-op, not an error.
 
+## Collector: per-sender footer cutoff
+
+After the table-wrapper unwrap, the collector cuts the **footer** off `CleanText` for senders listed in `FOOTER_MARKERS` (opt-in, keyed by registered domain). It finds the **last** occurrence of the domain's marker string, provided that match sits in the trailing portion of the text (`FOOTER_POSITION_FLOOR`, 0.5), and slices there — the marker and everything after it (one-click unsubscribe / pause / feedback endpoints, legal boilerplate) are removed. Unmapped senders are untouched. Only `CleanText`/`CleanLength` reflect the cut; `HtmlLength` stays the original body length. Design and the template-change alarm: `docs/TECH_DESIGN.md` §4 (per-sender footer cutoff).
+
+**Observability — log lines** (Executions panel), in real and DRY_RUN runs alike, no Airtable field. Once per **mapped** email (unmapped senders log no line):
+
+```
+Footer: msg=<id> domain=<d> marker=hit bytes_cut=<b>
+Footer: msg=<id> domain=<d> marker=miss bytes_cut=0
+```
+
+`<d>` is the matched `FOOTER_MARKERS` key (the registered domain — the marker to fix), `hit` cut `<b>` bytes, `miss` means the marker was absent or too early (a likely template change — see the runbook). Plus once per run, next to the `Links:`/`Unwrap:` lines and distinguished from the per-email form by the absent `msg=`:
+
+```
+Footer: hits=<H> misses=<M> bytes_cut=<B>
+```
+
+**Marker-miss alarm.** On a **real** run, one or more footer-marker misses end the execution **Failed** (`<N> footer marker miss(es); first: <domain> msg=<id>`) so the GAS failure email fires. If a sub-batch upsert *also* failed that run, the thrown error names the upsert failure first and **appends** the footer-miss summary (`… sub-batch upsert(s) failed; first: … . Also <N> footer marker miss(es); first: <domain> msg=<id>`) — a miss in a sub-batch that *did* commit is already `make-collected` and would not recur, so the alarm rides the same failure email rather than being suppressed. DRY_RUN logs the would-be misses and throws nothing. Because the cut rows are committed before the throw, a red run with this message has **not** lost data — it is the signal to update a marker.
+
+**Marker-miss runbook** (the failure email arrived with `… footer marker miss(es); first: <domain> msg=<id>`):
+
+1. Open the named `msg=<id>` in Gmail (sender = the named `<domain>`). The sender almost certainly changed its footer template.
+2. Capture the new template as a **redacted** fixture in `tests/fixtures/email-<sender>.html` — redact every per-recipient token (unsubscribe hashes, `subscriptionCode=`, `jbeID=`, opaque path ids) including **encoded forms** (base64 of the address), per CLAUDE.md "Test fixtures from real captures". Wire it into the `clean-regex` + `table-unwrap` golden maps (the manifest check requires it).
+3. Update the domain's string in `FOOTER_MARKERS` to a stable, entity-free phrase from the new footer, and the fixture's pinned cut bytes in `tests/footer-cutoff.test.js`.
+4. `node --test` green → merge. The deploy stops the alarm at the next collector run.
+
+While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost is by design (a silent parser break is worse); fix promptly.
+
 ## Canary: missing-email check
 
 Pipeline marks processed mail read; collector labels collected mail. In the Gmail UI, search `label:job-vacancies label:unread` — anything old sitting there (not post-run arrivals) is a search-index orphan (see `KNOWN_ISSUES.md` §1). Same logic for uncollected: old mail without `make-collected`.
@@ -95,6 +123,7 @@ Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run re
 | Symptom | Likely cause | Action |
 |---|---|---|
 | Collector run red in Executions | Airtable API change/outage, expired PAT, or any sub-batch upsert failure (fail-loudly is by design) | Read execution log; messages stay uncollected and retry next run — no data loss by design (write-then-label ordering) |
+| Collector run red with `… footer marker miss(es)` | A mapped sender changed its footer template, so its `FOOTER_MARKERS` marker no longer matches (fail-loudly is by design) | No data lost (rows committed before the throw). Follow the marker-miss runbook above: re-capture the footer as a redacted fixture, update the marker, suite green, merge |
 | Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm: manually purge old rows or accelerate M6 (nothing is `Processed` pre-cutover) |
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |

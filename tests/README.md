@@ -33,9 +33,10 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden regression
   over a **corpus** of real captured job-alert emails spanning a spread of senders / HTML
   styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
-  ziprecruiter — sanitized of PII, LF-only). A manifest check asserts every `email-*.html`
-  has a golden entry and vice versa, so a fixture can't sit unread by any test. Regex-only —
-  it tests the regex in isolation, not the link-cleanup stage that runs before it.
+  ziprecruiter, jobs4, whatjobs — sanitized of PII, LF-only). A manifest check asserts every
+  `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
+  (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
+  regex in isolation, not the link-cleanup stage that runs before it.
 - **`link-cleanup.test.js`** — the offline link cleanup (pure, no network):
   `harvestUrls_` (href + bare-text URLs, trailing-punctuation trim, dedupe),
   `decodeEmbeddedDestination_` (the value-guard decode — absolute URL / absolute-path
@@ -57,8 +58,18 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   element is opaque and fine), the parity no-op, the `MAX_UNWRAP_PASSES` cap (25-deep
   collapses fully, 30-deep leaves exactly the innermost 5), and the **value-pinning corpus
   test**: every fixture through the full pipeline (link cleanup → `CLEAN_REGEX` → unwrap)
-  with per-fixture wrapper counts / bytes saved golden-pinned (ziprecruiter pinned at 0 and
-  byte-identical), so a silent drop in the win is a visible regression.
+  with per-fixture wrapper counts / bytes saved golden-pinned (ziprecruiter and whatjobs pinned
+  at 0 and byte-identical — whatjobs's outer `table`/`tr`/`td` chain is never closed, so strict
+  pairing correctly no-ops; jobs4 pinned at one genuine wrapper), so a silent drop in the win is
+  a visible regression.
+- **`footer-cutoff.test.js`** — the per-sender footer cutoff (`truncateAtFooter_`, pure, applied
+  after the unwrap): hit / miss / none outcomes; domain keying (exact + dot-boundary suffix, the
+  `notwhatjobs.com` look-alike rejected, last-`@` + lowercase extraction, no-`@` unmapped); the
+  position floor (an identical marker planted early is a miss, just past the floor is a hit);
+  `lastIndexOf` (a marker in a listing AND the footer cuts only at the footer); marker-with-tail
+  removal; byte-identical no-op for `none`/`miss`; and the **value-pinning corpus test** — every
+  mapped fixture through the full pipeline (link cleanup → `CLEAN_REGEX` → unwrap → footer cutoff)
+  with per-fixture cut bytes pinned above their corridor floors (cv-library, unmapped, byte-identical).
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
@@ -84,11 +95,16 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
   path, `DRY_RUN`, the **offline link-cleanup wiring** (`HtmlLength` stays the original
   body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
-  logged), and the **table-wrapper unwrap wiring** (wrappers collapse out of `CleanText`,
+  logged), the **table-wrapper unwrap wiring** (wrappers collapse out of `CleanText`,
   `HtmlLength` stays original, the per-email and per-run `Unwrap:` metrics log in real AND
-  `DRY_RUN` runs). Each guard is mutation-checked — removing the budget break, the
-  `if (!ok)` check, the final fail-loudly throw, the empty-records guard, the clamp, or
-  either cleaning-stage wiring flips an assertion.
+  `DRY_RUN` runs), and the **footer-cutoff wiring** (a mapped sender's footer is cut from
+  `CleanText`, the per-email + per-run `Footer:` metrics log in real AND `DRY_RUN`; a marker
+  **miss** ends a real run by throwing after the summary but a `DRY_RUN` run never throws; and
+  when an upsert failure co-occurs with a **committed** miss, one thrown error carries both —
+  the upsert failure named first, the footer-miss summary folded in, so the alarm is never lost
+  (**F1**)). Each guard is mutation-checked — removing the budget break, the `if (!ok)` check,
+  either fail-loudly throw, the `. Also …` miss fold, the empty-records guard, the clamp, or any
+  cleaning-stage wiring flips an assertion.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
   `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,

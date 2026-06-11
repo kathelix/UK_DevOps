@@ -160,6 +160,12 @@ function collectJobEmailsLocked_() {
   // CLEAN_REGEX in processMessage_): wrapper tables collapsed + chars dropped, logged once
   // after the loop next to the Links: line.
   const unwrapStats = { tables: 0, bytesSaved: 0 };
+  // Per-run tally for the per-sender footer cutoff (truncateAtFooter_, applied after the
+  // unwrap in processMessage_): hits = footers cut, misses = mapped senders whose marker was
+  // absent/too-early (a likely template change), bytesCut = chars dropped. The first miss's
+  // domain + msg id seed the end-of-run alarm message. Logged once after the loop next to the
+  // Links:/Unwrap: lines; a miss ends a REAL run Failed (see below) so the GAS failure email fires.
+  const footerStats = { hits: 0, misses: 0, bytesCut: 0, firstMissDomain: '', firstMissMsgId: '' };
   // Fail-loudly accumulator, filled in by airtableUpsert_ on each non-200 sub-batch.
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity
   // contract: failed messages stay unlabelled and retry next run), but a run with any
@@ -189,7 +195,7 @@ function collectJobEmailsLocked_() {
       try {
         msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
         headers = headerMap_(msg.payload.headers || []);
-        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats);
+        processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats, footerStats);
       } catch (e) {
         Logger.log('FAILED message %s | from: %s | subject: %s | error: %s',
           ref.id,
@@ -243,16 +249,39 @@ function collectJobEmailsLocked_() {
   // Table-wrapper unwrap rollup (per-email lines carry msg=<id>; this run total doesn't).
   Logger.log('Unwrap: tables=%s bytes_saved=%s',
     String(unwrapStats.tables), String(unwrapStats.bytesSaved));
+  // Per-sender footer cutoff rollup (per-email lines carry msg=<id>; this run total doesn't).
+  // Always logged, both paths — the cutoff runs in processMessage_ either way.
+  Logger.log('Footer: hits=%s misses=%s bytes_cut=%s',
+    String(footerStats.hits), String(footerStats.misses), String(footerStats.bytesCut));
 
   if (dryRun) {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
   } else {
     Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
+    // Footer-miss summary, built once and surfaced whether it stands alone or is folded into the
+    // upsert-failure throw below. '' when there were no misses this run.
+    const footerMissMsg = footerStats.misses > 0
+      ? footerStats.misses + ' footer marker miss(es); first: ' +
+        footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
+      : '';
     if (upsertFailures.count > 0) {
-      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is
-      // already committed and labelled, so no work is lost — the throw exists purely to
-      // flip the execution to Failed and trigger the GAS failure notification.
-      throw new Error(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+      // The upsert failure is the PRIMARY signal (a data-integrity event) and is named first. But
+      // a footer miss in a sub-batch that DID commit is already make-collected and will NOT recur
+      // — so the upsert throw must not silently swallow it (F1, PR #17): fold the footer-miss
+      // summary into the SAME thrown error, so the one GAS failure email carries both signals.
+      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is already
+      // committed and labelled, so no work is lost — the throw only flips the execution to Failed
+      // to trigger the GAS failure notification.
+      let msg = upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first;
+      if (footerMissMsg) msg += '. Also ' + footerMissMsg;
+      throw new Error(msg);
+    }
+    // Footer-marker miss alarm (no upsert failure this run). Fires only AFTER the loop and the
+    // summary: every cut row is already committed, the throw only flips the execution to Failed so
+    // the GAS failure email tells Ivan to update the changed marker. The cost (owner-accepted
+    // 2026-06-10): a changed template fails ~48 runs/day until the marker is fixed.
+    if (footerMissMsg) {
+      throw new Error(footerMissMsg);
     }
   }
 }
@@ -301,7 +330,7 @@ function getIntProp_(name, fallback, min, max) {
   return fallback;
 }
 
-function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats) {
+function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats, footerStats) {
   const from = parseFrom_(headers['from'] || ''); // {name, email} - split per Sheets columns F/G
   const htmlBody = extractHtmlBody_(msg.payload) || '';
   // Offline link cleanup (NO network): decode trackers that embed their destination in a
@@ -321,7 +350,28 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
   unwrapStats.tables += unwrap.tables;
   unwrapStats.bytesSaved += unwrap.bytesSaved;
   Logger.log('Unwrap: msg=%s tables=%s bytes_saved=%s', msg.id, String(unwrap.tables), String(unwrap.bytesSaved));
-  const cleanText = unwrap.html;
+  // Per-sender footer cutoff AFTER the unwrap (the marker is matched against the fully-cleaned
+  // text). Opt-in: an unmapped sender ('none') is a byte-identical no-op with no log line and no
+  // alarm. A mapped 'hit' slices the footer (marker included) off CleanText; a 'miss' (marker
+  // absent or too early — a likely template change) leaves CleanText untouched but is logged and
+  // counted so the run can end Failed and fire the GAS failure email (see collectJobEmailsLocked_).
+  // Per-email line logs for mapped senders only, in real and DRY_RUN alike; numeric args
+  // String()-wrapped (PR #12 convention). domain=<d> is the matched FOOTER_MARKERS key (the
+  // actionable identity for the marker-miss runbook), not the raw sender host.
+  const footer = truncateAtFooter_(unwrap.html, from.email);
+  if (footer.outcome === 'hit') {
+    footerStats.hits++;
+    footerStats.bytesCut += footer.bytesCut;
+    Logger.log('Footer: msg=%s domain=%s marker=hit bytes_cut=%s', msg.id, footer.domain, String(footer.bytesCut));
+  } else if (footer.outcome === 'miss') {
+    footerStats.misses++;
+    if (!footerStats.firstMissMsgId) {
+      footerStats.firstMissDomain = footer.domain;
+      footerStats.firstMissMsgId = msg.id;
+    }
+    Logger.log('Footer: msg=%s domain=%s marker=miss bytes_cut=0', msg.id, footer.domain);
+  }
+  const cleanText = footer.html;
 
   records.push({
     messageId: msg.id,
@@ -738,6 +788,91 @@ function collapseTableWrappers_(html) {
     s = r.html;
   }
   return { html: s, tables: tables, bytesSaved: original.length - s.length };
+}
+
+// ---------- per-sender footer cutoff (pure, unit-tested) ----------
+// Sender footers carry the riskiest links in the corpus — one-click action endpoints
+// (unsubscribe, "pause forever", 1-click feedback) plus legal boilerplate (issue #14).
+// Cutting the footer out of CleanText removes them from the data the screening layer
+// reads at all; token saving is secondary but real. Runs in processMessage_ AFTER
+// collapseTableWrappers_, so the marker is matched against the fully-cleaned text
+// (links → CLEAN_REGEX → unwrap → THIS). Only CleanText/CleanLength reflect the cut;
+// HtmlLength stays the original body length (Make parity), as with the earlier stages.
+//
+// OPT-IN by registered domain. FOOTER_MARKERS maps a registered domain → the literal
+// marker string that begins that sender's footer in the STORED CleanText byte-form
+// (entities survive CLEAN_REGEX, so markers are chosen entity-free from the corpus, not
+// from rendered email text). An unmapped sender is untouched and never alarms.
+//
+// Markers outlive sender addresses (whatjobs moved mail.whatjobs.co.uk → mail.uk.whatjobs.com
+// in 2026 but kept its footer), so the map is keyed by registered domain, matched by exact
+// equality OR a dot-boundary suffix (domain === key || domain.endsWith('.' + key)) — keys are
+// full registered domains, and the leading dot is what makes it a boundary: 'mail.uk.whatjobs.com'
+// matches 'whatjobs.com' but the look-alike 'notwhatjobs.com' does not (a bare endsWith(key)
+// would wrongly match it). Each marker is confirmed against ≥2 stored CleanText samples before
+// adoption; a domain that cannot be confirmed twice stays unmapped.
+const FOOTER_MARKERS = {
+  // reed: the seed map proposed 'Manage your job alerts' (v3), but that exact string is ABSENT
+  // from the stored reed CleanText — the real footer reads "…manage your contact preferences or
+  // unsubscribe." The corrected marker cuts 1,311 B at 81.2%, matching the issue's own research
+  // evidence (reed 1,311 B) exactly. Confirm-before-pin caught the transcription slip (see PR #14).
+  'reed.co.uk': 'manage your contact preferences',
+  'whatjobs.com': 'Overall, how relevant are these jobs',
+  'jobmails.io': 'Please do not reply to this email',
+  'joblookup.com': 'Pause Your Job Alerts',
+  'nijobs.com': 'In order to avoid that third parties',
+  'ziprecruiter.co.uk': 'Unsubscribe from this email',
+  'welcometothejungle.com': 'Receive these notifications:',
+};
+
+// A footer marker is only believed when it sits in the trailing portion of the text: the
+// same phrase can leak into a job description earlier in the body, and a sender template
+// can change so the footer disappears. The match index must be at least this fraction of
+// the way through the text; an earlier (or absent) match is a MISS, not a cut. Corpus
+// footers all start ≥ ~68% in, so 0.5 holds with headroom (pinned by a test).
+const FOOTER_POSITION_FLOOR = 0.5;
+
+// Registered-domain part of a From address (lowercased): everything after the last '@'.
+// '' when there is no '@' (so an address-less / malformed From never keys the map).
+function footerDomainOf_(fromEmail) {
+  const s = String(fromEmail);
+  const at = s.lastIndexOf('@');
+  if (at === -1) return '';
+  return s.slice(at + 1).trim().toLowerCase();
+}
+
+// Look up the footer marker for a sender domain, matching a FOOTER_MARKERS key by exact
+// equality OR dot-boundary suffix (domain === key || domain.endsWith('.' + key)). First
+// matching key in insertion order wins. Returns { key, marker } or null when unmapped.
+function footerMarkerFor_(domain) {
+  for (const key in FOOTER_MARKERS) {
+    if (domain === key || domain.endsWith('.' + key)) {
+      return { key: key, marker: FOOTER_MARKERS[key] };
+    }
+  }
+  return null;
+}
+
+// Cut a mapped sender's footer off the (already fully-cleaned) text, marker included
+// (v3 semantics: the marker phrase goes with the discarded tail). Pure; returns
+// { html, outcome, bytesCut, domain }:
+//   - 'none'  unmapped sender — text returned byte-identical, domain '' (no log, no alarm)
+//   - 'miss'  mapped sender whose marker is absent OR fails the position floor — text
+//             returned byte-identical, domain = matched key (per-email warn + run alarm)
+//   - 'hit'   marker found in the trailing portion — text sliced at the LAST occurrence
+//             (footers are terminal; the last occurrence is the real one even if the phrase
+//             also appears in a job description above). domain = matched key.
+function truncateAtFooter_(html, fromEmail) {
+  const text = String(html);
+  const domain = footerDomainOf_(fromEmail);
+  const entry = domain ? footerMarkerFor_(domain) : null;
+  if (!entry) return { html: text, outcome: 'none', bytesCut: 0, domain: '' };
+  const idx = text.lastIndexOf(entry.marker);
+  if (idx === -1 || idx < FOOTER_POSITION_FLOOR * text.length) {
+    return { html: text, outcome: 'miss', bytesCut: 0, domain: entry.key };
+  }
+  const cut = text.slice(0, idx);
+  return { html: cut, outcome: 'hit', bytesCut: text.length - cut.length, domain: entry.key };
 }
 
 // ---------- helpers ----------
