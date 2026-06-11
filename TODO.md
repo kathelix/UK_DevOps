@@ -7,6 +7,10 @@ Improvements deliberately deferred during the 1:1 Make.com → Apps Script port 
 Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, consumed by Claude from Airtable.
 
 - [ ] **M6 — Instructions cutover (bump to VERSION 2.0)**: rewrite Block 1 §1 (intake = RawEmails, Gmail demoted to fallback + discrepancy canary) and §9 (mark-as-read → Status flip); claude.ai project field becomes a bootstrap stub → read `instructions/Claude_project_instructions.md` from the mounted UK_DevOps folder. Local dir primary, fail loudly if folder not attached, no network fallback. Verify the scheduled run's session has the folder attached. Pause Make scenario after parity.
+- [ ] **M6 addendum — V2.0 link-resolution directives (agreed with Ivan 2026-06-11)**, fold into Block 1 §6a when rewriting:
+  - **Claude-in-Chrome resolution pass for flagged roles only.** After screening completes, resolve the final Flagged list's links in the user's Chrome (navigate → get_page_text) to find the live canonical posting and verify work model/rate/clearance on the rendered page. Do NOT browser-resolve every email link — too slow/token-heavy, and email text already rejects most. Proven 2026-06-11: 5/5 flags resolved; 2 upgraded (iwoca remote-within-UK confirmed, Intellias live+remote), 3 exposed as aggregator fiction or dead scrapes.
+  - **Cookie banners: pre-authorised to accept** when resolving links in Chrome (owner grant 2026-06-11).
+  - **Geo-blocking / VPN.** Some boards geo-reject from France ("candidates from your area are not accepted"). Before the Chrome resolution pass, remind Ivan to connect "Total VPN 2" (macOS app) to a United Kingdom server; treat geo-reject pages as VPN-not-connected, not as dead listings. Stretch goal: drive Total VPN 2 via computer use — connect to UK at pass start, disconnect at end.
 
 ## Collector (`apps-script/gmail-collector.gs`)
 
