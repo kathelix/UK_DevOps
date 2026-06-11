@@ -20,7 +20,7 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 - [ ] **Second cleaning pass.** The regex strips attributes/comments/images but leaves bare tag skeletons (`<td>`, `<tr>`, `<a href>`) and undecoded entities (`&amp;`, `&pound;`). Add a tag-to-text pass (newlines at block boundaries, entity decode) — meaningful token saving for the screening step. Measured 2026-06-07 (NIJobs single-rec, 47.2KB html → 19.4KB clean): ~3.5KB is invisible-entity preheader padding (`&#847;&zwnj;&shy;` walls) the regex doesn't target; real content is only ~5KB. _The single-child table-wrapper unwrap (#13) already landed as the safe incremental step; tag→text would subsume its saving, at which point the unwrap retires or becomes its pre-stage — see `docs/TECH_DESIGN.md` §4._
 - [ ] **Modularize for testability** — split into `config / gmail / parser / airtable / main`; keep cleaning, link-extraction and dedupe as pure functions (no Gmail/Airtable side effects) so they run against `tests/fixtures/` locally. _(Remaining: the full module split — `buildUpsertPayload_` and `isOverRuntimeBudget_` are already extracted as pure, unit-tested helpers.)_
 - [x] Collapse single-child table wrappers in CleanText — Issue #13
-- [ ] Per-sender footer cutoff with template-change alarm — Issue #14
+- [x] Per-sender footer cutoff with template-change alarm — Issue #14
 
 ### Reliability
 

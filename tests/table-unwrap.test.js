@@ -197,14 +197,19 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // issue's research table came from a scratch parser; the acceptance corridor was
   // cv-library >= 35, joblookup >= 15, nijobs >= 28, reed >= 16, welcometothejungle >= 34,
   // ziprecruiter exactly 0 — this implementation reproduces the research values exactly.
-  // If the fixture or the unwrap changes intentionally, eyeball the diff and update these
-  // in the same commit; a silent drop in the win is the regression this test exists to catch.
+  // Issue #14 added two fixtures here too: jobs4 (one genuine single-child wrapper, >= 1) and
+  // whatjobs (its outer table/tr/td chain is never closed, so strict pairing correctly no-ops
+  // and the inner tables are all genuine content tables — pinned at exactly 0, byte-identical,
+  // like ziprecruiter). If the fixture or the unwrap changes intentionally, eyeball the diff and
+  // update these in the same commit; a silent drop in the win is the regression this test catches.
   const GOLDEN = {
     'cv-library': { tables: 40, bytesSaved: 1320 },
+    'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
     'nijobs': { tables: 31, bytesSaved: 1183 },
     'reed': { tables: 18, bytesSaved: 594 },
     'welcometothejungle': { tables: 38, bytesSaved: 1254 },
+    'whatjobs': { tables: 0, bytesSaved: 0 }, // unclosed outer table/tr/td: strict pairing MUST no-op
     'ziprecruiter': { tables: 0, bytesSaved: 0 }, // div-based layout: MUST stay a no-op
   };
   for (const name of Object.keys(GOLDEN)) {

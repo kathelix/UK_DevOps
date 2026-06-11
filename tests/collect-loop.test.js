@@ -15,11 +15,16 @@
 //   - the offline link-cleanup wiring (HtmlLength stays original, CleanText is cleaned,
 //     the per-run "Links:" metric is logged);
 //   - the table-wrapper unwrap wiring (wrappers collapse out of CleanText, the per-email
-//     and per-run "Unwrap:" metrics log in real AND DRY_RUN runs).
+//     and per-run "Unwrap:" metrics log in real AND DRY_RUN runs);
+//   - the footer-cutoff wiring (a mapped sender's footer is cut from CleanText, the per-email
+//     and per-run "Footer:" metrics log in real AND DRY_RUN; a MISS ends a real run Failed but
+//     a DRY_RUN run never throws; an upsert failure takes precedence over the miss-throw).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { loadCollector } = require('./helpers/load-collector');
 
 const RealDate = Date;
@@ -60,12 +65,15 @@ function poisonMessage(i) {
 // upsertCode(callIndex) lets a test force a non-200 Airtable response per request.
 // expectThrow: true captures a thrown run-ending error into r.threw (the fail-loudly
 // contract); without it any throw propagates and fails the calling test.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null, expectThrow = false }) {
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null, from = null, expectThrow = false }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
     if (poison.includes(i)) return poisonMessage(i);
     const m = fakeMessage(i);
+    // Override the From header (default sender is sN@x.com, an unmapped domain) so a test can
+    // drive a FOOTER_MARKERS-mapped sender through the footer-cutoff stage.
+    if (from) m.payload.headers = [{ name: 'From', value: from(i) }, { name: 'Subject', value: 'Subj ' + i }];
     if (bodyHtml) m.payload.body = { data: Array.from(Buffer.from(bodyHtml(i), 'utf8')) };
     return m;
   });
@@ -264,4 +272,73 @@ test('table-wrapper unwrap is wired in AFTER CLEAN_REGEX: wrappers collapse out 
   assert.equal(dry.upserts.length, 0, 'DRY_RUN writes nothing');
   assert.ok(dry.logs.some(l => /^Unwrap: msg=m0 tables=2 bytes_saved=66$/.test(l)), 'per-email Unwrap line logs in DRY_RUN too');
   assert.ok(dry.logs.some(l => /^Unwrap: tables=2 bytes_saved=66$/.test(l)), 'per-run Unwrap rollup logs in DRY_RUN too');
+});
+
+test('footer cutoff is wired in AFTER the unwrap: a mapped sender\'s footer is cut from CleanText, Footer metrics logged (real + DRY_RUN)', () => {
+  // Feed the REAL whatjobs fixture as the message body and a dot-boundary subdomain sender
+  // (mail.uk.whatjobs.com -> the whatjobs.com key). The full processMessage_ pipeline runs
+  // (link cleanup -> CLEAN_REGEX -> unwrap -> footer cutoff), so the marker "Overall, how
+  // relevant are these jobs" and its tail must be gone from CleanText while HtmlLength stays
+  // original. Mutation-checked: dropping the truncateAtFooter_ call leaves the marker in
+  // CleanText and emits no Footer hit lines, flipping every assert below. The exact cut byte
+  // count is pinned by the corpus test (footer-cutoff.test.js); here we pin the wiring + that
+  // the per-email and per-run lines agree.
+  const fixture = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-whatjobs.html'), 'utf8');
+  const opts = { n: 1, budgetMs: 1e9, getDelta: 1, from: () => 'jobalerts@mail.uk.whatjobs.com', bodyHtml: () => fixture };
+  const r = runCollector(opts);
+
+  const fields = r.upserts[0].records[0].fields;
+  assert.equal(fields.HtmlLength, fixture.length, 'HtmlLength stays the ORIGINAL body length (Make parity)');
+  assert.ok(!fields.CleanText.includes('Overall, how relevant are these jobs'), 'the footer marker (and its tail) is cut from CleanText');
+  assert.equal(fields.CleanLength, fields.CleanText.length, 'CleanLength matches the footer-cut text');
+  const perEmail = r.logs.find(l => /^Footer: msg=m0 /.test(l));
+  assert.match(perEmail, /^Footer: msg=m0 domain=whatjobs\.com marker=hit bytes_cut=\d+$/, 'per-email line uses the matched registered-domain key');
+  const bytes = Number(perEmail.match(/bytes_cut=(\d+)/)[1]);
+  assert.ok(bytes > 0, 'a hit cuts a positive number of bytes');
+  assert.ok(r.logs.includes(`Footer: hits=1 misses=0 bytes_cut=${bytes}`), 'per-run Footer rollup matches the per-email cut (and has no msg=)');
+  assert.ok(!r.threw, 'a clean hit run does not throw');
+
+  const dry = runCollector({ ...opts, dryRun: true });
+  assert.equal(dry.upserts.length, 0, 'DRY_RUN writes nothing');
+  assert.ok(dry.logs.some(l => /^Footer: msg=m0 domain=whatjobs\.com marker=hit bytes_cut=\d+$/.test(l)), 'per-email Footer line logs in DRY_RUN too');
+  assert.ok(dry.logs.some(l => /^Footer: hits=1 misses=0 bytes_cut=\d+$/.test(l)), 'per-run Footer rollup logs in DRY_RUN too');
+});
+
+test('a footer-marker MISS on a mapped sender ends a real run FAILED (mutation-checked: deleting the miss-throw flips this)', () => {
+  // reed.co.uk is mapped, but this body lacks reed's marker -> miss. The row is still committed
+  // (a miss is a no-cut, NOT a failure), THEN the run throws after the summary so the GAS failure
+  // email fires and tells Ivan to update the changed marker. Deleting the end-of-run miss-throw
+  // leaves r.threw null and flips the last two asserts (the guards-around-tested-predicates lesson).
+  const body = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const opts = { n: 1, budgetMs: 1e9, getDelta: 1, from: () => 'jobs@reed.co.uk', bodyHtml: () => body };
+  const r = runCollector({ ...opts, expectThrow: true });
+
+  assert.equal(r.collected.length, 1, 'the miss row is still committed + labelled before the throw (no data loss)');
+  assert.ok(r.logs.includes('Footer: msg=m0 domain=reed.co.uk marker=miss bytes_cut=0'), 'per-email miss line logged');
+  assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'per-run rollup counts the miss');
+  assert.ok(r.threw, 'a real run with a footer miss must end by throwing (Failed execution)');
+  assert.match(r.threw.message, /^1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/, 'count + first domain/msg in the message');
+
+  // DRY_RUN with the same miss logs everything but throws NOTHING (pinned alongside the real path).
+  const dry = runCollector({ ...opts, dryRun: true });
+  assert.equal(dry.threw, null, 'DRY_RUN never throws on a miss');
+  assert.equal(dry.upserts.length, 0, 'DRY_RUN writes nothing');
+  assert.ok(dry.logs.includes('Footer: msg=m0 domain=reed.co.uk marker=miss bytes_cut=0'), 'miss still logged per-email in DRY_RUN');
+  assert.ok(dry.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'miss still counted in the DRY_RUN rollup');
+  assert.ok(dry.logs.some(l => /DRY_RUN complete:/.test(l)), 'reached the dry-run summary (did not throw out early)');
+});
+
+test('precedence: a run with BOTH an upsert failure and a footer miss throws the UPSERT error, not the footer one', () => {
+  // The upsert 422s (data-integrity event) AND the reed marker is absent (footer miss). The
+  // upsert-failure throw must win: misses recur next run and nothing is lost, but a write block
+  // must surface. Pins the ordering of the two end-of-run throws in collectJobEmailsLocked_.
+  const body = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, from: () => 'jobs@reed.co.uk', bodyHtml: () => body, upsertCode: () => 422, expectThrow: true });
+
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(r.threw.message, /sub-batch upsert\(s\) failed/, 'the data-integrity upsert error surfaces');
+  assert.doesNotMatch(r.threw.message, /footer marker miss/, 'the footer-miss throw is suppressed when an upsert failure takes precedence');
+  // Prove both conditions really were present this run, so the precedence is meaningful:
+  assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss did occur (rollup shows misses=1)');
+  assert.ok(r.logs.some(l => /Airtable upsert FAILED/.test(l)), 'the upsert failure did occur');
 });
