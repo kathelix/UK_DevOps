@@ -258,21 +258,30 @@ function collectJobEmailsLocked_() {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
   } else {
     Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
+    // Footer-miss summary, built once and surfaced whether it stands alone or is folded into the
+    // upsert-failure throw below. '' when there were no misses this run.
+    const footerMissMsg = footerStats.misses > 0
+      ? footerStats.misses + ' footer marker miss(es); first: ' +
+        footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
+      : '';
     if (upsertFailures.count > 0) {
-      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is
-      // already committed and labelled, so no work is lost — the throw exists purely to
-      // flip the execution to Failed and trigger the GAS failure notification.
-      throw new Error(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+      // The upsert failure is the PRIMARY signal (a data-integrity event) and is named first. But
+      // a footer miss in a sub-batch that DID commit is already make-collected and will NOT recur
+      // — so the upsert throw must not silently swallow it (F1, PR #17): fold the footer-miss
+      // summary into the SAME thrown error, so the one GAS failure email carries both signals.
+      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is already
+      // committed and labelled, so no work is lost — the throw only flips the execution to Failed
+      // to trigger the GAS failure notification.
+      let msg = upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first;
+      if (footerMissMsg) msg += '. Also ' + footerMissMsg;
+      throw new Error(msg);
     }
-    // Footer-marker miss alarm — lower precedence than the upsert-failure throw above (an
-    // upsert failure is a data-integrity event; misses recur next run, nothing is lost — so
-    // when both happen, the upsert error is the one that surfaces). Like that throw, this fires
-    // only AFTER the loop and summary: every cut row is already committed, the throw only flips
-    // the execution to Failed so the GAS failure email tells Ivan to update the changed marker.
-    // The cost (owner-accepted 2026-06-10): a changed template fails ~48 runs/day until fixed.
-    if (footerStats.misses > 0) {
-      throw new Error(footerStats.misses + ' footer marker miss(es); first: ' +
-        footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId);
+    // Footer-marker miss alarm (no upsert failure this run). Fires only AFTER the loop and the
+    // summary: every cut row is already committed, the throw only flips the execution to Failed so
+    // the GAS failure email tells Ivan to update the changed marker. The cost (owner-accepted
+    // 2026-06-10): a changed template fails ~48 runs/day until the marker is fixed.
+    if (footerMissMsg) {
+      throw new Error(footerMissMsg);
     }
   }
 }

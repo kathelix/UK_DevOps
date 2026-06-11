@@ -99,10 +99,12 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   `HtmlLength` stays original, the per-email and per-run `Unwrap:` metrics log in real AND
   `DRY_RUN` runs), and the **footer-cutoff wiring** (a mapped sender's footer is cut from
   `CleanText`, the per-email + per-run `Footer:` metrics log in real AND `DRY_RUN`; a marker
-  **miss** ends a real run by throwing after the summary but a `DRY_RUN` run never throws; an
-  upsert failure takes **precedence** over the miss-throw). Each guard is mutation-checked —
-  removing the budget break, the `if (!ok)` check, either fail-loudly throw, the empty-records
-  guard, the clamp, or any cleaning-stage wiring flips an assertion.
+  **miss** ends a real run by throwing after the summary but a `DRY_RUN` run never throws; and
+  when an upsert failure co-occurs with a **committed** miss, one thrown error carries both —
+  the upsert failure named first, the footer-miss summary folded in, so the alarm is never lost
+  (**F1**)). Each guard is mutation-checked — removing the budget break, the `if (!ok)` check,
+  either fail-loudly throw, the `. Also …` miss fold, the empty-records guard, the clamp, or any
+  cleaning-stage wiring flips an assertion.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
   `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,

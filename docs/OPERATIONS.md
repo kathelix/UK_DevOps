@@ -99,7 +99,7 @@ Footer: msg=<id> domain=<d> marker=miss bytes_cut=0
 Footer: hits=<H> misses=<M> bytes_cut=<B>
 ```
 
-**Marker-miss alarm.** On a **real** run, one or more footer-marker misses end the execution **Failed** (`<N> footer marker miss(es); first: <domain> msg=<id>`) so the GAS failure email fires — unless a sub-batch upsert *also* failed that run, in which case the upsert error surfaces instead (it takes precedence; the misses recur next run, nothing is lost). DRY_RUN logs the would-be misses and throws nothing. Because the cut rows are committed before the throw, a red run with this message has **not** lost data — it is the signal to update a marker.
+**Marker-miss alarm.** On a **real** run, one or more footer-marker misses end the execution **Failed** (`<N> footer marker miss(es); first: <domain> msg=<id>`) so the GAS failure email fires. If a sub-batch upsert *also* failed that run, the thrown error names the upsert failure first and **appends** the footer-miss summary (`… sub-batch upsert(s) failed; first: … . Also <N> footer marker miss(es); first: <domain> msg=<id>`) — a miss in a sub-batch that *did* commit is already `make-collected` and would not recur, so the alarm rides the same failure email rather than being suppressed. DRY_RUN logs the would-be misses and throws nothing. Because the cut rows are committed before the throw, a red run with this message has **not** lost data — it is the signal to update a marker.
 
 **Marker-miss runbook** (the failure email arrived with `… footer marker miss(es); first: <domain> msg=<id>`):
 

@@ -18,7 +18,8 @@
 //     and per-run "Unwrap:" metrics log in real AND DRY_RUN runs);
 //   - the footer-cutoff wiring (a mapped sender's footer is cut from CleanText, the per-email
 //     and per-run "Footer:" metrics log in real AND DRY_RUN; a MISS ends a real run Failed but
-//     a DRY_RUN run never throws; an upsert failure takes precedence over the miss-throw).
+//     a DRY_RUN run never throws; when an upsert failure co-occurs, its error is named first AND
+//     the footer-miss summary is folded into the same throw so the alarm is never lost — F1).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
@@ -328,17 +329,33 @@ test('a footer-marker MISS on a mapped sender ends a real run FAILED (mutation-c
   assert.ok(dry.logs.some(l => /DRY_RUN complete:/.test(l)), 'reached the dry-run summary (did not throw out early)');
 });
 
-test('precedence: a run with BOTH an upsert failure and a footer miss throws the UPSERT error, not the footer one', () => {
-  // The upsert 422s (data-integrity event) AND the reed marker is absent (footer miss). The
-  // upsert-failure throw must win: misses recur next run and nothing is lost, but a write block
-  // must surface. Pins the ordering of the two end-of-run throws in collectJobEmailsLocked_.
-  const body = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
-  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, from: () => 'jobs@reed.co.uk', bodyHtml: () => body, upsertCode: () => 422, expectThrow: true });
+test('F1 — an upsert failure co-occurring with a COMMITTED footer miss throws one error carrying BOTH signals', () => {
+  // The gap Codex caught (F1, PR #17): a footer miss in a sub-batch that COMMITTED is already
+  // make-collected and will NOT recur, so if a later sub-batch fails its upsert and the upsert
+  // throw simply *suppressed* the footer-miss throw, that template-change signal would be lost
+  // forever. Compose exactly that — one message per sub-batch (subBatch=1): m0 is a reed miss that
+  // upserts OK (so it's labelled, won't recur); m1 then 422s. The single thrown error must name
+  // the upsert failure FIRST (precedence preserved) AND fold in the footer-miss summary, so the
+  // one GAS failure email carries both. Mutation-checked: dropping the `. Also …` fold reverts to
+  // the bare upsert message and flips the combined-message assert.
+  const reedNoFooter = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const r = runCollector({
+    n: 2, budgetMs: 1e9, getDelta: 1, subBatch: 1,
+    from: (i) => (i === 0 ? 'jobs@reed.co.uk' : 'someone@x.com'),
+    bodyHtml: (i) => (i === 0 ? reedNoFooter : '<html><body>hi</body></html>'),
+    upsertCode: (call) => (call === 0 ? 200 : 422),
+    expectThrow: true,
+  });
 
+  assert.ok(r.collected.includes('m0'), 'the missed-marker message committed + was labelled (so it will NOT recur — why the signal must survive)');
+  assert.ok(!r.collected.includes('m1'), 'the 422 sub-batch is not labelled');
   assert.ok(r.threw, 'the run ends Failed');
-  assert.match(r.threw.message, /sub-batch upsert\(s\) failed/, 'the data-integrity upsert error surfaces');
-  assert.doesNotMatch(r.threw.message, /footer marker miss/, 'the footer-miss throw is suppressed when an upsert failure takes precedence');
-  // Prove both conditions really were present this run, so the precedence is meaningful:
+  assert.match(
+    r.threw.message,
+    /^1 sub-batch upsert\(s\) failed; first: 422: ERR 422\. Also 1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/,
+    'the upsert failure is named first AND the footer-miss summary is folded into the same error',
+  );
+  // The footer-miss alarm is the load-bearing feature; prove both conditions were really present:
   assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss did occur (rollup shows misses=1)');
   assert.ok(r.logs.some(l => /Airtable upsert FAILED/.test(l)), 'the upsert failure did occur');
 });
