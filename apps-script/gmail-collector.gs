@@ -166,9 +166,10 @@ function collectJobEmailsLocked_() {
   // domain + msg id seed the end-of-run alarm message. Logged once after the loop next to the
   // Links:/Unwrap: lines; a miss ends a REAL run Failed (see below) so the GAS failure email fires.
   const footerStats = { hits: 0, misses: 0, bytesCut: 0, firstMissDomain: '', firstMissMsgId: '' };
-  // Fail-loudly accumulator, incremented in the sub-batch loop on each write failure that
-  // leaves records stuck — a transient sub-batch (429/5xx/throw), a transient individual
-  // retry, or a systemic 4xx sub-batch (every record rejected, no healthy sibling). A
+  // Fail-loudly accumulator, incremented ONCE per sub-batch that leaves records stuck — a
+  // transient batch (429/5xx/transport throw), or an isolated batch with any stuck record (a
+  // transient individual retry, or a systemic 4xx with no healthy sibling). Counting per
+  // sub-batch (not per record) keeps the "N sub-batch upsert(s) failed" message honest. A
   // make-failed poison record (isolated, with a healthy sibling) is handled, NOT counted.
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity contract:
   // failed messages stay unlabelled and retry next run), but a run with any such failure
@@ -243,9 +244,9 @@ function collectJobEmailsLocked_() {
       continue;
     }
     if (batch.kind === 'transient') {
-      // 429/5xx/outage, or a network throw: leave the WHOLE sub-batch uncollected and retry
-      // next run (write-then-label means an unlabelled message re-presents). Count toward the
-      // fail-loud throw; never make-failed — a transient is not poison.
+      // 429/5xx, or a transport failure (code 0 from a thrown UrlFetchApp.fetch): leave the
+      // WHOLE sub-batch uncollected and retry next run (write-then-label means an unlabelled
+      // message re-presents). Count toward the fail-loud throw; never make-failed — not poison.
       upsertFailures.count++;
       if (!upsertFailures.first) upsertFailures.first = batch.first;
       Logger.log('Airtable upsert FAILED (transient %s) for sub-batch starting at %s — those messages stay uncollected and will retry next run.', String(batch.code), String(start));
@@ -267,6 +268,12 @@ function collectJobEmailsLocked_() {
     // schema drift): make-failed NONE so a deploy mistake can't quarantine the whole queue;
     // leave it all uncollected for a human and fail loud.
     const anyHealthy = isolated.some(function (o) { return o.res.kind === 'ok'; });
+    // Count this isolated sub-batch as ONE failure if it leaves ANY record stuck (a transient
+    // individual retry, or a systemic poison with no healthy sibling) — NOT once per record, so
+    // a 5-record systemic outage reports "1 sub-batch upsert(s) failed", not "5" (Codex F-P3). A
+    // quarantined poison record (with a healthy sibling) is handled, not stuck — it doesn't count.
+    let stuck = false;
+    let stuckFirst = '';
     for (const o of isolated) {
       if (o.res.kind === 'ok') {
         Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', o.r.messageId);
@@ -274,8 +281,8 @@ function collectJobEmailsLocked_() {
       } else if (o.res.kind === 'transient') {
         // Rate-limit/outage on this record's PATCH (including one provoked by firing the
         // individual PATCHes in quick succession) — retry next run, never make-failed.
-        upsertFailures.count++;
-        if (!upsertFailures.first) upsertFailures.first = o.res.first;
+        stuck = true;
+        if (!stuckFirst) stuckFirst = o.res.first;
         Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — stays uncollected, retries next run.', String(o.res.code), o.r.messageId);
       } else if (anyHealthy) {
         // Record-specific poison with a proven-healthy sibling: quarantine it so its good
@@ -288,11 +295,15 @@ function collectJobEmailsLocked_() {
       } else {
         // Systemic: every record 4xx, no healthy sibling. Do NOT quarantine — leave uncollected
         // and count toward the fail-loud throw so a human fixes the auth/endpoint/schema cause.
-        upsertFailures.count++;
-        if (!upsertFailures.first) upsertFailures.first = o.res.first;
+        stuck = true;
+        if (!stuckFirst) stuckFirst = o.res.first;
         Logger.log('Airtable individual upsert FAILED (%s) for message %s — every record in the sub-batch was rejected (systemic, not record-specific); NOT quarantined, left for manual fix.',
           String(o.res.code), o.r.messageId);
       }
+    }
+    if (stuck) {
+      upsertFailures.count++;
+      if (!upsertFailures.first) upsertFailures.first = stuckFirst;
     }
   }
 
@@ -1073,21 +1084,37 @@ function airtableToken_() {
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
 // re-collected message updates its existing row instead of creating a duplicate.
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
-// Returns the numeric HTTP response code (200 = success); the caller branches on it —
-// 200 → label make-collected, 429/5xx (isTransientWriteFailure_) → transient retry next
-// run, any other 4xx → deterministic reject the sub-batch loop isolates per-record. On a
-// non-200 the error body is still logged, and `failures` (optional, the run's fail-loudly
-// accumulator) has its count incremented and first error captured, so the caller can end
-// the execution Failed after the loop (see collectJobEmailsLocked_).
+// Returns the numeric HTTP response code (200 = success), or **0** when `UrlFetchApp.fetch`
+// itself threw — a transport-level failure (DNS/timeout/connection), which the caller treats
+// as transient. The caller branches on the code: 200 → label make-collected, 0 or 429/5xx
+// (isTransientWriteFailure_) → transient retry next run, any other 4xx → deterministic reject
+// the sub-batch loop isolates per-record. On a non-200/transport failure the error is logged
+// and `failures` (optional, the run's fail-loudly accumulator) has its count incremented and
+// first error captured. The token is resolved BEFORE the fetch try, OUTSIDE the catch: a
+// missing `AIRTABLE_TOKEN` (or any setup/code error here) is NOT a transport blip and must
+// fail the run fast with its own stack, never be masked as a synthetic transient (Codex F-P2).
 function airtableUpsert_(records, failures) {
   const token = airtableToken_();
-  const resp = UrlFetchApp.fetch(airtableUrl_(), {
-    method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
-    contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + token },
-    payload: JSON.stringify(buildUpsertPayload_(records)),
-    muteHttpExceptions: true,
-  });
+  const payload = JSON.stringify(buildUpsertPayload_(records));
+  let resp;
+  try {
+    resp = UrlFetchApp.fetch(airtableUrl_(), {
+      method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + token },
+      payload: payload,
+      muteHttpExceptions: true,
+    });
+  } catch (e) {
+    // ONLY a UrlFetchApp transport failure lands here (an HTTP error response does not throw —
+    // muteHttpExceptions turns it into a normal response). Report it as code 0 so the caller
+    // classifies it transient (retry next run) and record it. The narrow try keeps setup/code
+    // errors above (token, payload build) failing fast with their own stack.
+    const msg = 'network error: ' + ((e && e.message) ? e.message : e);
+    Logger.log('Airtable upsert transport failure: %s', msg);
+    if (failures) { failures.count++; if (!failures.first) failures.first = msg; }
+    return 0;
+  }
   const code = resp.getResponseCode();
   if (code === 200) return code;
   Logger.log('Airtable upsert error %s: %s', String(code), resp.getContentText().slice(0, 500));
@@ -1102,23 +1129,19 @@ function airtableUpsert_(records, failures) {
 // and classify the outcome for the poison-isolation logic. Returns
 // { kind: 'ok' | 'transient' | 'poison', code, first }:
 //   - 'ok'        HTTP 200: the record(s) are written; safe to label make-collected.
-//   - 'transient' HTTP 429/5xx OR a network-level throw: a rate-limit/outage, NOT a record
-//                 problem — leave uncollected and retry next run, never make-failed.
+//   - 'transient' code 0 (UrlFetchApp transport failure) OR HTTP 429/5xx: a rate-limit/outage,
+//                 NOT a record problem — leave uncollected and retry next run, never make-failed.
 //   - 'poison'    any other 4xx: a deterministic, likely record-specific reject.
 // `first` is the '<code>: <body>' (or 'network error: …') text for the fail-loud summary
-// ('' on success). Re-uses airtableUpsert_'s own error log + capture via a throwaway probe,
-// so the Airtable error body still lands in the execution log. A network throw is caught
-// here (treated as transient) so one record's blip can't abort isolation of its siblings.
+// ('' on success), captured by airtableUpsert_ into a throwaway probe (its error log still
+// fires too). NO try/catch here on purpose: airtableUpsert_ resolves the token (fail fast on a
+// config error) and maps a transport failure to code 0 itself, so a missing AIRTABLE_TOKEN or a
+// programming error propagates with its original stack instead of being masked transient (F-P2).
 function attemptUpsert_(records) {
   const probe = { count: 0, first: '' };
-  let code;
-  try {
-    code = airtableUpsert_(records, probe);
-  } catch (e) {
-    return { kind: 'transient', code: 0, first: 'network error: ' + (e && e.message ? e.message : e) };
-  }
+  const code = airtableUpsert_(records, probe);
   if (code === 200) return { kind: 'ok', code: code, first: '' };
-  if (isTransientWriteFailure_(code)) return { kind: 'transient', code: code, first: probe.first };
+  if (code === 0 || isTransientWriteFailure_(code)) return { kind: 'transient', code: code, first: probe.first };
   return { kind: 'poison', code: code, first: probe.first };
 }
 

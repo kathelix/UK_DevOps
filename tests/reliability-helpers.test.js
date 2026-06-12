@@ -117,5 +117,22 @@ test('airtableUpsert_ throws when AIRTABLE_TOKEN is unset (fail loud, no silent 
   gas.setGlobals({
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) },
   });
+  // The token is resolved BEFORE the fetch try, so a missing token fails fast with its own
+  // error — it is NOT caught and mapped to the transport sentinel (Codex F-P2).
   assert.throws(() => gas.airtableUpsert_([{ fields: {} }]), /AIRTABLE_TOKEN is not set/);
+});
+
+test('airtableUpsert_ maps a UrlFetchApp transport throw to code 0 and captures it (transient, not a crash)', () => {
+  const gas = loadCollector();
+  gas.setGlobals({
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
+    UrlFetchApp: { fetch: () => { throw new Error('Address unavailable'); } },
+  });
+  const failures = { count: 0, first: '' };
+  // A network/transport failure (fetch itself throws — NOT an HTTP error response) becomes
+  // code 0 so the caller classifies it transient; the token being present, this throw is the
+  // only thing the narrow catch swallows.
+  assert.equal(gas.airtableUpsert_([{ fields: {} }], failures), 0);
+  assert.equal(failures.count, 1);
+  assert.match(failures.first, /^network error: Address unavailable$/);
 });

@@ -72,7 +72,10 @@ function poisonMessage(i) {
 //   upsertCode: (i, recs) => recs.length > 1 ? 422 : (recs[0].fields.MessageId === 'm2' ? 422 : 200)
 // expectThrow: true captures a thrown run-ending error into r.threw (the fail-loudly
 // contract); without it any throw propagates and fails the calling test.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null, from = null, expectThrow = false }) {
+// fetchThrows(callIndex, records) → truthy makes UrlFetchApp.fetch THROW (a transport failure,
+// not an HTTP error response). airtableToken: null simulates a missing AIRTABLE_TOKEN Script
+// Property (a config error that must fail the run fast, not be masked transient).
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -110,13 +113,19 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     UrlFetchApp: {
       fetch: (_url, opts) => {
         const recs = JSON.parse(opts.payload).records;
+        if (fetchThrows(upserts.length, recs)) {
+          // Transport-level failure (DNS/timeout/connection): fetch THROWS, it does not return
+          // an error response. airtableUpsert_ must map this to code 0 (transient), not crash.
+          upserts.push({ count: recs.length, threw: true, records: recs });
+          throw new Error('connection reset');
+        }
         // Airtable rejects > 10 records/request (422); otherwise honour the test's code.
         const code = recs.length > 10 ? 422 : upsertCode(upserts.length, recs);
         upserts.push({ count: recs.length, code, records: recs });
         return { getResponseCode: () => code, getContentText: () => (code === 200 ? '' : 'ERR ' + code) };
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? 'tok' : null) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? airtableToken : null) }) },
     Utilities: {
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
@@ -259,8 +268,38 @@ test('systemic 4xx does NOT mass-quarantine: every record 401s, none make-failed
   assert.equal(r.failed.length, 0, 'a systemic reject quarantines NOTHING (no make-failed)');
   assert.equal(r.collected.length, 0, 'the whole sub-batch is left uncollected');
   assert.ok(r.threw, 'a systemic reject ends the run Failed');
-  assert.match(r.threw.message, /^5 sub-batch upsert\(s\) failed; first: 401: ERR 401$/, 'every rejected record counted, first error preserved');
+  // Counted ONCE for the sub-batch, not once per rejected record (Codex F-P3): a 5-record
+  // systemic outage is "1 sub-batch", not "5". Mutation: count per-record -> "5 sub-batch …".
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 401: ERR 401$/, 'one sub-batch failure, first error preserved');
   assert.ok(r.logs.some(l => /every record in the sub-batch was rejected \(systemic, not record-specific\); NOT quarantined/.test(l)), 'systemic non-quarantine logged');
+});
+
+test('missing AIRTABLE_TOKEN fails the run fast with its own error, NOT masked as a transient (Codex F-P2)', () => {
+  // A cleared/rotated PAT is a config error: airtableToken_ throws, and because attemptUpsert_
+  // no longer wraps it in a transient-catch, the throw propagates and ends the run on the FIRST
+  // sub-batch with its precise message — never a synthetic 'network error' that limps through
+  // every sub-batch and reports a generic fail-loud summary.
+  // Mutation: re-broaden the catch (treat the token error as transient) -> r.threw.message
+  // becomes 'N sub-batch upsert(s) failed' and the two asserts below flip.
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, airtableToken: null, expectThrow: true });
+  assert.ok(r.threw, 'the run throws');
+  assert.match(r.threw.message, /AIRTABLE_TOKEN is not set/, 'fails fast with the precise config error');
+  assert.ok(!/upsert\(s\) failed/.test(r.threw.message), 'NOT masked as a transient fail-loud summary');
+  assert.equal(r.collected.length, 0, 'nothing collected — failed before any write');
+  assert.equal(r.failed.length, 0, 'nothing make-failed');
+});
+
+test('a network transport throw is transient: whole sub-batch uncollected, fail-loud, never make-failed', () => {
+  // UrlFetchApp.fetch THROWS on the batch PATCH (transport failure, not an HTTP response).
+  // airtableUpsert_ maps it to code 0 -> attemptUpsert_ classifies transient -> the sub-batch is
+  // left uncollected and retried next run, never make-failed, and the run ends Failed with the
+  // network-error text. Pins the prompt's "UrlFetchApp.fetch threw a network exception → transient".
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, fetchThrows: (i, recs) => recs.length > 1, expectThrow: true });
+  assert.equal(r.collected.length, 0, 'a transport failure leaves the sub-batch uncollected');
+  assert.equal(r.failed.length, 0, 'a transport failure is never make-failed (not poison)');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: network error: connection reset$/, 'counted as a transient sub-batch failure with the network-error text');
+  assert.ok(r.logs.some(l => /Airtable upsert transport failure: network error: connection reset/.test(l)), 'transport failure logged');
 });
 
 test('DRY_RUN never quarantines a would-be write-poison: no upsert, no make-collected, no make-failed', () => {
