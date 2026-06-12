@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 1.1
+VERSION: 1.2
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -200,7 +200,9 @@ Apply the band:
 - Header format: `🤖 Claude on DevOps market: <short funny joke based on this batch (max 35 chars)>`
 - For use as a post on LinkedIn and Instagram
 - Tone: sarcasm dial at 8/10. Dry-and-tired ≠ sarcastic-and-tired. If a section reads like an observation, rewrite it as an eye-roll.
-- 2-3 sharp observations (formatted as sections) about what the batch revealed about the market — weird patterns, recruiter behaviour, clearance obsession, rate compression, whatever's most absurd.
+- 2-3 sharp observations (formatted as sections) about what the batch revealed about the market — weird patterns, recruiter behaviour, rate compression, AI-buzzword inflation, geography/postcode absurdity, whatever's most absurd that day.
+- **Freshness & theme rotation.** Don't lead with the same angle every day. SC-clearance fatigue is real — the LinkedIn audience is bored of it. Mention clearance at most as a light passing jab, and only if it genuinely dominated the batch; otherwise reach for fresher angles (AI bolted onto every spec, undisclosed "competitive" salaries, aggregator spam/duplicates, the postcode lottery, rate compression, the rare genuinely-good remote role). Vary noticeably from the previous day's post.
+- **Room for hope.** Sarcasm stays the primary mode, but when the batch contains a genuinely good role (e.g. a real remote AI gem), give the post a beat of hope or triumph — light-and-hopeful lands better on LinkedIn than relentless gloom. Don't make every day dark routine sarcasm.
 - Target length: 200–300 characters per section, 2–3 sections total. Ruthlessly cut anything that doesn't land.
 - Each section must with `▶️ ` preppended by two new lines.
 - Sarcasm, punchy, sardonic is the primary mode. Dry is fine but sharp is better.
@@ -210,10 +212,38 @@ Apply the band:
 - Written to allow an image generator (e.g. ChatGPT) to generate a funny image based on the text (visual gag based on the post)
 - Footer format: date in format "YYYY-MM-dd" for example 2026-04-26 for the 26th of April 2026.
 
-##### Image prompt
+##### Image concepts (for ChatGPT image generation)
 
-- visual description that I can feed to ChatGPT for image generation
-- The image prompt should be visual and absurdist, not literal
+The edge here is **context**: Claude has the full batch context that Ivan's image
+generator (ChatGPT) does not. Previously Ivan pasted only the Post text into ChatGPT
+and burned many rounds trying to distil a concept; now Claude does that distillation
+up front. So produce ready-to-use creative concepts, not one literal prompt.
+
+- Produce **3 distinct image concept ideas**, each a *single* clean concept / theme /
+  metaphor (one visual gag, not a montage of everything).
+- Each idea includes:
+  - a short punchy **title** (emoji optional),
+  - the **theme** it captures from today's batch (one phrase),
+  - a vivid, **absurdist visual description** — metaphorical, never literal (no
+    screenshots of inboxes); something ChatGPT can render directly,
+  - a one-line **caption seed** Ivan can drop under the image.
+- **Raise the temperature:** fantasise, exaggerate, hallucinate for comic effect —
+  accuracy lives in the results table, not here. Anchor each concept to one real,
+  specific detail from the batch (a recruiter, a place, a rate, a buzzword) so it
+  stays credible.
+- **Improvise daily — no fixed motif.** Each day should feel fresh; don't reuse
+  yesterday's metaphor or settle into a permanent "signature" look. Rotate themes the
+  same way the Post does (see Post → Freshness & theme rotation).
+- **Leave room for hope**, not only doom — at least one of the three should carry a
+  hopeful or triumphant beat when the batch warrants it.
+- End with a one-line **pick**: which of the three is most shareable, and why (one clause).
+
+##### Deliverable file (Post + image concepts)
+
+Bundle the **Post** and the **3 image concepts** into a single dated markdown file in
+the Job Search project folder, named `<YYYY-MM-DD>_linkedin-post-and-image-ideas.md`,
+and present it — so Ivan can paste the whole thing straight into ChatGPT. The chat
+output still shows them inline; the file is the portable copy.
 
 ##### Reviewed-not-applied prompt
 
