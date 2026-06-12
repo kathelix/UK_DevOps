@@ -158,6 +158,28 @@ test('airtableUpsert_ retries a transport throw, then maps the FINAL throw to co
   assert.match(failures.first, /^network error: Address unavailable$/);
 });
 
+test('airtableUpsert_ does NOT mask a post-fetch classification error as a transient — it propagates (Codex F1)', () => {
+  // The fetch SUCCEEDS (no transport throw) but the response's getResponseCode() throws — a
+  // response-shape/programming bug. It must surface with its own stack, NOT be retried and reported
+  // as code 0 / "network error" (the catch-scope regression Codex caught). Only a genuine transport
+  // failure that airtableFetchWithRetry_ retried to exhaustion (tagged isAirtableTransportFailure)
+  // is mapped to code 0; this is not that.
+  const gas = loadCollector();
+  let calls = 0;
+  gas.setGlobals({
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
+    UrlFetchApp: { fetch: () => { calls++; return { getResponseCode: () => { throw new Error('classifier blew up'); }, getContentText: () => '' }; } },
+  });
+  const failures = { count: 0, first: '' };
+  assert.throws(
+    () => gas.airtableUpsert_([{ fields: {} }], failures, { sleep: () => {} }),
+    /classifier blew up/,
+    'a response-shape/classifier bug surfaces with its real stack, not code 0',
+  );
+  assert.equal(calls, 1, 'not retried as if it were a transient blip');
+  assert.equal(failures.count, 0, 'a programming error is never recorded as a transient failure');
+});
+
 // ---------- airtableFetchWithRetry_ (the transient-retry/backoff wrapper) ----------
 // Every test injects fetch + a recording sleep, so the backoff schedule is asserted without any
 // real sleep. The default backoff is CONFIG.RETRY_BACKOFF_MS; asserting the recorded sleeps also
@@ -223,6 +245,23 @@ test('airtableFetchWithRetry_: every attempt throws -> re-throws the LAST transp
   );
   assert.equal(calls.n, 4, '4 attempts, all threw');
   assert.deepEqual(sleeps, [1000, 2000, 4000], 'slept between every attempt');
+});
+
+test('airtableFetchWithRetry_: a post-fetch classification/response-shape error PROPAGATES — not retried, not masked (Codex F1)', () => {
+  // The fetch returns a response, but getResponseCode() throws (a response-shape/programming bug).
+  // Because only fetchFn is inside the retry try/catch, this throw escapes the wrapper unretried
+  // and untagged — it is NOT a transport blip, so it must surface, not become a transient sentinel.
+  const { airtableFetchWithRetry_ } = loadCollector();
+  let calls = 0;
+  const fetch = () => { calls++; return { getResponseCode: () => { throw new Error('classifier blew up'); } }; };
+  const sleeps = [];
+  assert.throws(
+    () => airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) }),
+    /classifier blew up/,
+    'a getResponseCode/classification throw propagates with its own stack',
+  );
+  assert.equal(calls, 1, 'NOT retried — only a transport throw or a 429/5xx is transient');
+  assert.deepEqual(sleeps, [], 'never slept on a programming error');
 });
 
 test('airtableFetchWithRetry_ budget guard: a clock past budget returns the last code WITHOUT sleeping (mutation: drop the guard -> it sleeps)', () => {

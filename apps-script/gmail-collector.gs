@@ -1128,16 +1128,22 @@ function airtableFetchWithRetry_(url, params, opts) {
   const retryOnThrow = opts.retryOnThrow !== false; // default: retry transport throws too
 
   let lastResp = null; // the most recent transient HTTP response (429/5xx)
-  let lastErr = null;  // the most recent transport throw
+  let lastErr = null;  // the most recent transport throw (only ever a fetchFn failure)
   for (let attempt = 0; ; attempt++) {
+    let resp = null;
     try {
-      const resp = fetchFn(url, params);
+      resp = fetchFn(url, params); // ONLY the transport call is guarded (Codex F1 / PR #19 F-P2)
+    } catch (e) {
+      if (!retryOnThrow) throw e; // non-idempotent caller: a prior success can't be ruled out
+      lastErr = e;                // retryable transport throw: remember it, then back off below
+    }
+    if (resp !== null) {
+      // Classify the response OUTSIDE the catch: a throw from getResponseCode()/the classifier is
+      // a programming or response-shape bug, NOT a transport blip — letting it propagate here (with
+      // its own stack) keeps it from being retried and masked as a transient sentinel (Codex F1).
       // 200 or a deterministic 4xx (400/401/404/422): not transient — hand it straight back.
       if (!isTransientWriteFailure_(resp.getResponseCode())) return resp;
       lastResp = resp; // a transient 429/5xx: remember it in case the retries are exhausted
-    } catch (e) {
-      if (!retryOnThrow) throw e; // non-idempotent caller: a prior success can't be ruled out
-      lastErr = e;                // retryable transport throw: remember it
     }
     if (attempt >= backoffs.length) break; // retries exhausted
     const nextSleepMs = backoffs[attempt];
@@ -1145,7 +1151,11 @@ function airtableFetchWithRetry_(url, params, opts) {
     sleep(nextSleepMs);
   }
   if (lastResp) return lastResp; // exhausted with a transient response: the caller classifies it
-  throw lastErr;                 // every attempt threw: re-throw the last transport error
+  // Every attempt threw a transport error (lastErr only ever holds a fetchFn failure). Mark it so a
+  // caller that maps transport failures to a sentinel (airtableUpsert_ → code 0) can tell a real
+  // transport failure apart from a programming error and translate ONLY the former (Codex F1).
+  if (lastErr && typeof lastErr === 'object') lastErr.isAirtableTransportFailure = true;
+  throw lastErr; // every attempt threw: re-throw the last transport error
 }
 
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
@@ -1177,12 +1187,15 @@ function airtableUpsert_(records, failures, opts) {
       muteHttpExceptions: true,
     }, opts);
   } catch (e) {
-    // ONLY a UrlFetchApp transport failure lands here — and only after airtableFetchWithRetry_
-    // exhausted its retries with every attempt throwing (an HTTP error response does not throw;
-    // muteHttpExceptions turns it into a normal response the wrapper hands back). Report it as
-    // code 0 so the caller classifies it transient (retry next run) and record it. The narrow try
-    // keeps setup/code errors above (token, payload build) failing fast with their own stack.
-    const msg = 'network error: ' + ((e && e.message) ? e.message : e);
+    // Map to code 0 (transient) ONLY a genuine UrlFetchApp transport failure that
+    // airtableFetchWithRetry_ retried to exhaustion — it tags that re-throw
+    // `isAirtableTransportFailure`. Anything else the wrapper throws — a post-fetch
+    // classification/response-shape error (`getResponseCode()` etc.) — is a programming bug, NOT a
+    // transport blip, and must fail the run fast with its own stack rather than be masked as a
+    // synthetic transient (Codex F1; the PR #19 F-P2 catch-scope lesson). Token/payload errors are
+    // resolved ABOVE the try and never reach here at all.
+    if (!e || !e.isAirtableTransportFailure) throw e;
+    const msg = 'network error: ' + (e.message ? e.message : e);
     Logger.log('Airtable upsert transport failure: %s', msg);
     if (failures) { failures.count++; if (!failures.first) failures.first = msg; }
     return 0;
