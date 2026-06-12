@@ -1,6 +1,6 @@
 # AGENTS.md — Portable agent working guide
 
-_A reusable Codex onboarding file, distilled from a mature project into stack-agnostic habits. Drop it in a new repo's root, fill the **Project context** block below, and delete any section that doesn't apply. Codex reads this file automatically; other assistants read their own (e.g. `AGENTS.md`) — copy or symlink as needed. It pairs with `.claude/settings.json`, a conservative read-only permission starter._
+_A reusable Codex onboarding file, distilled from a mature project into stack-agnostic habits. Drop it in a new repo's root, fill the **Project context** block below, and delete any section that doesn't apply. Codex reads this file automatically; other assistants read their own (e.g. `AGENTS.md`) — copy or symlink as needed. It pairs with `.claude/settings.json`, a permission starter — read-only inspection plus the `git`/`gh` mutations the slice workflow needs (PR merge excluded)._
 
 ## Project context
 
@@ -97,4 +97,4 @@ Every non-trivial PR ends with a brief retrospective — run it unprompted, don'
 
 ## Appendix — Codex permissions
 
-This template ships a companion `.claude/settings.json` with a conservative, stack-agnostic allowlist: read-only inspection (`find`, `grep`, read-only `git` and `gh`, `command -v`), scratch space under `/tmp`, and self-editing of `.claude/`. Mutating git/gh and filesystem operations are deliberately left out so they stay prompt-gated. Add project-specific commands (build, test, your package manager) as you confirm they're safe.
+This template ships a companion `.claude/settings.json` with a stack-agnostic allowlist tuned for the slice workflow: read-only inspection (`find`, `grep`, read-only `git`/`gh`, `command -v`), scratch space under `/tmp`, self-editing of `.claude/`, and the **mutating `git`/`gh` commands the Implementer runs to work a slice without prompts** — `git add`/`commit`/`push`/`branch`/`switch`/`checkout` and `gh pr create`/`edit`/`comment`/`ready` plus `gh issue create`/`comment`. Two things stay **prompt-gated on purpose**: `gh pr merge` (merge is the owner's decision — nothing auto-merges; see *GitHub PR hygiene*) and destructive filesystem operations. Add project-specific commands (build, test, your package manager) as you confirm they're safe.
