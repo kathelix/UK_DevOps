@@ -166,12 +166,15 @@ function collectJobEmailsLocked_() {
   // domain + msg id seed the end-of-run alarm message. Logged once after the loop next to the
   // Links:/Unwrap: lines; a miss ends a REAL run Failed (see below) so the GAS failure email fires.
   const footerStats = { hits: 0, misses: 0, bytesCut: 0, firstMissDomain: '', firstMissMsgId: '' };
-  // Fail-loudly accumulator, filled in by airtableUpsert_ on each non-200 sub-batch.
-  // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity
-  // contract: failed messages stay unlabelled and retry next run), but a run with any
-  // failed sub-batch must END Failed: GAS failure emails fire only on Failed
-  // executions, so a hard Airtable write-block would otherwise stall RawEmails
-  // silently while every run shows "Completed". Re-raised after the summary logs.
+  // Fail-loudly accumulator, incremented in the sub-batch loop on each write failure that
+  // leaves records stuck — a transient sub-batch (429/5xx/throw), a transient individual
+  // retry, or a systemic 4xx sub-batch (every record rejected, no healthy sibling). A
+  // make-failed poison record (isolated, with a healthy sibling) is handled, NOT counted.
+  // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity contract:
+  // failed messages stay unlabelled and retry next run), but a run with any such failure
+  // must END Failed: GAS failure emails fire only on Failed executions, so a hard Airtable
+  // write-block would otherwise stall RawEmails silently while every run shows "Completed".
+  // Re-raised after the summary logs.
   const upsertFailures = { count: 0, first: '' };
   // Clamp the configured sub-batch size to a safe stride: a 0/negative value would never
   // advance `start` (infinite loop), and a value > 10 exceeds Airtable's records/request
@@ -231,14 +234,65 @@ function collectJobEmailsLocked_() {
     // label as collected ONLY if the upsert succeeded (same ordering as Make: row ->
     // label). The MessageId upsert makes a re-collected message update its row instead
     // of duplicating it, so the write-then-label ordering is crash-safe.
-    const ok = airtableUpsert_(records.map(r => ({ fields: r.fields })), upsertFailures);
-    if (!ok) {
-      Logger.log('Airtable upsert FAILED for sub-batch starting at %s - those messages stay uncollected and will retry next run.', String(start));
+    const batch = attemptUpsert_(records.map(r => ({ fields: r.fields })));
+    if (batch.kind === 'ok') {
+      for (const r of records) {
+        Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
+        collected++;
+      }
       continue;
     }
-    for (const r of records) {
-      Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
-      collected++;
+    if (batch.kind === 'transient') {
+      // 429/5xx/outage, or a network throw: leave the WHOLE sub-batch uncollected and retry
+      // next run (write-then-label means an unlabelled message re-presents). Count toward the
+      // fail-loud throw; never make-failed — a transient is not poison.
+      upsertFailures.count++;
+      if (!upsertFailures.first) upsertFailures.first = batch.first;
+      Logger.log('Airtable upsert FAILED (transient %s) for sub-batch starting at %s — those messages stay uncollected and will retry next run.', String(batch.code), String(start));
+      continue;
+    }
+
+    // batch.kind === 'poison': a deterministic 4xx rejected the whole PATCH (Airtable batch
+    // writes are all-or-nothing), so >=1 record is a record-specific reject. Re-send each
+    // record on its OWN PATCH — through airtableUpsert_ (via attemptUpsert_), so the deferred
+    // retry/backoff wrapper composes later — to tell a poison record (4xx) apart from a
+    // healthy sibling (200) or a transient blip (429/5xx/throw). This isolates poison from
+    // its good siblings on the WRITE side, mirroring the per-message read-side isolation above.
+    Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the reject.',
+      String(batch.code), String(start), String(records.length));
+    const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }]) }; });
+    // Quarantine guard (prevents mass-quarantine on a systemic error): only make-failed a
+    // poison record if >=1 sibling upserted 200 — proof the endpoint/auth/schema is healthy
+    // and the 4xx is record-specific. Zero successes => systemic (bad auth, wrong endpoint,
+    // schema drift): make-failed NONE so a deploy mistake can't quarantine the whole queue;
+    // leave it all uncollected for a human and fail loud.
+    const anyHealthy = isolated.some(function (o) { return o.res.kind === 'ok'; });
+    for (const o of isolated) {
+      if (o.res.kind === 'ok') {
+        Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', o.r.messageId);
+        collected++;
+      } else if (o.res.kind === 'transient') {
+        // Rate-limit/outage on this record's PATCH (including one provoked by firing the
+        // individual PATCHes in quick succession) — retry next run, never make-failed.
+        upsertFailures.count++;
+        if (!upsertFailures.first) upsertFailures.first = o.res.first;
+        Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — stays uncollected, retries next run.', String(o.res.code), o.r.messageId);
+      } else if (anyHealthy) {
+        // Record-specific poison with a proven-healthy sibling: quarantine it so its good
+        // siblings stop being re-fetched (and the run stops failing) every run. make-failed
+        // excludes it from CONFIG.QUERY; deterministic, so a retry would only reject again.
+        const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
+        Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', o.r.messageId);
+        Logger.log('Labeled %s as %s — deterministic Airtable reject (%s) with >=1 healthy sibling; excluded from future runs, inspect manually.',
+          o.r.messageId, CONFIG.FAILED_LABEL_NAME, String(o.res.code));
+      } else {
+        // Systemic: every record 4xx, no healthy sibling. Do NOT quarantine — leave uncollected
+        // and count toward the fail-loud throw so a human fixes the auth/endpoint/schema cause.
+        upsertFailures.count++;
+        if (!upsertFailures.first) upsertFailures.first = o.res.first;
+        Logger.log('Airtable individual upsert FAILED (%s) for message %s — every record in the sub-batch was rejected (systemic, not record-specific); NOT quarantined, left for manual fix.',
+          String(o.res.code), o.r.messageId);
+      }
     }
   }
 
@@ -297,6 +351,15 @@ function isOverRuntimeBudget_(startMs, nowMs) {
 // advancing; <=10 keeps each upsert within Airtable's records/request cap.
 function clampSubBatchSize_(n) {
   return Math.max(1, Math.min(n, 10));
+}
+
+// Classify an Airtable write HTTP status (pure, unit-tested): true for a transient,
+// retry-worthy failure — 429 (rate limit) or any 5xx (Airtable-side outage) — false for
+// everything else, including the deterministic 4xx rejects (400/401/404/422) that the
+// sub-batch loop isolates per-record and may make-failed. Split out of the loop so the
+// poison-vs-transient boundary is testable in isolation, mirroring isOverRuntimeBudget_.
+function isTransientWriteFailure_(code) {
+  return code === 429 || (code >= 500 && code <= 599);
 }
 
 // Parse a Script Property value as an integer in [min, max] (pure, unit-tested).
@@ -1010,9 +1073,12 @@ function airtableToken_() {
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
 // re-collected message updates its existing row instead of creating a duplicate.
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
-// `failures` (optional) is the run's fail-loudly accumulator: on a non-200 the count
-// is incremented and the first error's text captured, so the caller can end the
-// execution Failed after the loop (see collectJobEmailsLocked_).
+// Returns the numeric HTTP response code (200 = success); the caller branches on it —
+// 200 → label make-collected, 429/5xx (isTransientWriteFailure_) → transient retry next
+// run, any other 4xx → deterministic reject the sub-batch loop isolates per-record. On a
+// non-200 the error body is still logged, and `failures` (optional, the run's fail-loudly
+// accumulator) has its count incremented and first error captured, so the caller can end
+// the execution Failed after the loop (see collectJobEmailsLocked_).
 function airtableUpsert_(records, failures) {
   const token = airtableToken_();
   const resp = UrlFetchApp.fetch(airtableUrl_(), {
@@ -1022,13 +1088,38 @@ function airtableUpsert_(records, failures) {
     payload: JSON.stringify(buildUpsertPayload_(records)),
     muteHttpExceptions: true,
   });
-  if (resp.getResponseCode() === 200) return true;
-  Logger.log('Airtable upsert error %s: %s', String(resp.getResponseCode()), resp.getContentText().slice(0, 500));
+  const code = resp.getResponseCode();
+  if (code === 200) return code;
+  Logger.log('Airtable upsert error %s: %s', String(code), resp.getContentText().slice(0, 500));
   if (failures) {
     failures.count++;
-    if (!failures.first) failures.first = resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500);
+    if (!failures.first) failures.first = code + ': ' + resp.getContentText().slice(0, 500);
   }
-  return false;
+  return code;
+}
+
+// Attempt one Airtable upsert — the whole sub-batch, or a single record during isolation —
+// and classify the outcome for the poison-isolation logic. Returns
+// { kind: 'ok' | 'transient' | 'poison', code, first }:
+//   - 'ok'        HTTP 200: the record(s) are written; safe to label make-collected.
+//   - 'transient' HTTP 429/5xx OR a network-level throw: a rate-limit/outage, NOT a record
+//                 problem — leave uncollected and retry next run, never make-failed.
+//   - 'poison'    any other 4xx: a deterministic, likely record-specific reject.
+// `first` is the '<code>: <body>' (or 'network error: …') text for the fail-loud summary
+// ('' on success). Re-uses airtableUpsert_'s own error log + capture via a throwaway probe,
+// so the Airtable error body still lands in the execution log. A network throw is caught
+// here (treated as transient) so one record's blip can't abort isolation of its siblings.
+function attemptUpsert_(records) {
+  const probe = { count: 0, first: '' };
+  let code;
+  try {
+    code = airtableUpsert_(records, probe);
+  } catch (e) {
+    return { kind: 'transient', code: 0, first: 'network error: ' + (e && e.message ? e.message : e) };
+  }
+  if (code === 200) return { kind: 'ok', code: code, first: '' };
+  if (isTransientWriteFailure_(code)) return { kind: 'transient', code: code, first: probe.first };
+  return { kind: 'poison', code: code, first: probe.first };
 }
 
 // ---------- RawEmails purge job (janitor) ----------
