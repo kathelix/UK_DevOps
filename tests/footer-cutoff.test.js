@@ -120,12 +120,16 @@ test('lastIndexOf: a marker appearing in a job description AND the footer cuts o
 test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cutoff) per-fixture cut bytes', () => {
   // Corridors-not-goldens (CLAUDE.md): the slice prompt set acceptance FLOORS (reed >= 1000,
   // nijobs >= 900, joblookup >= 300, welcometothejungle >= 100, ziprecruiter >= 500,
-  // whatjobs >= 1000, jobs4 >= 600; cv-library unmapped -> byte-identical). This pins what THIS
-  // implementation actually measures (2026-06-11) so a silent regression in the cut is visible.
+  // whatjobs >= 1000, jobs4 >= 600, milkround >= 2500, procontractjobs >= 1700; cv-library
+  // unmapped -> byte-identical). This pins what THIS implementation actually measures (2026-06-11;
+  // milkround/procontractjobs added 2026-06-12) so a silent regression in the cut is visible.
   // whatjobs/jobs4 reproduce the Architect's measured values (1196 / 782) exactly; reed uses the
   // CORRECTED marker 'manage your contact preferences' (the v3 'Manage your job alerts' string is
   // absent from the stored fixture) and cuts 1311 B, matching the issue's research evidence.
-  // The lowest hit position is whatjobs at 67.7%, so the 0.5 floor holds with headroom.
+  // The footer-map-extension slice added milkround (dot-boundary key jobs.milkround.com ->
+  // milkround.com, reusing nijobs' GDPR marker, cuts 2799 B at 82.1%) and procontractjobs
+  // (exact key, cuts 1965 B at 95.1%). The lowest hit position is still whatjobs at 67.7%, so the
+  // 0.5 floor holds with headroom.
   const FOOTER_GOLDEN = {
     'reed':               { from: 'noreply@reed.co.uk',             outcome: 'hit',  bytesCut: 1311, floor: 1000 },
     'whatjobs':           { from: 'jobalerts@mail.uk.whatjobs.com', outcome: 'hit',  bytesCut: 1196, floor: 1000 }, // dot-boundary key
@@ -134,6 +138,8 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'nijobs':             { from: 'jobs@nijobs.com',                outcome: 'hit',  bytesCut: 1689, floor: 900 },
     'ziprecruiter':       { from: 'noreply@ziprecruiter.co.uk',     outcome: 'hit',  bytesCut: 547,  floor: 500 },
     'welcometothejungle': { from: 'hello@welcometothejungle.com',   outcome: 'hit',  bytesCut: 1135, floor: 100 },
+    'milkround':          { from: 'info@jobs.milkround.com',        outcome: 'hit',  bytesCut: 2799, floor: 2500 }, // dot-boundary key; reuses nijobs' marker
+    'procontractjobs':    { from: 'info@procontractjobs.com',       outcome: 'hit',  bytesCut: 1965, floor: 1700 }, // exact key
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {

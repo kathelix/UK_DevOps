@@ -200,13 +200,17 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // Issue #14 added two fixtures here too: jobs4 (one genuine single-child wrapper, >= 1) and
   // whatjobs (its outer table/tr/td chain is never closed, so strict pairing correctly no-ops
   // and the inner tables are all genuine content tables — pinned at exactly 0, byte-identical,
-  // like ziprecruiter). If the fixture or the unwrap changes intentionally, eyeball the diff and
-  // update these in the same commit; a silent drop in the win is the regression this test catches.
+  // like ziprecruiter). The footer-map-extension slice added milkround (3 wrappers, 115 B) and
+  // procontractjobs (25 wrappers, 4805 B), both pinned exact (measured 2026-06-12). If the
+  // fixture or the unwrap changes intentionally, eyeball the diff and update these in the same
+  // commit; a silent drop in the win is the regression this test catches.
   const GOLDEN = {
     'cv-library': { tables: 40, bytesSaved: 1320 },
     'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
+    'milkround': { tables: 3, bytesSaved: 115 },
     'nijobs': { tables: 31, bytesSaved: 1183 },
+    'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },
     'welcometothejungle': { tables: 38, bytesSaved: 1254 },
     'whatjobs': { tables: 0, bytesSaved: 0 }, // unclosed outer table/tr/td: strict pairing MUST no-op

@@ -823,6 +823,11 @@ const FOOTER_MARKERS = {
   'nijobs.com': 'In order to avoid that third parties',
   'ziprecruiter.co.uk': 'Unsubscribe from this email',
   'welcometothejungle.com': 'Receive these notifications:',
+  // milkround is StepStone family and ships the same GDPR footer sentence as nijobs — keep this
+  // as an independent entry (duplicate string, NOT a shared constant): either sender can change
+  // its template without the other. Confirmed against 4 stored milkround CleanText samples.
+  'milkround.com': 'In order to avoid that third parties',
+  'procontractjobs.com': 'Pro Contract Jobs Team',  // confirmed against 10 stored samples
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
