@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(sed -n *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git switch *)",
+      "Bash(git check-ignore *)",
+      "Bash(git --version)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh issue view *)",
+      "Bash(gh run view *)",
+      "Bash(command -v *)",
+      "Read(/tmp/**)",
+      "Write(/tmp/**)",
+      "Edit(.claude/**)",
+      "Write(.claude/**)"
+    ]
+  }
+}
