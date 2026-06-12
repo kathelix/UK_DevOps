@@ -10,7 +10,10 @@
 // They pin the load-bearing invariants a unit test of isOverRuntimeBudget_ cannot:
 //   - forward progress (an over-budget run still commits the first sub-batch);
 //   - "label make-collected ONLY if the upsert succeeded" (no silent data loss);
-//   - poison isolation (one bad message is make-failed, siblings still collected);
+//   - read-side poison isolation (a parse-error message is make-failed, siblings still collected);
+//   - write-side poison isolation (a deterministic-4xx record is isolated per-record and
+//     make-failed only with a healthy sibling; a transient 429/5xx is left to retry, never
+//     make-failed; a systemic all-4xx sub-batch quarantines nothing and fails loud);
 //   - the SUB_BATCH_SIZE clamp (an out-of-range knob can't 422 or stall the loop);
 //   - the offline link-cleanup wiring (HtmlLength stays original, CleanText is cleaned,
 //     the per-run "Links:" metric is logged);
@@ -63,10 +66,16 @@ function poisonMessage(i) {
 }
 
 // Drive one collector run. getDelta is the per-message fetch cost added to the clock;
-// upsertCode(callIndex) lets a test force a non-200 Airtable response per request.
+// upsertCode(callIndex, records) lets a test force a non-200 Airtable response per request.
+// The second arg is the parsed records of THIS PATCH, so a write-poison test can branch on
+// recs.length (a batch PATCH vs a single-record isolation retry) and on the MessageId, e.g.
+//   upsertCode: (i, recs) => recs.length > 1 ? 422 : (recs[0].fields.MessageId === 'm2' ? 422 : 200)
 // expectThrow: true captures a thrown run-ending error into r.threw (the fail-loudly
 // contract); without it any throw propagates and fails the calling test.
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, bodyHtml = null, from = null, expectThrow = false }) {
+// fetchThrows(callIndex, records) → truthy makes UrlFetchApp.fetch THROW (a transport failure,
+// not an HTTP error response). airtableToken: null simulates a missing AIRTABLE_TOKEN Script
+// Property (a config error that must fail the run fast, not be masked transient).
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -104,13 +113,19 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     UrlFetchApp: {
       fetch: (_url, opts) => {
         const recs = JSON.parse(opts.payload).records;
+        if (fetchThrows(upserts.length, recs)) {
+          // Transport-level failure (DNS/timeout/connection): fetch THROWS, it does not return
+          // an error response. airtableUpsert_ must map this to code 0 (transient), not crash.
+          upserts.push({ count: recs.length, threw: true, records: recs });
+          throw new Error('connection reset');
+        }
         // Airtable rejects > 10 records/request (422); otherwise honour the test's code.
-        const code = recs.length > 10 ? 422 : upsertCode(upserts.length);
+        const code = recs.length > 10 ? 422 : upsertCode(upserts.length, recs);
         upserts.push({ count: recs.length, code, records: recs });
         return { getResponseCode: () => code, getContentText: () => (code === 200 ? '' : 'ERR ' + code) };
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? 'tok' : null) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? airtableToken : null) }) },
     Utilities: {
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
@@ -161,40 +176,143 @@ test('incremental commit: over budget mid-run keeps earlier sub-batches committe
   assert.ok(r.logs.some(l => /deferring 2 message\(s\)/.test(l)), 'remaining 2 deferred');
 });
 
-test('upsert failure: the failed sub-batch is NOT labelled, successes commit, and the run ends FAILED (fail loudly)', () => {
-  // 422 on the FIRST sub-batch only; the rest succeed. Two invariants, both mutation-checked:
-  //   1. "label make-collected ONLY if the upsert succeeded" — mislabelling the failed
-  //      batch would drop never-written rows forever (QUERY excludes make-collected).
-  //   2. Fail-loudly: a run with >=1 failed sub-batch must THROW after the loop (GAS
-  //      failure emails fire only on Failed executions; a silent "Completed" would hide
-  //      a hard write-block). The successful sub-batches' labels are applied BEFORE the
-  //      throw — deleting the final throw flips the r.threw assert while every
-  //      commit/label assert still passes.
-  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 422 : 200), expectThrow: true });
-  assert.equal(r.collected.length, 7, 'only the 7 successfully-upserted messages are make-collected');
+test('transient upsert (503) leaves the whole sub-batch uncollected, successes commit, and the run ends FAILED (fail loudly)', () => {
+  // A 503 on the FIRST sub-batch's PATCH (rate-limit/outage, not a record problem); the rest
+  // succeed. Three invariants, all mutation-checked:
+  //   1. "label make-collected ONLY if the upsert succeeded" — mislabelling the failed batch
+  //      would drop never-written rows forever (QUERY excludes make-collected).
+  //   2. A transient is NEVER make-failed (it isn't poison) — the whole sub-batch is left
+  //      uncollected and retries next run.
+  //   3. Fail-loudly: a run with >=1 transient failure must THROW after the loop (GAS failure
+  //      emails fire only on Failed executions). Successful sub-batches' labels are applied
+  //      BEFORE the throw — deleting the final throw flips r.threw while the commit asserts pass.
+  // The dormant per-record individual codes (m0 healthy, m1-m4 503) are reached ONLY if a
+  // mutation routes 5xx into the make-failed/isolation path — then m1-m4 would be make-failed
+  // (m0 proves a healthy sibling), flipping `failed.length` from 0. So this also mutation-checks
+  // "5xx must stay transient, never poison".
+  const upsertCode = (i, recs) => {
+    const ids = recs.map(r => r.fields.MessageId);
+    if (recs.length > 1) return ids.includes('m0') ? 503 : 200; // sub-batch 0 transient, rest OK
+    return ids[0] === 'm0' ? 200 : 503; // dormant unless 5xx is wrongly isolated
+  };
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode, expectThrow: true });
+  assert.equal(r.collected.length, 7, 'only the 7 messages in the two healthy sub-batches are make-collected');
   for (const id of ['m0', 'm1', 'm2', 'm3', 'm4']) {
-    assert.ok(!r.collected.includes(id), `${id} (its upsert 422'd) must NOT be make-collected`);
+    assert.ok(!r.collected.includes(id), `${id} (its sub-batch 503'd) must NOT be make-collected`);
   }
-  assert.ok(r.logs.some(l => /Airtable upsert FAILED for sub-batch starting at 0/.test(l)), 'failure logged');
+  assert.equal(r.failed.length, 0, 'a transient failure is never make-failed (not poison)');
+  assert.ok(r.logs.some(l => /Airtable upsert FAILED \(transient 503\) for sub-batch starting at 0/.test(l)), 'transient failure logged');
   assert.ok(r.logs.some(l => l.includes('Collected 7 of 12')), 'summary still logged before the throw');
-  assert.ok(r.threw, 'a run with a failed sub-batch must end by throwing (Failed execution)');
-  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 422: ERR 422$/, 'count + first error text in the message');
+  assert.ok(r.threw, 'a run with a transient failure must end by throwing (Failed execution)');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, 'count + first error text in the message');
 });
 
-test('fail loudly: multiple failed sub-batches are counted, the FIRST error text wins, successes still commit', () => {
-  // Sub-batches 0 (422) and 2 (500) fail; sub-batch 1 succeeds and is labelled.
-  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 422 : i === 2 ? 500 : 200), expectThrow: true });
+test('fail loudly: multiple transient sub-batches are counted, the FIRST error text wins, successes still commit', () => {
+  // Sub-batches 0 (503) and 2 (500) fail transiently; sub-batch 1 succeeds and is labelled.
+  const upsertCode = (i, recs) => {
+    const ids = recs.map(r => r.fields.MessageId);
+    if (ids.includes('m0')) return 503;  // sub-batch 0 (m0-m4)
+    if (ids.includes('m10')) return 500; // sub-batch 2 (m10-m11)
+    return 200;                          // sub-batch 1 (m5-m9)
+  };
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, upsertCode, expectThrow: true });
   assert.equal(r.collected.length, SUB_BATCH, 'the one successful sub-batch is still labelled');
+  assert.equal(r.failed.length, 0, 'transients are never make-failed');
   assert.ok(r.threw, 'run ends Failed');
-  assert.match(r.threw.message, /^2 sub-batch upsert\(s\) failed; first: 422: ERR 422$/, 'failure count aggregated, first error preserved');
+  assert.match(r.threw.message, /^2 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, 'failure count aggregated, first error preserved');
 });
 
-test('poison isolation: a bad message is make-failed while its siblings are make-collected', () => {
+test('read-side poison isolation: a bad message is make-failed while its siblings are make-collected', () => {
+  // A parse-error message (undecodable body) — isolated by the per-message try/catch BEFORE
+  // any upsert. Distinct from the write-side isolation below (a deterministic Airtable reject).
   const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, poison: [2] });
   assert.deepEqual(r.failed, ['m2'], 'only the poison message is make-failed');
   assert.equal(r.collected.length, 4, 'the 4 well-formed siblings are collected');
   assert.ok(!r.collected.includes('m2'), 'poison message is not make-collected');
   assert.ok(r.logs.some(l => l.includes('Collected 4 of 5')));
+});
+
+test('write-side poison isolated: one record 422s individually, the four siblings collect, the poison one is make-failed, no throw', () => {
+  // A 5-record sub-batch whose batch PATCH 4xx's (Airtable batch writes are all-or-nothing).
+  // The loop re-sends each record individually: m2's own PATCH 422s (a record-specific reject),
+  // the other four return 200. Because >=1 sibling succeeded, m2 is make-failed (quarantined so
+  // its good siblings stop being re-fetched + the run stops failing every run) and the run does
+  // NOT throw on the isolated poison. The make-failed label excludes m2 from CONFIG.QUERY, so a
+  // follow-up run won't re-present it (label semantics, not re-tested here).
+  // Mutation: delete the individual-retry (isolation) branch -> the 422 batch leaves every record
+  // uncollected -> r.collected.length flips from 4 to 0.
+  const upsertCode = (i, recs) => {
+    if (recs.length > 1) return 422; // the batch PATCH: a deterministic 4xx -> isolate
+    return recs[0].fields.MessageId === 'm2' ? 422 : 200; // m2 poison, the rest healthy
+  };
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, upsertCode });
+  assert.deepEqual(r.failed, ['m2'], 'only the record-specific reject is make-failed');
+  assert.equal(r.collected.length, 4, 'the four healthy siblings now make progress');
+  for (const id of ['m0', 'm1', 'm3', 'm4']) assert.ok(r.collected.includes(id), `${id} collected`);
+  assert.ok(!r.collected.includes('m2'), 'the poison record is not make-collected');
+  assert.ok(!r.threw, 'an isolated, quarantined poison record does NOT fail the run');
+  assert.ok(r.logs.some(l => /re-sending its 5 record\(s\) individually/.test(l)), 'isolation logged');
+  assert.ok(r.logs.some(l => /Labeled m2 as job-vacancies\/make-failed — deterministic Airtable reject \(422\)/.test(l)), 'quarantine logged with the code');
+  assert.ok(r.logs.some(l => l.includes('Collected 4 of 5')), 'summary reflects the four collected');
+});
+
+test('systemic 4xx does NOT mass-quarantine: every record 401s, none make-failed, sub-batch left uncollected, run throws', () => {
+  // Every record's individual PATCH returns 401 (bad auth / wrong endpoint / schema drift) — a
+  // SYSTEMIC failure, not a record-specific one. The quarantine guard requires >=1 healthy
+  // sibling; with zero successes it make-failed NONE (so a deploy mistake can't quarantine the
+  // whole queue), leaves the sub-batch uncollected, and the run ends by throwing after the summary
+  // so a human fixes the systemic cause.
+  // Mutation: remove the ">=1 sibling succeeded" guard -> all five records are wrongly make-failed
+  // -> r.failed.length flips from 0 to 5.
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, upsertCode: () => 401, expectThrow: true });
+  assert.equal(r.failed.length, 0, 'a systemic reject quarantines NOTHING (no make-failed)');
+  assert.equal(r.collected.length, 0, 'the whole sub-batch is left uncollected');
+  assert.ok(r.threw, 'a systemic reject ends the run Failed');
+  // Counted ONCE for the sub-batch, not once per rejected record (Codex F-P3): a 5-record
+  // systemic outage is "1 sub-batch", not "5". Mutation: count per-record -> "5 sub-batch …".
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 401: ERR 401$/, 'one sub-batch failure, first error preserved');
+  assert.ok(r.logs.some(l => /every record in the sub-batch was rejected \(systemic, not record-specific\); NOT quarantined/.test(l)), 'systemic non-quarantine logged');
+});
+
+test('missing AIRTABLE_TOKEN fails the run fast with its own error, NOT masked as a transient (Codex F-P2)', () => {
+  // A cleared/rotated PAT is a config error: airtableToken_ throws, and because attemptUpsert_
+  // no longer wraps it in a transient-catch, the throw propagates and ends the run on the FIRST
+  // sub-batch with its precise message — never a synthetic 'network error' that limps through
+  // every sub-batch and reports a generic fail-loud summary.
+  // Mutation: re-broaden the catch (treat the token error as transient) -> r.threw.message
+  // becomes 'N sub-batch upsert(s) failed' and the two asserts below flip.
+  const r = runCollector({ n: 12, budgetMs: 1e9, getDelta: 1, airtableToken: null, expectThrow: true });
+  assert.ok(r.threw, 'the run throws');
+  assert.match(r.threw.message, /AIRTABLE_TOKEN is not set/, 'fails fast with the precise config error');
+  assert.ok(!/upsert\(s\) failed/.test(r.threw.message), 'NOT masked as a transient fail-loud summary');
+  assert.equal(r.collected.length, 0, 'nothing collected — failed before any write');
+  assert.equal(r.failed.length, 0, 'nothing make-failed');
+});
+
+test('a network transport throw is transient: whole sub-batch uncollected, fail-loud, never make-failed', () => {
+  // UrlFetchApp.fetch THROWS on the batch PATCH (transport failure, not an HTTP response).
+  // airtableUpsert_ maps it to code 0 -> attemptUpsert_ classifies transient -> the sub-batch is
+  // left uncollected and retried next run, never make-failed, and the run ends Failed with the
+  // network-error text. Pins the prompt's "UrlFetchApp.fetch threw a network exception → transient".
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, fetchThrows: (i, recs) => recs.length > 1, expectThrow: true });
+  assert.equal(r.collected.length, 0, 'a transport failure leaves the sub-batch uncollected');
+  assert.equal(r.failed.length, 0, 'a transport failure is never make-failed (not poison)');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: network error: connection reset$/, 'counted as a transient sub-batch failure with the network-error text');
+  assert.ok(r.logs.some(l => /Airtable upsert transport failure: network error: connection reset/.test(l)), 'transport failure logged');
+});
+
+test('DRY_RUN never quarantines a would-be write-poison: no upsert, no make-collected, no make-failed', () => {
+  // DRY_RUN short-circuits BEFORE any upsert, so a write-poison can't even be observed (detecting
+  // it needs a real PATCH). The point under test: DRY_RUN touches nothing — it never make-failed
+  // a message on the write side. (Read-side would-be make-failed is logged by the parse-error path,
+  // covered separately.) The upsertCode that would 422 is never invoked.
+  const upsertCode = (i, recs) => (recs.length > 1 ? 422 : 200);
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, upsertCode, dryRun: true });
+  assert.equal(r.upserts.length, 0, 'DRY_RUN sends no PATCH at all');
+  assert.equal(r.collected.length, 0, 'nothing labelled make-collected');
+  assert.equal(r.failed.length, 0, 'nothing labelled make-failed — DRY_RUN never quarantines');
+  assert.ok(r.logs.some(l => /DRY_RUN complete: 5 message\(s\) inspected/.test(l)), 'reached the dry-run summary');
 });
 
 test('all-poison sub-batch: no empty Airtable upsert is sent', () => {
@@ -338,21 +456,26 @@ test('F1 — an upsert failure co-occurring with a COMMITTED footer miss throws 
   // the upsert failure FIRST (precedence preserved) AND fold in the footer-miss summary, so the
   // one GAS failure email carries both. Mutation-checked: dropping the `. Also …` fold reverts to
   // the bare upsert message and flips the combined-message assert.
+  // m1 fails its upsert TRANSIENTLY (503) — a genuine transient, not a deterministic 4xx that
+  // would isolate. (A 422 here would route m1, alone in its 1-record sub-batch, through the
+  // isolation path, which the no-healthy-sibling guard also leaves uncollected + fail-loud — but
+  // 503 keeps the F1 scenario unambiguous: a transient outage co-occurring with a committed miss.)
   const reedNoFooter = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
   const r = runCollector({
     n: 2, budgetMs: 1e9, getDelta: 1, subBatch: 1,
     from: (i) => (i === 0 ? 'jobs@reed.co.uk' : 'someone@x.com'),
     bodyHtml: (i) => (i === 0 ? reedNoFooter : '<html><body>hi</body></html>'),
-    upsertCode: (call) => (call === 0 ? 200 : 422),
+    upsertCode: (call) => (call === 0 ? 200 : 503),
     expectThrow: true,
   });
 
   assert.ok(r.collected.includes('m0'), 'the missed-marker message committed + was labelled (so it will NOT recur — why the signal must survive)');
-  assert.ok(!r.collected.includes('m1'), 'the 422 sub-batch is not labelled');
+  assert.ok(!r.collected.includes('m1'), 'the 503 sub-batch is not labelled');
+  assert.equal(r.failed.length, 0, 'a transient upsert failure is never make-failed');
   assert.ok(r.threw, 'the run ends Failed');
   assert.match(
     r.threw.message,
-    /^1 sub-batch upsert\(s\) failed; first: 422: ERR 422\. Also 1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/,
+    /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503\. Also 1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/,
     'the upsert failure is named first AND the footer-miss summary is folded into the same error',
   );
   // The footer-miss alarm is the load-bearing feature; prove both conditions were really present:

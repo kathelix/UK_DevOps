@@ -74,8 +74,11 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
-  `clampSubBatchSize_` (the `[1,10]` stride clamp), `buildUpsertPayload_` and
-  `airtableUpsert_` (the PATCH-upsert dedupe contract).
+  `clampSubBatchSize_` (the `[1,10]` stride clamp), `isTransientWriteFailure_` (the
+  `429`/`5xx`-transient vs deterministic-`4xx` write classifier, boundary + mutation
+  pinned), `buildUpsertPayload_`, and `airtableUpsert_` (the PATCH-upsert dedupe contract,
+  now returning the numeric HTTP code + capturing the first error into `failures`; a missing
+  token fails fast, a `UrlFetchApp` transport throw maps to code `0` with a `network error:` capture).
 - **`max-messages.test.js`** — the runtime-tunable `MAX_MESSAGES` Script Property:
   `parseIntProp_` (the strict, non-clamping `[0,500]` parser — `0`/`"50"`/`" 50 "`
   accepted, decimal/sign/garbage/out-of-range → default), `getIntProp_` (warns on a
@@ -88,11 +91,16 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
-  incremental commit, **upsert-failure** (a rejected sub-batch is NOT make-collected —
-  no silent data loss — and the run then ends by **throwing** after the summary logs:
-  Failed execution → GAS failure email, with the successful sub-batches' labels applied
-  before the throw), **poison isolation** (a bad message is make-failed while
-  siblings are collected; an all-poison sub-batch sends no empty upsert), the
+  incremental commit, **transient upsert-failure** (a `429`/`5xx` sub-batch is NOT
+  make-collected and never make-failed — no silent data loss — and the run then ends by
+  **throwing** after the summary logs: Failed execution → GAS failure email, with the
+  successful sub-batches' labels applied before the throw), **read-side poison isolation**
+  (a parse-error message is make-failed while siblings are collected; an all-poison
+  sub-batch sends no empty upsert), **write-side poison isolation** (a deterministic-`4xx`
+  record is re-sent individually and make-failed only when ≥1 sibling upserted `200`; a
+  systemic all-`4xx` sub-batch quarantines nothing and fails loud — counted once per
+  sub-batch, not per record; a missing token fails fast rather than masking as a transient;
+  a `UrlFetchApp` transport throw is transient; DRY_RUN quarantines nothing), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
   path, `DRY_RUN`, the **offline link-cleanup wiring** (`HtmlLength` stays the original
   body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
@@ -103,9 +111,11 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   **miss** ends a real run by throwing after the summary but a `DRY_RUN` run never throws; and
   when an upsert failure co-occurs with a **committed** miss, one thrown error carries both —
   the upsert failure named first, the footer-miss summary folded in, so the alarm is never lost
-  (**F1**)). Each guard is mutation-checked — removing the budget break, the `if (!ok)` check,
-  either fail-loudly throw, the `. Also …` miss fold, the empty-records guard, the clamp, or any
-  cleaning-stage wiring flips an assertion.
+  (**F1**)). Each guard is mutation-checked — removing the budget break, the make-collected
+  branch, the individual-retry isolation branch, the `≥1 healthy sibling` quarantine guard,
+  the `isTransientWriteFailure_` `5xx` arm, the per-sub-batch (vs per-record) failure count,
+  the narrowed token-error catch, either fail-loudly throw, the `. Also …` miss fold, the
+  empty-records guard, the clamp, or any cleaning-stage wiring flips an assertion.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
   `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,

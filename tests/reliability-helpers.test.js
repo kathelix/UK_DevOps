@@ -1,9 +1,10 @@
 'use strict';
 
 // Coverage for the reliability-net slice (branch collector/reliability-net):
-//   isOverRuntimeBudget_ -> the timeout-safety boundary
-//   buildUpsertPayload_  -> the Airtable upsert request body (dedupe contract)
-//   airtableUpsert_      -> that the write is a PATCH upsert and maps status->bool
+//   isOverRuntimeBudget_     -> the timeout-safety boundary
+//   isTransientWriteFailure_ -> the transient(429/5xx)-vs-deterministic-4xx write classifier
+//   buildUpsertPayload_      -> the Airtable upsert request body (dedupe contract)
+//   airtableUpsert_          -> that the write is a PATCH upsert and returns the HTTP code
 //
 // The LockService single-flight guard is intentionally not unit-tested here: it is
 // pure side effect around the unchanged batch loop and would need the whole run
@@ -21,6 +22,27 @@ test('isOverRuntimeBudget_ is true only after the budget is exceeded (strict >)'
   assert.equal(isOverRuntimeBudget_(start, start + budget - 1), false);
   assert.equal(isOverRuntimeBudget_(start, start + budget), false);     // exactly at budget: not yet over
   assert.equal(isOverRuntimeBudget_(start, start + budget + 1), true);  // 1 ms over
+});
+
+test('isTransientWriteFailure_ classifies 429/5xx as transient, deterministic 4xx as not', () => {
+  const { isTransientWriteFailure_ } = loadCollector();
+  // Transient (retry-worthy): rate limit + any server-side outage.
+  for (const code of [429, 500, 502, 503]) {
+    assert.equal(isTransientWriteFailure_(code), true, `${code} is transient (retry next run)`);
+  }
+  // Deterministic rejects: a record/auth/endpoint/schema problem the loop isolates, never retries blindly.
+  for (const code of [400, 401, 404, 422]) {
+    assert.equal(isTransientWriteFailure_(code), false, `${code} is a deterministic reject (poison candidate)`);
+  }
+  // Mutation guards: success and the 5xx range boundaries are NOT transient — a mutation that
+  // widened the predicate (e.g. >=400, or dropped the 429 special-case, or used >=500 with no
+  // upper bound) flips one of these.
+  assert.equal(isTransientWriteFailure_(200), false, '200 is success, not a transient failure');
+  assert.equal(isTransientWriteFailure_(428), false, 'just below 429 is not transient');
+  assert.equal(isTransientWriteFailure_(499), false, 'just below the 5xx band is not transient');
+  assert.equal(isTransientWriteFailure_(500), true, 'low edge of the 5xx band is transient');
+  assert.equal(isTransientWriteFailure_(599), true, 'high edge of the 5xx band is transient');
+  assert.equal(isTransientWriteFailure_(600), false, 'above the 5xx band is not transient');
 });
 
 test('clampSubBatchSize_ keeps the sub-batch stride in [1, 10]', () => {
@@ -48,7 +70,7 @@ test('buildUpsertPayload_ pins the upsert contract (merge on MessageId, typecast
   assert.deepEqual(Object.keys(body), ['performUpsert', 'records', 'typecast']);
 });
 
-test('airtableUpsert_ issues a PATCH upsert and maps a 200 to true', () => {
+test('airtableUpsert_ issues a PATCH upsert and returns the 200 status code', () => {
   const gas = loadCollector();
   const calls = [];
   gas.setGlobals({
@@ -63,9 +85,9 @@ test('airtableUpsert_ issues a PATCH upsert and maps a 200 to true', () => {
     },
   });
 
-  const ok = gas.airtableUpsert_([{ fields: { MessageId: 'm1' } }]);
+  const code = gas.airtableUpsert_([{ fields: { MessageId: 'm1' } }]);
 
-  assert.equal(ok, true);
+  assert.equal(code, 200); // numeric HTTP code, not a boolean — the caller branches poison vs transient on it
   assert.equal(calls.length, 1);
   const { url, opts } = calls[0];
   assert.match(url, /\/v0\/appV9puNHinuRKTk9\/RawEmails$/); // base id + URL-encoded table name
@@ -78,13 +100,16 @@ test('airtableUpsert_ issues a PATCH upsert and maps a 200 to true', () => {
   assert.equal(body.typecast, true);
 });
 
-test('airtableUpsert_ returns false on a non-200 (batch stays uncollected, retried next run)', () => {
+test('airtableUpsert_ returns the non-200 code and captures the first error into failures', () => {
   const gas = loadCollector();
   gas.setGlobals({
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
     UrlFetchApp: { fetch: () => ({ getResponseCode: () => 422, getContentText: () => 'unprocessable' }) },
   });
-  assert.equal(gas.airtableUpsert_([{ fields: {} }]), false);
+  const failures = { count: 0, first: '' };
+  assert.equal(gas.airtableUpsert_([{ fields: {} }], failures), 422); // the numeric code, so the caller can classify it
+  assert.equal(failures.count, 1);
+  assert.equal(failures.first, '422: unprocessable'); // '<code>: <body>' preserved for the fail-loud summary
 });
 
 test('airtableUpsert_ throws when AIRTABLE_TOKEN is unset (fail loud, no silent skip)', () => {
@@ -92,5 +117,22 @@ test('airtableUpsert_ throws when AIRTABLE_TOKEN is unset (fail loud, no silent 
   gas.setGlobals({
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) },
   });
+  // The token is resolved BEFORE the fetch try, so a missing token fails fast with its own
+  // error — it is NOT caught and mapped to the transport sentinel (Codex F-P2).
   assert.throws(() => gas.airtableUpsert_([{ fields: {} }]), /AIRTABLE_TOKEN is not set/);
+});
+
+test('airtableUpsert_ maps a UrlFetchApp transport throw to code 0 and captures it (transient, not a crash)', () => {
+  const gas = loadCollector();
+  gas.setGlobals({
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
+    UrlFetchApp: { fetch: () => { throw new Error('Address unavailable'); } },
+  });
+  const failures = { count: 0, first: '' };
+  // A network/transport failure (fetch itself throws — NOT an HTTP error response) becomes
+  // code 0 so the caller classifies it transient; the token being present, this throw is the
+  // only thing the narrow catch swallows.
+  assert.equal(gas.airtableUpsert_([{ fields: {} }], failures), 0);
+  assert.equal(failures.count, 1);
+  assert.match(failures.first, /^network error: Address unavailable$/);
 });
