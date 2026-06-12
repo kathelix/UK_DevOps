@@ -75,7 +75,7 @@ function poisonMessage(i) {
 // fetchThrows(callIndex, records) → truthy makes UrlFetchApp.fetch THROW (a transport failure,
 // not an HTTP error response). airtableToken: null simulates a missing AIRTABLE_TOKEN Script
 // Property (a config error that must fail the run fast, not be masked transient).
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false }) {
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false, backoffMs = null }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -92,6 +92,9 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
 
   gas.CONFIG.MAX_RUNTIME_MS = budgetMs;
   gas.CONFIG.SUB_BATCH_SIZE = subBatch;
+  // backoffMs: override the retry schedule. [] disables retries (the wrapper makes one attempt),
+  // used to mutation-check that the transient-retry is what recovers a 429-then-200 sub-batch.
+  if (backoffMs) gas.CONFIG.RETRY_BACKOFF_MS = backoffMs;
   gas.setGlobals({
     Date: clock.Date,
     Gmail: {
@@ -130,6 +133,7 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
       base64Decode: (s) => Array.from(Buffer.from(String(s), 'base64')),
+      sleep: () => {}, // the retry wrapper's backoff is a no-op under test (no real CI sleep)
     },
   });
 
@@ -300,6 +304,33 @@ test('a network transport throw is transient: whole sub-batch uncollected, fail-
   assert.ok(r.threw, 'the run ends Failed');
   assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: network error: connection reset$/, 'counted as a transient sub-batch failure with the network-error text');
   assert.ok(r.logs.some(l => /Airtable upsert transport failure: network error: connection reset/.test(l)), 'transport failure logged');
+});
+
+test('transient 429 then 200 recovers WITHIN the run: sub-batch collected, no isolation, no fail-loud (composes with #19)', () => {
+  // The batch PATCH 429s once, then 200s on the retry — airtableFetchWithRetry_ absorbs the blip
+  // inside the same attemptUpsert_ call, so the sub-batch is make-collected, the run does NOT
+  // fail-loud and NEVER enters per-record isolation (#19's contracts see only the recovered 200).
+  // n=5 = one sub-batch; upsertCode keys on the global fetch-call index so the first fetch is 429
+  // and the retry is 200. Mutation lives in the next test (backoffMs:[] -> the 429 fails the run).
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 429 : 200) });
+  assert.equal(r.collected.length, 5, 'all 5 recovered and make-collected after the retry');
+  assert.equal(r.failed.length, 0, 'nothing make-failed — a transient never quarantines');
+  assert.ok(!r.threw, 'a recovered transient does NOT fail the run');
+  assert.equal(r.upserts.length, 2, 'one 429 then one 200 — exactly one retry');
+  assert.ok(!r.logs.some(l => /individually to isolate/.test(l)), 'never entered write-side isolation');
+});
+
+test('mutation: retries disabled (backoffMs:[]) — the SAME 429 fails loud, sub-batch left uncollected', () => {
+  // Identical to the recovery test but backoffMs:[] makes the wrapper take a single attempt, so the
+  // 429 is never retried -> classified transient -> the whole sub-batch is left uncollected and the
+  // run ends Failed. This proves the retry above is the load-bearing recovery (CLAUDE.md: a guard
+  // around a tested predicate needs its own mutation check).
+  const r = runCollector({ n: 5, budgetMs: 1e9, getDelta: 1, upsertCode: (i) => (i === 0 ? 429 : 200), backoffMs: [], expectThrow: true });
+  assert.equal(r.collected.length, 0, 'with no retry the 429 leaves the sub-batch uncollected');
+  assert.equal(r.failed.length, 0, 'still never make-failed (transient, not poison)');
+  assert.ok(r.threw, 'the run ends Failed (no retry to recover the blip)');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 429: ERR 429$/, 'fail-loud summary names the 429');
+  assert.equal(r.upserts.length, 1, 'exactly one attempt — no retry');
 });
 
 test('DRY_RUN never quarantines a would-be write-poison: no upsert, no make-collected, no make-failed', () => {

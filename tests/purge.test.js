@@ -235,14 +235,35 @@ test('thresholds are runtime-tunable Script Properties; HIGH<=LOW falls back to 
   assert.ok(r.logs.some(l => l === 'Purge: count=650 high=700 — nothing to do.'));
 });
 
-test('any non-200 on list or delete throws (fail loud; no retry wrapper in this slice)', () => {
-  let r = runPurge({ total: 750, eligibleCount: 300, listCode: 503, expectThrow: true });
+test('a PERSISTENT transient (503) on list still fails loud — after the retry wrapper exhausts its backoff', () => {
+  // airtableListRecords_ now goes through airtableFetchWithRetry_, so a 503 is retried [1s,2s,4s]
+  // (sleep is a no-op under test) — 4 attempts on the first count page — before the FINAL 503
+  // trips the same fail-loud throw as before. A transient that persists past the retries behaves
+  // exactly as it used to: Failed execution -> failure email, never a silent partial list.
+  const r = runPurge({ total: 750, eligibleCount: 300, listCode: 503, expectThrow: true });
   assert.ok(r.threw);
   assert.match(r.threw.message, /Airtable list error 503: LIST ERR/);
+  assert.equal(r.calls.lists.length, 4, '1 + 3 retries on the count list before giving up');
   assert.equal(r.deletedIds.length, 0, 'a failed list never reaches the delete phase');
+});
 
-  r = runPurge({ total: 750, eligibleCount: 300, deleteCode: 422, expectThrow: true });
+test('a deterministic 4xx (422) on delete passes straight through the wrapper and throws on the first DELETE', () => {
+  // 422 is NOT transient, so airtableFetchWithRetry_ returns it on attempt 1 (no backoff burned on
+  // a validation reject) and airtableDeleteRecords_ throws — the first failed DELETE stops the run.
+  const r = runPurge({ total: 750, eligibleCount: 300, deleteCode: 422, expectThrow: true });
   assert.ok(r.threw);
   assert.match(r.threw.message, /Airtable delete error 422: DELETE ERR/);
-  assert.equal(r.calls.deletes.length, 1, 'the first failed DELETE stops the run (throw, not continue)');
+  assert.equal(r.calls.deletes.length, 1, 'a deterministic 4xx is not retried (throw, not continue)');
+});
+
+test('a PERSISTENT transient (503) on delete is retried, then fails loud on the FINAL non-200', () => {
+  // The purge fires deletes back-to-back at ~4 req/s, where a 429/5xx is the likeliest blip. A 503
+  // is a server-side reject that removed nothing, so it is safe to retry (unlike a transport throw,
+  // which DELETE never retries — retryOnThrow:false). Here the 503 persists, so the first batch is
+  // attempted 4 times (1 + 3 retries) and then the final 503 throws — fail-loud preserved.
+  const r = runPurge({ total: 750, eligibleCount: 300, deleteCode: 503, expectThrow: true });
+  assert.ok(r.threw);
+  assert.match(r.threw.message, /Airtable delete error 503: DELETE ERR/);
+  assert.equal(r.calls.deletes.length, 4, '1 + 3 retries on the first DELETE batch before giving up');
+  assert.ok(r.calls.deletes.every(b => b.length <= 10), 'each retried DELETE still respects the 10-id cap');
 });

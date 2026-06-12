@@ -42,6 +42,7 @@ const EXPORTS = [
   'parseIntProp_',
   'getIntProp_',
   'buildUpsertPayload_',
+  'airtableFetchWithRetry_', // transient-retry/backoff wrapper around the Airtable fetch
   'airtableUpsert_',
   // offline link cleanup (pure)
   'trimTrailingPunct_',
