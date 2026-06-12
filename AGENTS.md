@@ -82,6 +82,15 @@ The single most valuable habit: never report something you have not just verifie
 
 Every non-trivial PR ends with a brief retrospective — run it unprompted, don't wait to be asked. It is the **genuinely last step**: only after Codex's review is resolved _and_ the owner has approved, immediately before you execute the merge — not right after opening the PR, so it can capture lessons from the whole lifecycle including the review rounds. Capture what worked, what didn't, and what to change. Fold any lesson that generalizes into a durable convention **into this AGENTS.md, in the same PR**, so the change and the lesson it produced live together. Keep it proportional: a typo fix has nothing to capture; a long multi-round PR may yield several.
 
+## Codex-specific automations
+
+This section is Codex-specific and must **not** be mirrored into `CLAUDE.md`: it describes Codex app heartbeat/reminder behavior, not Claude Code workflow.
+
+- **Verify reminder scheduling, not just creation.** When Codex creates a heartbeat, reminder, follow-up, or automation, immediately verify the persisted scheduler state or app card shows a concrete future fire time (`next_run_at` or equivalent). A tool response that says the automation was created is not proof that it will wake the thread.
+- **Treat time-critical follow-ups as untrusted until proven.** For sub-hour waits or PR-review follow-ups, if the next fire time is missing, `NULL`, late, or cannot be inspected, tell the user immediately and use a fallback such as an active wait in the current session when feasible. After the due time, verify the external side effect, such as the PR comment, not merely that a reminder exists.
+- **Do not assume one-shot RRULE semantics.** A Codex heartbeat created for the PR #20 re-review with `FREQ=MINUTELY;INTERVAL=15;COUNT=1` was accepted, failed to fire near the requested time, then fired about 50 minutes late and scheduled another run. If a supposedly one-shot heartbeat remains `ACTIVE` after firing, delete or update the stale automation before it repeats.
+- **Disclose delayed or unmaterialized scheduler state.** If scheduler state shows `next_run_at = NULL`, no run artifact, or a fire time materialized only after later app/thread activity, report the wake as unproven or delayed rather than claiming the scheduler guaranteed it.
+
 ## Test fixtures from real captures
 
 - A fixture built from real user data (a captured email, an API response, a log) carries PII beyond the obvious literals. Per-recipient **opaque tokens** — unsubscribe hashes, click-tracking IDs, profile UUIDs — identify the user even when no name or address is in sight, and the identity is often **encoded inside a token** (e.g. a tracking JWT whose base64 payload contains the recipient's email). Grepping for the literal address/name is not enough: redact every per-recipient token, then verify by also searching for **encoded forms** (the base64 of the address, etc.), not just the plaintext. Normalise to LF so golden lengths stay platform-stable.
