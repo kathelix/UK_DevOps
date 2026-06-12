@@ -21,6 +21,8 @@ Work moves in **slices**, one role per agent:
 
 The merge *decision* remains the owner's — Claude Code only executes a merge the owner has approved on that PR; nothing auto-merges. This file is canonical; keep the same section in `AGENTS.md` so Codex reads identical rules.
 
+**Slice staging is the Implementer's to clean.** The Architect may stage a slice's inputs — the prompt, fixtures, a provenance/redaction README — as untracked files under `issue-drafts/<slice>/` (gitignored scratch, never on `main`, never committed by the Architect). The Implementer *consumes* that staging as part of the slice: **move** (not copy) fixtures into their committed home, fold the provenance into the PR body, then remove the `issue-drafts/<slice>/` dir so the working tree ends clean. Untracked staging survives `checkout`/`pull`/`merge` and shows in no diff, so nothing else clears it — leaving it is how scratch silently accumulates (PR #18).
+
 ## Documentation & decisions
 
 - If the project keeps design docs, treat them as the source of truth and keep code from getting ahead of them: decide, then spec, then implement. A common split is a stable high-level design (the "why"), a concrete technical spec (the "what" — versions, names, constraints), and a backlog (implementation status). Update the spec before writing the code it describes.
