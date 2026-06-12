@@ -5,6 +5,9 @@
 //   isTransientWriteFailure_ -> the transient(429/5xx)-vs-deterministic-4xx write classifier
 //   buildUpsertPayload_      -> the Airtable upsert request body (dedupe contract)
 //   airtableUpsert_          -> that the write is a PATCH upsert and returns the HTTP code
+//   airtableFetchWithRetry_  -> the transient-retry/backoff wrapper (429/5xx/transport throw with
+//                               [1s,2s,4s] backoff; 200 + deterministic 4xx pass through; the
+//                               budget guard; retryOnThrow:false for the non-idempotent DELETE)
 //
 // The LockService single-flight guard is intentionally not unit-tested here: it is
 // pure side effect around the unchanged batch loop and would need the whole run
@@ -13,6 +16,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadCollector } = require('./helpers/load-collector');
+
+// A UrlFetchApp.fetch stub driven by a script: each entry is either an HTTP status code (returns
+// a response with that code) or the string 'throw' (throws a transport exception). The last entry
+// repeats if the wrapper calls more times than the script length. `calls.n` records attempts.
+function scriptedFetch(script) {
+  const calls = { n: 0 };
+  const fetch = () => {
+    const step = script[Math.min(calls.n, script.length - 1)];
+    calls.n++;
+    if (step === 'throw') throw new Error('connection reset #' + calls.n);
+    return { getResponseCode: () => step, getContentText: () => 'body-' + step };
+  };
+  return { fetch, calls };
+}
 
 test('isOverRuntimeBudget_ is true only after the budget is exceeded (strict >)', () => {
   const { isOverRuntimeBudget_, CONFIG } = loadCollector();
@@ -122,17 +139,177 @@ test('airtableUpsert_ throws when AIRTABLE_TOKEN is unset (fail loud, no silent 
   assert.throws(() => gas.airtableUpsert_([{ fields: {} }]), /AIRTABLE_TOKEN is not set/);
 });
 
-test('airtableUpsert_ maps a UrlFetchApp transport throw to code 0 and captures it (transient, not a crash)', () => {
+test('airtableUpsert_ retries a transport throw, then maps the FINAL throw to code 0 (transient, not a crash)', () => {
   const gas = loadCollector();
+  let calls = 0;
   gas.setGlobals({
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
-    UrlFetchApp: { fetch: () => { throw new Error('Address unavailable'); } },
+    UrlFetchApp: { fetch: () => { calls++; throw new Error('Address unavailable'); } },
   });
   const failures = { count: 0, first: '' };
-  // A network/transport failure (fetch itself throws — NOT an HTTP error response) becomes
-  // code 0 so the caller classifies it transient; the token being present, this throw is the
-  // only thing the narrow catch swallows.
-  assert.equal(gas.airtableUpsert_([{ fields: {} }], failures), 0);
-  assert.equal(failures.count, 1);
+  // A network/transport failure (fetch itself throws — NOT an HTTP error response) is retried by
+  // airtableFetchWithRetry_; after every attempt throws it re-throws the last error, which
+  // airtableUpsert_'s narrow catch maps to code 0 so the caller classifies it transient. The
+  // token being present, this throw is the only thing the catch swallows. Inject a no-op sleep so
+  // the backoff doesn't real-sleep in CI.
+  assert.equal(gas.airtableUpsert_([{ fields: {} }], failures, { sleep: () => {} }), 0);
+  assert.equal(calls, 4, '4 attempts (1 + 3 retries) before giving up on the persistent transport failure');
+  assert.equal(failures.count, 1, 'recorded once for the final outcome, not once per retry');
   assert.match(failures.first, /^network error: Address unavailable$/);
+});
+
+test('airtableUpsert_ does NOT mask a post-fetch classification error as a transient — it propagates (Codex F1)', () => {
+  // The fetch SUCCEEDS (no transport throw) but the response's getResponseCode() throws — a
+  // response-shape/programming bug. It must surface with its own stack, NOT be retried and reported
+  // as code 0 / "network error" (the catch-scope regression Codex caught). Only a genuine transport
+  // failure that airtableFetchWithRetry_ retried to exhaustion (tagged isAirtableTransportFailure)
+  // is mapped to code 0; this is not that.
+  const gas = loadCollector();
+  let calls = 0;
+  gas.setGlobals({
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => 'tok' }) },
+    UrlFetchApp: { fetch: () => { calls++; return { getResponseCode: () => { throw new Error('classifier blew up'); }, getContentText: () => '' }; } },
+  });
+  const failures = { count: 0, first: '' };
+  assert.throws(
+    () => gas.airtableUpsert_([{ fields: {} }], failures, { sleep: () => {} }),
+    /classifier blew up/,
+    'a response-shape/classifier bug surfaces with its real stack, not code 0',
+  );
+  assert.equal(calls, 1, 'not retried as if it were a transient blip');
+  assert.equal(failures.count, 0, 'a programming error is never recorded as a transient failure');
+});
+
+// ---------- airtableFetchWithRetry_ (the transient-retry/backoff wrapper) ----------
+// Every test injects fetch + a recording sleep, so the backoff schedule is asserted without any
+// real sleep. The default backoff is CONFIG.RETRY_BACKOFF_MS; asserting the recorded sleeps also
+// pins that schedule. (sleeps is a Node-realm array of primitive ms — deepEqual is realm-safe.)
+
+test('airtableFetchWithRetry_: 429 then 200 -> one retry, returns 200, sleeps [1000]', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([429, 200]);
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) });
+  assert.equal(resp.getResponseCode(), 200, 'the retry recovered the blip');
+  assert.equal(calls.n, 2, 'one retry after the 429');
+  assert.deepEqual(sleeps, [1000], 'one backoff sleep (first step of the schedule)');
+});
+
+test('airtableFetchWithRetry_: 503 x4 -> 3 retries then returns the last 503, sleeps [1000,2000,4000]', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([503]); // repeats forever
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) });
+  assert.equal(resp.getResponseCode(), 503, 'gave up and handed back the last transient response');
+  assert.equal(calls.n, 4, '4 attempts = 1 + 3 retries');
+  assert.deepEqual(sleeps, [1000, 2000, 4000], 'the full backoff schedule, in order');
+});
+
+test('airtableFetchWithRetry_: 422 -> no retry, returns immediately, sleeps []', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([422, 200]); // a 200 is queued but must never be reached
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) });
+  assert.equal(resp.getResponseCode(), 422, 'a deterministic 4xx passes straight through');
+  assert.equal(calls.n, 1, 'never retried — retrying a validation/auth reject only burns budget');
+  assert.deepEqual(sleeps, []);
+});
+
+test('airtableFetchWithRetry_: 200 -> no retry, sleeps []', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([200]);
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) });
+  assert.equal(resp.getResponseCode(), 200);
+  assert.equal(calls.n, 1);
+  assert.deepEqual(sleeps, []);
+});
+
+test('airtableFetchWithRetry_: transport-throw then 200 -> retried, returns 200', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch(['throw', 200]);
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) });
+  assert.equal(resp.getResponseCode(), 200, 'a transport blip is transient and recovers on retry');
+  assert.equal(calls.n, 2);
+  assert.deepEqual(sleeps, [1000]);
+});
+
+test('airtableFetchWithRetry_: every attempt throws -> re-throws the LAST transport error', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch(['throw']); // always throws, no response ever obtained
+  const sleeps = [];
+  assert.throws(
+    () => airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) }),
+    /connection reset #4/, // the 4th attempt's error is the one surfaced
+  );
+  assert.equal(calls.n, 4, '4 attempts, all threw');
+  assert.deepEqual(sleeps, [1000, 2000, 4000], 'slept between every attempt');
+});
+
+test('airtableFetchWithRetry_: a post-fetch classification/response-shape error PROPAGATES — not retried, not masked (Codex F1)', () => {
+  // The fetch returns a response, but getResponseCode() throws (a response-shape/programming bug).
+  // Because only fetchFn is inside the retry try/catch, this throw escapes the wrapper unretried
+  // and untagged — it is NOT a transport blip, so it must surface, not become a transient sentinel.
+  const { airtableFetchWithRetry_ } = loadCollector();
+  let calls = 0;
+  const fetch = () => { calls++; return { getResponseCode: () => { throw new Error('classifier blew up'); } }; };
+  const sleeps = [];
+  assert.throws(
+    () => airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms) }),
+    /classifier blew up/,
+    'a getResponseCode/classification throw propagates with its own stack',
+  );
+  assert.equal(calls, 1, 'NOT retried — only a transport throw or a 429/5xx is transient');
+  assert.deepEqual(sleeps, [], 'never slept on a programming error');
+});
+
+test('airtableFetchWithRetry_ budget guard: a clock past budget returns the last code WITHOUT sleeping (mutation: drop the guard -> it sleeps)', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([429]); // would retry to exhaustion without the guard
+  const sleeps = [];
+  // isOverBudget always true: the next sleep would cross MAX_RUNTIME_MS, so the wrapper stops.
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms), isOverBudget: () => true });
+  assert.equal(resp.getResponseCode(), 429, 'hands back the last transient code rather than sleep past the budget');
+  assert.equal(calls.n, 1, 'no retry once the budget guard trips');
+  assert.deepEqual(sleeps, [], 'NEVER slept — removing the budget check flips this to [1000,2000,4000]');
+});
+
+test('airtableFetchWithRetry_ budget guard mirrors the collector wiring (now+nextSleep vs MAX_RUNTIME_MS)', () => {
+  // Pins the exact predicate the collector threads: isOverRuntimeBudget_(startMs, now()+ms). With
+  // the clock 100ms below budget, the next 1000ms backoff WOULD cross it, so no sleep happens —
+  // proving the guard accounts for the prospective sleep, not just "are we already over".
+  const { airtableFetchWithRetry_, isOverRuntimeBudget_, CONFIG } = loadCollector();
+  const { fetch, calls } = scriptedFetch([429]);
+  const sleeps = [];
+  const startMs = 0;
+  const nowMs = CONFIG.MAX_RUNTIME_MS - 100; // under budget now, but a 1000ms sleep crosses it
+  const isOverBudget = (ms) => isOverRuntimeBudget_(startMs, nowMs + ms);
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms), isOverBudget });
+  assert.equal(resp.getResponseCode(), 429);
+  assert.equal(calls.n, 1);
+  assert.deepEqual(sleeps, [], 'the prospective sleep would cross the 5-min budget, so it does not sleep');
+});
+
+test('airtableFetchWithRetry_ retryOnThrow:false (DELETE) — a transport throw propagates on attempt 1, never retried', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch(['throw', 200]); // would recover IF it retried — it must not
+  const sleeps = [];
+  assert.throws(
+    () => airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms), retryOnThrow: false }),
+    /connection reset/,
+    'DELETE is not idempotent: a re-delete of an already-gone id 404s, so a transport throw must not retry',
+  );
+  assert.equal(calls.n, 1, 'no retry — the throw surfaces immediately (pre-wrapper DELETE behaviour)');
+  assert.deepEqual(sleeps, []);
+});
+
+test('airtableFetchWithRetry_ retryOnThrow:false still retries 429/5xx (a server reject removed nothing)', () => {
+  const { airtableFetchWithRetry_ } = loadCollector();
+  const { fetch, calls } = scriptedFetch([429, 200]);
+  const sleeps = [];
+  const resp = airtableFetchWithRetry_('u', {}, { fetch, sleep: (ms) => sleeps.push(ms), retryOnThrow: false });
+  assert.equal(resp.getResponseCode(), 200, 'a 429 is safe to retry even for DELETE — the delete did not apply');
+  assert.equal(calls.n, 2);
+  assert.deepEqual(sleeps, [1000]);
 });

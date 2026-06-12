@@ -46,6 +46,15 @@ const CONFIG = {
   // to [1, 10] (clampSubBatchSize_): >10 exceeds Airtable's records/request cap, <1 would
   // stall the loop.
   SUB_BATCH_SIZE: 5,
+  // Transient-failure backoff schedule (ms) for the Airtable fetch retry wrapper
+  // (airtableFetchWithRetry_): one entry per retry, so [1000, 2000, 4000] => 3 retries /
+  // 4 attempts total. Retries fire ONLY on a transient outcome — HTTP 429, any 5xx, or a
+  // UrlFetchApp transport throw (the last only where a re-send is safe; the non-idempotent
+  // DELETE opts out). A 200 or a deterministic 4xx (400/401/404/422) passes straight
+  // through. On the collector path the wrapper skips a sleep that would cross MAX_RUNTIME_MS.
+  // A constant (not a Script Property) is enough — tune here and redeploy if Airtable's
+  // limits change. Worst-case added latency per call: sum = 7s.
+  RETRY_BACKOFF_MS: [1000, 2000, 4000],
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
   // Upsert merge key (Gmail message id): re-collecting the same message updates
@@ -184,6 +193,11 @@ function collectJobEmailsLocked_() {
   if (subBatchSize !== CONFIG.SUB_BATCH_SIZE) {
     Logger.log('CONFIG.SUB_BATCH_SIZE=%s is out of range [1,10]; using %s.', String(CONFIG.SUB_BATCH_SIZE), String(subBatchSize));
   }
+  // Budget predicate for the upsert retry wrapper (airtableFetchWithRetry_): given the next
+  // backoff sleep's duration, true if sleeping it would push the run past MAX_RUNTIME_MS. The
+  // wrapper then stops retrying and hands back the last code rather than risk a hard ~6-min
+  // kill mid-write — the deferred sub-batch retries next run (idempotent MessageId upsert).
+  const upsertRetryOpts = { isOverBudget: function (ms) { return isOverRuntimeBudget_(startMs, Date.now() + ms); } };
   for (let start = 0; start < messageRefs.length; start += subBatchSize) {
     if (isOverRuntimeBudget_(startMs, Date.now())) {
       Logger.log('Runtime budget (%s ms) exceeded; deferring %s message(s) to next run.',
@@ -235,7 +249,7 @@ function collectJobEmailsLocked_() {
     // label as collected ONLY if the upsert succeeded (same ordering as Make: row ->
     // label). The MessageId upsert makes a re-collected message update its row instead
     // of duplicating it, so the write-then-label ordering is crash-safe.
-    const batch = attemptUpsert_(records.map(r => ({ fields: r.fields })));
+    const batch = attemptUpsert_(records.map(r => ({ fields: r.fields })), upsertRetryOpts);
     if (batch.kind === 'ok') {
       for (const r of records) {
         Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
@@ -255,13 +269,13 @@ function collectJobEmailsLocked_() {
 
     // batch.kind === 'poison': a deterministic 4xx rejected the whole PATCH (Airtable batch
     // writes are all-or-nothing), so >=1 record is a record-specific reject. Re-send each
-    // record on its OWN PATCH — through airtableUpsert_ (via attemptUpsert_), so the deferred
-    // retry/backoff wrapper composes later — to tell a poison record (4xx) apart from a
+    // record on its OWN PATCH — through airtableUpsert_ (via attemptUpsert_), so the transient
+    // retry/backoff wrapper composes here too — to tell a poison record (4xx) apart from a
     // healthy sibling (200) or a transient blip (429/5xx/throw). This isolates poison from
     // its good siblings on the WRITE side, mirroring the per-message read-side isolation above.
     Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the reject.',
       String(batch.code), String(start), String(records.length));
-    const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }]) }; });
+    const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }], upsertRetryOpts) }; });
     // Quarantine guard (prevents mass-quarantine on a systemic error): only make-failed a
     // poison record if >=1 sibling upserted 200 — proof the endpoint/auth/schema is healthy
     // and the 4xx is record-specific. Zero successes => systemic (bad auth, wrong endpoint,
@@ -1081,36 +1095,107 @@ function airtableToken_() {
   return token;
 }
 
+// ONE retry/backoff wrapper around the Airtable UrlFetchApp.fetch call — the three Airtable
+// functions (airtableUpsert_, airtableListRecords_, airtableDeleteRecords_) call this instead
+// of a bare fetch, so each keeps its existing 200-vs-non-200 handling on the response we hand
+// back. Retries ONLY on a transient outcome; passes a 200 or a deterministic 4xx straight
+// through (retrying a validation/auth reject only burns budget). Transient =
+//   - HTTP 429 / any 5xx (isTransientWriteFailure_), or
+//   - a thrown UrlFetchApp transport exception (DNS/timeout/reset) — BUT only when the caller
+//     allows it (opts.retryOnThrow !== false). A re-send after a transport throw can't rule out
+//     that the FIRST attempt actually landed, so a non-idempotent caller (DELETE: a re-delete of
+//     an already-deleted id 404s — verified against the Airtable API) sets retryOnThrow:false
+//     and the throw propagates on the first attempt, exactly as before this wrapper existed.
+// Backoff is CONFIG.RETRY_BACKOFF_MS ([1s, 2s, 4s] => 3 retries). After the retries are
+// exhausted it returns the LAST response (so the caller's non-200 handling still fires), or
+// re-throws the LAST transport error if EVERY attempt threw (no response was ever obtained).
+// opts (all optional, for injection/tests):
+//   sleep(ms)        - defaults to Utilities.sleep; injected as a recorder in unit tests (no real sleep in CI)
+//   fetch(url,params)- defaults to UrlFetchApp.fetch; injected to drive a coded response sequence
+//   backoffMs        - defaults to CONFIG.RETRY_BACKOFF_MS
+//   isOverBudget(ms) - optional predicate; given the NEXT sleep's duration, returns true if that
+//                      sleep would cross the run's MAX_RUNTIME_MS budget. When true we stop and
+//                      hand back the last response/throw rather than risk a hard ~6-min kill
+//                      mid-write. The collector wires (ms) => isOverRuntimeBudget_(startMs, now()+ms);
+//                      the purge omits it (bounded, short worst-case backoff — see TECH_DESIGN §2).
+//   retryOnThrow     - default true; false makes a transport throw propagate without a retry.
+function airtableFetchWithRetry_(url, params, opts) {
+  opts = opts || {};
+  const backoffs = opts.backoffMs || CONFIG.RETRY_BACKOFF_MS;
+  const sleep = opts.sleep || function (ms) { Utilities.sleep(ms); };
+  const fetchFn = opts.fetch || function (u, p) { return UrlFetchApp.fetch(u, p); };
+  const isOverBudget = opts.isOverBudget || null;
+  const retryOnThrow = opts.retryOnThrow !== false; // default: retry transport throws too
+
+  let lastResp = null; // the most recent transient HTTP response (429/5xx)
+  let lastErr = null;  // the most recent transport throw (only ever a fetchFn failure)
+  for (let attempt = 0; ; attempt++) {
+    let resp = null;
+    try {
+      resp = fetchFn(url, params); // ONLY the transport call is guarded (Codex F1 / PR #19 F-P2)
+    } catch (e) {
+      if (!retryOnThrow) throw e; // non-idempotent caller: a prior success can't be ruled out
+      lastErr = e;                // retryable transport throw: remember it, then back off below
+    }
+    if (resp !== null) {
+      // Classify the response OUTSIDE the catch: a throw from getResponseCode()/the classifier is
+      // a programming or response-shape bug, NOT a transport blip — letting it propagate here (with
+      // its own stack) keeps it from being retried and masked as a transient sentinel (Codex F1).
+      // 200 or a deterministic 4xx (400/401/404/422): not transient — hand it straight back.
+      if (!isTransientWriteFailure_(resp.getResponseCode())) return resp;
+      lastResp = resp; // a transient 429/5xx: remember it in case the retries are exhausted
+    }
+    if (attempt >= backoffs.length) break; // retries exhausted
+    const nextSleepMs = backoffs[attempt];
+    if (isOverBudget && isOverBudget(nextSleepMs)) break; // the next sleep would cross the budget
+    sleep(nextSleepMs);
+  }
+  if (lastResp) return lastResp; // exhausted with a transient response: the caller classifies it
+  // Every attempt threw a transport error (lastErr only ever holds a fetchFn failure). Mark it so a
+  // caller that maps transport failures to a sentinel (airtableUpsert_ → code 0) can tell a real
+  // transport failure apart from a programming error and translate ONLY the former (Codex F1).
+  if (lastErr && typeof lastErr === 'object') lastErr.isAirtableTransportFailure = true;
+  throw lastErr; // every attempt threw: re-throw the last transport error
+}
+
 // Upsert a batch (<=10 records) into Airtable, merging on CONFIG.DEDUPE_FIELD so a
 // re-collected message updates its existing row instead of creating a duplicate.
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
-// Returns the numeric HTTP response code (200 = success), or **0** when `UrlFetchApp.fetch`
-// itself threw — a transport-level failure (DNS/timeout/connection), which the caller treats
-// as transient. The caller branches on the code: 200 → label make-collected, 0 or 429/5xx
-// (isTransientWriteFailure_) → transient retry next run, any other 4xx → deterministic reject
-// the sub-batch loop isolates per-record. On a non-200/transport failure the error is logged
-// and `failures` (optional, the run's fail-loudly accumulator) has its count incremented and
-// first error captured. The token is resolved BEFORE the fetch try, OUTSIDE the catch: a
-// missing `AIRTABLE_TOKEN` (or any setup/code error here) is NOT a transport blip and must
-// fail the run fast with its own stack, never be masked as a synthetic transient (Codex F-P2).
-function airtableUpsert_(records, failures) {
+// Returns the numeric HTTP response code (200 = success), or **0** when the fetch threw — a
+// transport-level failure (DNS/timeout/connection), which the caller treats as transient. The
+// caller branches on the code: 200 → label make-collected, 0 or 429/5xx (isTransientWriteFailure_)
+// → transient retry next run, any other 4xx → deterministic reject the sub-batch loop isolates
+// per-record. On a non-200/transport failure the error is logged and `failures` (optional, the
+// run's fail-loudly accumulator) has its count incremented and first error captured. The token is
+// resolved BEFORE the fetch try, OUTSIDE the catch: a missing `AIRTABLE_TOKEN` (or any setup/code
+// error here) is NOT a transport blip and must fail the run fast with its own stack, never be
+// masked as a synthetic transient (Codex F-P2). The fetch goes through airtableFetchWithRetry_,
+// which absorbs a TRANSIENT blip (429/5xx/transport throw) with [1s,2s,4s] backoff within the run;
+// the code/throw seen here is the FINAL one after retries, so a transient that persists still
+// classifies transient exactly as before. `opts` (optional) is the wrapper's injection bag — the
+// collector threads its MAX_RUNTIME_MS budget predicate so a backoff sleep can't risk a hard kill.
+function airtableUpsert_(records, failures, opts) {
   const token = airtableToken_();
   const payload = JSON.stringify(buildUpsertPayload_(records));
   let resp;
   try {
-    resp = UrlFetchApp.fetch(airtableUrl_(), {
+    resp = airtableFetchWithRetry_(airtableUrl_(), {
       method: 'patch', // upsert is PATCH-only; records without an id match on fieldsToMergeOn
       contentType: 'application/json',
       headers: { Authorization: 'Bearer ' + token },
       payload: payload,
       muteHttpExceptions: true,
-    });
+    }, opts);
   } catch (e) {
-    // ONLY a UrlFetchApp transport failure lands here (an HTTP error response does not throw —
-    // muteHttpExceptions turns it into a normal response). Report it as code 0 so the caller
-    // classifies it transient (retry next run) and record it. The narrow try keeps setup/code
-    // errors above (token, payload build) failing fast with their own stack.
-    const msg = 'network error: ' + ((e && e.message) ? e.message : e);
+    // Map to code 0 (transient) ONLY a genuine UrlFetchApp transport failure that
+    // airtableFetchWithRetry_ retried to exhaustion — it tags that re-throw
+    // `isAirtableTransportFailure`. Anything else the wrapper throws — a post-fetch
+    // classification/response-shape error (`getResponseCode()` etc.) — is a programming bug, NOT a
+    // transport blip, and must fail the run fast with its own stack rather than be masked as a
+    // synthetic transient (Codex F1; the PR #19 F-P2 catch-scope lesson). Token/payload errors are
+    // resolved ABOVE the try and never reach here at all.
+    if (!e || !e.isAirtableTransportFailure) throw e;
+    const msg = 'network error: ' + (e.message ? e.message : e);
     Logger.log('Airtable upsert transport failure: %s', msg);
     if (failures) { failures.count++; if (!failures.first) failures.first = msg; }
     return 0;
@@ -1137,9 +1222,11 @@ function airtableUpsert_(records, failures) {
 // fires too). NO try/catch here on purpose: airtableUpsert_ resolves the token (fail fast on a
 // config error) and maps a transport failure to code 0 itself, so a missing AIRTABLE_TOKEN or a
 // programming error propagates with its original stack instead of being masked transient (F-P2).
-function attemptUpsert_(records) {
+// `opts` is passed straight through to airtableUpsert_ → airtableFetchWithRetry_ (the run's
+// MAX_RUNTIME_MS budget predicate for the backoff); the classification contract is unchanged.
+function attemptUpsert_(records, opts) {
   const probe = { count: 0, first: '' };
-  const code = airtableUpsert_(records, probe);
+  const code = airtableUpsert_(records, probe, opts);
   if (code === 200) return { kind: 'ok', code: code, first: '' };
   if (code === 0 || isTransientWriteFailure_(code)) return { kind: 'transient', code: code, first: probe.first };
   return { kind: 'poison', code: code, first: probe.first };
@@ -1225,7 +1312,7 @@ function purgeRawEmailsLocked_() {
 
   let deleted = 0;
   for (const batch of chunk_(plan, CONFIG.PURGE_DELETE_BATCH)) {
-    airtableDeleteRecords_(batch); // throws on non-200 (no retry wrapper in this slice)
+    airtableDeleteRecords_(batch); // retries 429/5xx with backoff, then throws on a final non-200
     deleted += batch.length;
     // Pace the delete burst under Airtable's 5 req/s/base rate limit: a full purge is
     // dozens of back-to-back DELETEs, and a 429 would fail the run mid-plan.
@@ -1275,13 +1362,17 @@ function purgeEligibilityFormula_() {
 // GET all records matching `query` (a pre-encoded query string), following Airtable's
 // offset pagination to exhaustion. Returns the raw record objects. Purge contract:
 // any non-200 throws (Failed execution -> failure email), never a silent partial list.
+// Each page GET goes through airtableFetchWithRetry_: a GET is read-only/idempotent, so a
+// transient blip (429/5xx/transport throw) is retried with [1s,2s,4s] backoff before the
+// FINAL non-200 (or re-thrown transport error) trips the fail-loud throw below. No budget
+// predicate — this runs only on the purge path, whose worst-case backoff is short (§2).
 function airtableListRecords_(query) {
   const token = airtableToken_();
   const records = [];
   let offset = null;
   do {
     const url = airtableUrl_() + '?' + query + (offset ? '&offset=' + encodeURIComponent(offset) : '');
-    const resp = UrlFetchApp.fetch(url, {
+    const resp = airtableFetchWithRetry_(url, {
       method: 'get',
       headers: { Authorization: 'Bearer ' + token },
       muteHttpExceptions: true,
@@ -1298,14 +1389,23 @@ function airtableListRecords_(query) {
 
 // DELETE one batch of record ids — at most PURGE_DELETE_BATCH (10), the REST API's
 // records-per-DELETE cap. Throws on any non-200 (same fail-loud contract as the list).
+// Goes through airtableFetchWithRetry_ with retryOnThrow:FALSE — DELETE is NOT idempotent:
+// re-deleting an already-gone id returns 404 MODEL_ID_NOT_FOUND (verified against the Airtable
+// API), so after a transport throw (where a prior success can't be ruled out) we must NOT
+// re-send, or a delete that actually landed would 404 the retry and fail the run spuriously.
+// A 429/5xx, by contrast, is a server-side reject the record was NOT removed by, so it is safe
+// to retry — and the purge fires deletes back-to-back at ~4 req/s, where a 429 is the likeliest
+// blip. So: retry 429/5xx with backoff, propagate a transport throw on the first attempt (the
+// pre-wrapper behaviour). No budget predicate — the nightly purge is non-critical and self-
+// correcting, and its per-run delete volume keeps the worst-case backoff short (§2).
 function airtableDeleteRecords_(ids) {
   const token = airtableToken_();
   const url = airtableUrl_() + '?' + ids.map(id => 'records%5B%5D=' + encodeURIComponent(id)).join('&');
-  const resp = UrlFetchApp.fetch(url, {
+  const resp = airtableFetchWithRetry_(url, {
     method: 'delete',
     headers: { Authorization: 'Bearer ' + token },
     muteHttpExceptions: true,
-  });
+  }, { retryOnThrow: false });
   if (resp.getResponseCode() !== 200) {
     throw new Error('Airtable delete error ' + resp.getResponseCode() + ': ' + resp.getContentText().slice(0, 500));
   }

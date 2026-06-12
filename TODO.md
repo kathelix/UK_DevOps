@@ -25,7 +25,8 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 
 ### Reliability
 
-- [ ] **Retry wrapper with exponential backoff** (1s/2s/4s, then fail cleanly) for external calls: Airtable writes, Gmail API reads, any `UrlFetchApp`.
+- [x] **Retry wrapper with exponential backoff** (1s/2s/4s, then fail cleanly) for Airtable calls — `airtableFetchWithRetry_` wraps upsert (write), list + delete (purge); transient (`429`/`5xx`/transport throw) only, budget-aware on the collector path, deletes opt out of transport-throw retry (non-idempotent). TECH_DESIGN §2.
+- [ ] **Gmail-read retry** (`Messages.get`/`list`) — deferred from the Airtable retry slice: the per-message `get` already lives inside the read-side poison-isolation try/catch, so wrapping it is a separate change with its own failure semantics.
 
 ## Airtable
 
