@@ -47,15 +47,18 @@ test('each alternative strips what it targets (focused cases)', () => {
 // Golden corpus: real captured job-alert emails from a spread of senders (sanitized of PII,
 // LF-only), pinning CLEAN_REGEX behaviour across real-world HTML variety — table-heavy
 // (reed, nijobs), div-heavy (ziprecruiter), Marketing-Cloud (welcometothejungle), digest
-// (joblookup, cv-library, jobs4), and whatjobs (an unclosed outer table/tr/td chain — issue #14
-// fixtures). Each entry is [rawLength, cleanLength]. If CLEAN_REGEX or a fixture changes
-// intentionally, eyeball the diff and update the numbers in the SAME commit.
+// (joblookup, cv-library, jobs4), whatjobs (an unclosed outer table/tr/td chain — issue #14
+// fixtures), and the footer-map-extension pair milkround (StepStone family, shares nijobs'
+// footer) + procontractjobs (SendGrid). Each entry is [rawLength, cleanLength]. If CLEAN_REGEX
+// or a fixture changes intentionally, eyeball the diff and update the numbers in the SAME commit.
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 const GOLDEN = {
   'email-cv-library.html': [88696, 18008],
   'email-jobs4.html': [25367, 5577],
   'email-joblookup.html': [54676, 11866],
+  'email-milkround.html': [37389, 15719],
   'email-nijobs.html': [77060, 18085],
+  'email-procontractjobs.html': [60992, 45086],
   'email-reed.html': [57460, 7576],
   'email-welcometothejungle.html': [52858, 5104],
   'email-whatjobs.html': [17169, 4252],

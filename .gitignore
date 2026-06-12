@@ -1,2 +1,5 @@
 node_modules/
 .DS_Store
+
+# Per-slice Architect→Implementer staging (ephemeral; Implementer removes when done)
+issue-drafts/

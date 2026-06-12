@@ -33,7 +33,8 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden regression
   over a **corpus** of real captured job-alert emails spanning a spread of senders / HTML
   styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
-  ziprecruiter, jobs4, whatjobs — sanitized of PII, LF-only). A manifest check asserts every
+  ziprecruiter, jobs4, whatjobs, milkround, procontractjobs — sanitized of PII, LF-only). A
+  manifest check asserts every
   `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
   (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
   regex in isolation, not the link-cleanup stage that runs before it.
