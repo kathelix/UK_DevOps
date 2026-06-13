@@ -42,6 +42,7 @@ session can't push to main, and it never merges.
 ```bash
 scripts/dispatch-slice.sh <slice-name>             # branch comes from the slice spec
 scripts/dispatch-slice.sh <slice-name> fix/hotfix  # optional one-off branch override
+scripts/dispatch-slice.sh --dry-run <slice-name>   # preview the resolved branch; do nothing
 ```
 
 Author the spec from `docs/SLICE_PROMPT_TEMPLATE.md` into
@@ -56,8 +57,15 @@ the work type, so chores/fixes/docs aren't all `feature/`:
 | `<!-- type: fix -->`               | `fix/<slice>`     |
 | (neither)                          | `feature/<slice>` |
 
-The optional CLI arg overrides both. The resolved name is validated with
-`git check-ref-format`, so a typo'd prefix fails fast instead of creating a junk branch.
+The optional CLI arg overrides both. The prefix is a **naming convention, not an
+enforced allow-list**: the dispatcher validates the resolved name with
+`git check-ref-format` (rejecting a structurally-invalid ref), but does **not** check
+the prefix against the work-type set — a typo like `<!-- type: fxi -->` resolves to
+`fxi/<slice>` rather than failing. Preview the resolved branch before a real run with
+`scripts/dispatch-slice.sh --dry-run <slice-name>`. The safety rails keep a wrong
+prefix cheap: the dispatcher refuses a pre-existing branch, only ever cuts from
+`origin/main`, never merges, and the branch is GUI-visible — so a mistaken
+`fxi/<slice>` is spotted and deleted, never silently merged.
 
 ## Fixtures (Pattern A)
 

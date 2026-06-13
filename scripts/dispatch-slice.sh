@@ -17,7 +17,8 @@
 # The cloud session owns implement → move fixtures into their home → open the PR.
 # It NEVER merges (merge is the owner's decision — CLAUDE.md → GitHub PR hygiene).
 #
-# Usage:  scripts/dispatch-slice.sh <slice-name> [branch-override]
+# Usage:  scripts/dispatch-slice.sh [--dry-run] <slice-name> [branch-override]
+#   --dry-run (-n): resolve + print the branch, then stop before any git/cloud op.
 #
 # Branch naming is the Architect's call, declared in the slice spec
 # (issue-drafts/<slice>/slice-prompt-<slice>.md) so chores/fixes/docs aren't all "feature/":
@@ -36,8 +37,10 @@ die()  { printf '\033[31m✖ %s\033[0m\n' "$*" >&2; exit 1; }
 info() { printf '\033[36m▶ %s\033[0m\n' "$*" >&2; }
 
 # --- args -------------------------------------------------------------------
+DRY_RUN=0
+if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "-n" ]; then DRY_RUN=1; shift; fi
 SLICE="${1:-}"
-[ -n "$SLICE" ] || die "usage: scripts/dispatch-slice.sh <slice-name> [branch-name]"
+[ -n "$SLICE" ] || die "usage: scripts/dispatch-slice.sh [--dry-run] <slice-name> [branch-name]"
 CLI_BRANCH="${2:-}"          # optional override; normally the branch comes from the spec
 SLICE_DIR="issue-drafts/$SLICE"
 PROMPT_FILE="$SLICE_DIR/slice-prompt-$SLICE.md"
@@ -83,6 +86,14 @@ fi
 git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 \
   || die "resolved branch '$BRANCH' is not a valid git branch name — fix the <!-- branch:/type: --> line in $PROMPT_FILE"
 info "branch: $BRANCH  ($BR_SRC)"
+
+# --dry-run: report the resolved branch + spec and stop BEFORE any side effect
+# (no fetch, no branch, no push, no cloud run). The prefix is a naming convention,
+# not an enforced allow-list — preview here to catch a wrong/typo'd prefix yourself.
+if [ "$DRY_RUN" -eq 1 ]; then
+  info "dry-run: would dispatch '$SLICE' on '$BRANCH' (spec: $PROMPT_FILE). No branch created, nothing pushed."
+  exit 0
+fi
 
 # Clean tree (tracked files only; gitignored issue-drafts/ staging doesn't count).
 if ! git diff --quiet || ! git diff --cached --quiet; then
