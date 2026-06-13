@@ -9,29 +9,38 @@
 # prompt-box title may only refresh on the next resume (the record is written out-of-band
 # rather than through the interactive rename path).
 #
-# Gating & PR-number source: settings.json fires this only on `Bash(gh pr create*)` (the
-# `if` filter is honored). As defense-in-depth the script ALSO self-gates on the command,
-# and — crucially — reads the new PR number from the command's STDOUT only (where
-# `gh pr create` prints the .../pull/N URL), NOT the whole payload. The old version grepped
-# the whole payload, so a `--title`/`--body` that merely mentioned another `pull/N` (which
-# lives in tool_input.command) could hijack the number; stdout-only avoids that.
+# Scope & PR number: settings.json scopes this hook with `if: "Bash(gh pr create*)"`
+# (verified honored); the script mirrors that as a self-gate. It reads the new PR number
+# from the command's STDOUT only (where `gh pr create` prints the .../pull/N URL), NOT the
+# whole payload — the old version grepped the whole payload, so a `--title`/`--body` that
+# merely mentioned another `pull/N` (which lives in tool_input.command) could hijack the
+# number.
+#
+# CONTRACT / known limitation: the hook trusts the `gh pr create*` scope to mean "a PR was
+# created" — it does NOT independently prove that. A contrived command that begins with
+# `gh pr create` yet prints some OTHER PR's URL to stdout (e.g. `gh pr create --help;
+# gh pr view 9`) would mis-set the title. That is an accepted trade for a convenience
+# session-namer: hard prevention would need fragile shell-parsing of chaining/quoting and
+# would risk NOT renaming on a legit `gh pr create` whose --title/--body contains `;`/`|`/`&`
+# (a silent miss is worse here than the rare contrived mislabel). The settings filter is the
+# real gate; this script just extracts the number and writes the title.
 set -u
 payload="$(cat)"
 
-# Self-gate: act only on an actual `gh pr create` invocation — robust even if the
-# settings.json `if` filter is ever removed or behaves differently across CLI versions.
+# Self-gate, mirroring the settings `if: "Bash(gh pr create*)"` scope (also covers the case
+# where that filter is ever removed). This scopes to `gh pr create` *commands*; per the
+# contract note above it does not by itself prove a PR was created.
 cmd="$(printf '%s' "$payload" | jq -r '.tool_input.command // empty' 2>/dev/null)"
 case "$cmd" in
-  *"gh pr create"*) ;;                 # a create invocation -> proceed
+  "gh pr create"*) ;;                  # a `gh pr create` invocation -> proceed
   *) exit 0 ;;                          # anything else -> silent
 esac
 
-# `gh pr create` prints the new PR URL (.../pull/N) to STDOUT. Read only stdout, so a
-# pull/N inside --title/--body can't hijack the number, and a non-create command that
-# merely prints a pull URL can't trigger a rename.
+# `gh pr create` prints the new PR URL (.../pull/N) to STDOUT. Read only stdout (not the
+# whole payload), so a pull/N inside --title/--body can't hijack the number.
 out="$(printf '%s' "$payload" | jq -r '.tool_response.stdout // empty' 2>/dev/null)"
 num="$(printf '%s' "$out" | grep -oE 'pull/[0-9]+' | head -1 | grep -oE '[0-9]+' | head -1)"
-[ -n "${num:-}" ] || exit 0            # no PR number (create failed / --dry-run / --web) -> silent
+[ -n "${num:-}" ] || exit 0            # no PR URL on stdout (--help / --web / failed) -> silent
 
 sid="$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)"
 [ -n "${sid:-}" ] || exit 0
