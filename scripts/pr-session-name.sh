@@ -3,21 +3,42 @@
 # display title, accumulating multiple PRs comma-separated (PR#20 -> PR#20, PR#23).
 #
 # It appends the SAME record the interactive `/rename` command writes
-# ({"type":"custom-title","customTitle":"...","sessionId":"..."}) to the session journal —
+# ({"type":"custom-title","customTitle":"...","sessionId":"..."}) to the session journal -
 # the only programmatic way to rename a live session (no `claude` subcommand exists).
 # The persisted name shows in the /resume picker, session list, and --from-pr; the live
 # prompt-box title may only refresh on the next resume (the record is written out-of-band
 # rather than through the interactive rename path).
 #
+# INSTALL (so Claude Code runs it automatically):
+#   1. Copy this file into ~/.claude/hooks/ and make it executable:
+#        cp scripts/pr-session-name.sh ~/.claude/hooks/ && chmod +x ~/.claude/hooks/pr-session-name.sh
+#   2. Register it as a PostToolUse hook in ~/.claude/settings.json (user-global, so it
+#      applies in every repo). Merge this under the top-level "hooks" key:
+#        "hooks": {
+#          "PostToolUse": [
+#            { "matcher": "Bash",
+#              "hooks": [
+#                { "type": "command",
+#                  "command": "$HOME/.claude/hooks/pr-session-name.sh",
+#                  "if": "Bash(gh pr create*)",
+#                  "statusMessage": "Updating session name with PR number" }
+#              ] }
+#          ]
+#        }
+#   3. Needs `jq` on PATH. Takes effect on the next Claude Code session (restart to reload
+#      settings). This repo keeps a vendored copy at scripts/pr-session-name.sh for review;
+#      the installed copy under ~/.claude/hooks/ is what actually runs - keep the two in sync
+#      (or symlink ~/.claude/hooks/pr-session-name.sh to this file).
+#
 # Scope & PR number: settings.json scopes this hook with `if: "Bash(gh pr create*)"`
 # (verified honored); the script mirrors that as a self-gate. It reads the new PR number
 # from the command's STDOUT only (where `gh pr create` prints the .../pull/N URL), NOT the
-# whole payload — the old version grepped the whole payload, so a `--title`/`--body` that
+# whole payload - the old version grepped the whole payload, so a `--title`/`--body` that
 # merely mentioned another `pull/N` (which lives in tool_input.command) could hijack the
 # number.
 #
 # CONTRACT / known limitation: the hook trusts the `gh pr create*` scope to mean "a PR was
-# created" — it does NOT independently prove that. A contrived command that begins with
+# created" - it does NOT independently prove that. A contrived command that begins with
 # `gh pr create` yet prints some OTHER PR's URL to stdout (e.g. `gh pr create --help;
 # gh pr view 9`) would mis-set the title. That is an accepted trade for a convenience
 # session-namer: hard prevention would need fragile shell-parsing of chaining/quoting and
