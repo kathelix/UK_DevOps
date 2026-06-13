@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  OPT-IN launchd agent for the slice-dispatch watcher.
+
+  Setup:
+    1. Replace __REPO_ROOT__ below with the absolute path to your UK_DevOps
+       checkout (or a dedicated worktree), e.g. /Users/fenix/git/UK_DevOps.
+    2. Copy to ~/Library/LaunchAgents/com.kathelix.slice-dispatch.plist
+    3. launchctl load ~/Library/LaunchAgents/com.kathelix.slice-dispatch.plist
+       (launchctl unload … to stop)
+
+  Logs land in __REPO_ROOT__/.slice-dispatch.log. Note: launchd jobs get a
+  minimal PATH — EnvironmentVariables.PATH below must include wherever `claude`,
+  `gh`, `git`, and `node` live (adjust for Homebrew on Apple silicon vs Intel).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kathelix.slice-dispatch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/watch-slices.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/.slice-dispatch.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/.slice-dispatch.log</string>
+</dict>
+</plist>
