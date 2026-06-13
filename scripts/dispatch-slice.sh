@@ -123,7 +123,7 @@ git commit -q -m "chore(slice): stage $SLICE inputs for cloud Implementer"
 info "staged inputs: $(git show --stat --oneline HEAD | tail -n +2 | sed 's/^/    /')"
 
 # --- push so the cloud VM can clone the branch from GitHub ------------------
-info "pushing $BRANCH…"
+info "pushing ${BRANCH}…"
 git push -q -u origin "$BRANCH"
 
 # --- build the inlined prompt = cloud working-agreement + slice spec ---------
