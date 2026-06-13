@@ -32,8 +32,9 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 - `apps-script/` — the collector script, manifest, setup guide
 - `airtable/` — desired schema + idempotent apply script (additive-only)
 - `instructions/` — Claude's pipeline instructions (`VERSION`-ed, source of truth)
-- `docs/` — technical design & decisions (`TECH_DESIGN.md`), project brief, daily workflow, design notes, known issues, operations runbook
+- `docs/` — technical design & decisions (`TECH_DESIGN.md`), project brief, daily workflow, design notes, known issues, operations runbook, slice-dispatch guide (`SLICE_DISPATCH.md`) + prompt template
 - `tests/` — `node:test` harness + fixtures for the collector (cleaning regex, offline link cleanup, parsers, reliability helpers)
+- `scripts/` — Architect→Implementer slice-dispatch tooling (`dispatch-slice.sh`); see `docs/SLICE_DISPATCH.md`
 - `TODO.md` — improvement backlog + open milestone
 
 ## Status
