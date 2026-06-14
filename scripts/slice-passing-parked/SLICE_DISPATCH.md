@@ -1,5 +1,12 @@
 # Slice dispatch — Architect → Implementer handoff (cloud)
 
+> **Status: PARKED as of 2026-06-14** — see [README](README.md). This cloud
+> dispatch automation is archived, not in active use: a CLI-launched
+> `claude --remote` can't push in this environment today (HTTP 401), so it
+> can't open a PR. The kept flow is the human-run `/run-slice`. This guide is
+> preserved as the revival reference — Claude tooling changes fast, so
+> re-verify before relying on any of it.
+
 A way for the **Architect** (Claude Cowork) to hand a slice to the **Implementer**
 (Claude Code) as a GUI-visible cloud session. The Architect stages the slice;
 one command launches a Claude Code on the web session that implements it on a
@@ -10,7 +17,7 @@ branch and opens a PR. Merge stays manual.
 ```
 Cowork (Architect)                 your Mac                         GitHub / cloud
 ─────────────────                 ─────────                        ──────────────
-write issue-drafts/<slice>/   ─►  scripts/dispatch-slice.sh <slice>
+write issue-drafts/<slice>/   ─►  scripts/slice-passing-parked/dispatch-slice.sh <slice>
   slice-prompt-<slice>.md            │
   (+ fixtures, provenance)           ├─ git checkout -b feature/<slice> origin/main
                                      ├─ git add -f issue-drafts/<slice>/   (Pattern A)
@@ -35,14 +42,14 @@ session can't push to main, and it never merges.
 2. GitHub connected to your Claude account: authorize the **Claude GitHub App**
    (needed for Auto-fix) or run `/web-setup` to sync your `gh` token.
 3. The repo lives on GitHub (it does: `kathelix/UK_DevOps`).
-4. `chmod +x scripts/dispatch-slice.sh`.
+4. `chmod +x scripts/slice-passing-parked/dispatch-slice.sh`.
 
 ## Usage
 
 ```bash
-scripts/dispatch-slice.sh <slice-name>             # branch comes from the slice spec
-scripts/dispatch-slice.sh <slice-name> fix/hotfix  # optional one-off branch override
-scripts/dispatch-slice.sh --dry-run <slice-name>   # preview the resolved branch; do nothing
+scripts/slice-passing-parked/dispatch-slice.sh <slice-name>             # branch comes from the slice spec
+scripts/slice-passing-parked/dispatch-slice.sh <slice-name> fix/hotfix  # optional one-off branch override
+scripts/slice-passing-parked/dispatch-slice.sh --dry-run <slice-name>   # preview the resolved branch; do nothing
 ```
 
 Author the spec from `docs/SLICE_PROMPT_TEMPLATE.md` into
@@ -62,7 +69,7 @@ enforced allow-list**: the dispatcher validates the resolved name with
 `git check-ref-format` (rejecting a structurally-invalid ref), but does **not** check
 the prefix against the work-type set — a typo like `<!-- type: fxi -->` resolves to
 `fxi/<slice>` rather than failing. Preview the resolved branch before a real run with
-`scripts/dispatch-slice.sh --dry-run <slice-name>`. The safety rails keep a wrong
+`scripts/slice-passing-parked/dispatch-slice.sh --dry-run <slice-name>`. The safety rails keep a wrong
 prefix cheap: the dispatcher refuses a pre-existing branch, only ever cuts from
 `origin/main`, never merges, and the branch is GUI-visible — so a mistaken
 `fxi/<slice>` is spotted and deleted, never silently merged.

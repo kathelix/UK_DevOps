@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+   PARKED as of 2026-06-14 — see scripts/slice-passing-parked/README.md
+   Part of the archived Cowork→Code dispatch automation; OPT-IN, not loaded by
+   default. The kept flow is manual /run-slice.
+  ============================================================================
+
+  OPT-IN launchd agent that runs scripts/slice-passing-parked/watch-slices.sh
+  at login. The full install / enable / disable runbook lives in that script's
+  header (the single canonical launchctl runbook) — not duplicated here.
+
+  Before loading, replace every __REPO_ROOT__ below with the absolute path to
+  your checkout/worktree, e.g. /Users/fenix/git/UK_DevOps — it appears in
+  ProgramArguments, WorkingDirectory, and both StandardOut/Err log paths.
+
+  PATH note: launchd jobs get a minimal PATH, so EnvironmentVariables.PATH
+  below must include wherever `claude`, `gh`, `git`, and `node` live (Homebrew
+  differs: /opt/homebrew/bin on Apple silicon, /usr/local/bin on Intel). Logs
+  land in __REPO_ROOT__/.slice-dispatch.log.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kathelix.slice-dispatch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/slice-passing-parked/watch-slices.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>__REPO_ROOT__/.slice-dispatch.log</string>
+    <key>StandardErrorPath</key>
+    <string>__REPO_ROOT__/.slice-dispatch.log</string>
+</dict>
+</plist>
