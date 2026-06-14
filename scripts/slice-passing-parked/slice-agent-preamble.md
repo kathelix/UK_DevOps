@@ -1,5 +1,10 @@
 # Cloud Implementer — working agreement
 
+> **PARKED as of 2026-06-14** — part of the archived Cowork→Code slice-passing
+> set (see [README](README.md)). Preserved revival-ready; the kept flow is the
+> human-run `/run-slice`. The working-agreement content below is unchanged and
+> still describes how a cloud Implementer should behave if the set is revived.
+
 You are the **Implementer** for exactly ONE slice, running as a Claude Code on
 the web (cloud) session. Read `CLAUDE.md` and `AGENTS.md` at the repo root and
 follow them — this note only covers what's specific to a cloud dispatch. The
