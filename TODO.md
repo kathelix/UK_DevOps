@@ -37,3 +37,8 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 - [ ] **Switch the Claude screening pipeline (project instructions Block 1 §1) from Gmail search to RawEmails**: read `Status=New` → screen → flip to `Processed`. Keep the Gmail connector as fallback + discrepancy canary. Do this only after the collector has run validated in parallel with Make.
 - [ ] **Decommission the Make.com scenario** once parity is confirmed (it also burns the 1,000 free ops/month).
 - [ ] **Refactor Make.com leftovers after decommission** — rename state labels `job-vacancies/make-collected|processing|failed` → tool-neutral (preferred, e.g. `job-vacancies/collected|…`) or `gas-*`. Also sweep other relics: `UK_DevOps_Gmail_Collector.blueprint.json` at repo root (archive into `docs/` or delete), "Make" wording in `apps-script/README.md` parity notes and script comments.
+
+## Developer experience
+
+- [ ] **Fix Code session renaming**: fix the `scripts/pr-session-name.sh`, currently symlink-ed `~/.claude/hooks/pr-session-name.sh` that should rename a Claude Code sesion to "PR#nn" once session opens a new PR. Debug in the existing session that already created a PR, because it has all the logs from this hook and script.
+- [ ] **Revisit Cowork-Code handover approach**: Currently parked in `scripts/slice-passing-parked``
