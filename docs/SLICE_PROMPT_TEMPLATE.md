@@ -4,9 +4,10 @@
 <!-- issue: 00 -->
 
 > Architect → Implementer handoff. Copy this file to
-> `issue-drafts/<slice>/slice-prompt-<slice>.md`, fill every section, then dispatch with
-> `scripts/dispatch-slice.sh <slice>`. Keep it self-contained — the cloud
-> session sees this text (inlined) plus the repo's CLAUDE.md.
+> `issue-drafts/<slice>/slice-prompt-<slice>.md`, fill every section, then run
+> `/run-slice` in a Claude Code session. Keep it self-contained — the session
+> sees this text plus the repo's CLAUDE.md. *(The cloud `dispatch-slice.sh <slice>`
+> path is parked — see `scripts/slice-passing-parked/README.md`.)*
 >
 > **Branch:** set the `<!-- branch: … -->` line above — the **prefix is the work
 > type** (`feature/`, `fix/`, `chore/`, `docs/`, `refactor/`), so not everything
@@ -15,11 +16,11 @@
 > surfaces as a PR reference.
 >
 > **Fixtures:** drop any test fixtures / golden inputs / provenance notes in the
-> same folder (`issue-drafts/<slice>/`). The dispatcher force-stages the whole
-> folder onto the branch so the cloud session can read it; the Implementer moves
-> the fixtures into their committed home and removes the staging (Pattern A).
-> For fixture-heavy slices you can instead run a local Code-tab session — see
-> `docs/SLICE_DISPATCH.md`.
+> same folder (`issue-drafts/<slice>/`). With `/run-slice` the session reads them
+> straight off disk; the Implementer moves each fixture into its committed home
+> and removes the staging when done. *(The parked cloud dispatcher instead
+> force-stages the whole folder onto the branch — Pattern A; see
+> `scripts/slice-passing-parked/README.md`.)*
 
 ## Scope
 What this slice changes, in one or two sentences. The smallest shippable unit.
