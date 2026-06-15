@@ -91,16 +91,18 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
-  incremental commit, **transient upsert-failure** (a `429`/`5xx` sub-batch is NOT
-  make-collected and never make-failed — no silent data loss — and the run then ends by
-  **throwing** after the summary logs: Failed execution → GAS failure email, with the
-  successful sub-batches' labels applied before the throw), **read-side poison isolation**
-  (a parse-error message is make-failed while siblings are collected; an all-poison
-  sub-batch sends no empty upsert), **write-side poison isolation** (a deterministic-`4xx`
-  record is re-sent individually and make-failed only when ≥1 sibling upserted `200`; a
-  systemic all-`4xx` sub-batch quarantines nothing and fails loud — counted once per
-  sub-batch, not per record; a missing token fails fast rather than masking as a transient;
-  a `UrlFetchApp` transport throw is transient; DRY_RUN quarantines nothing), the
+  incremental commit, **read-side poison isolation** (a parse-error message is make-failed
+  while siblings are collected; an all-poison sub-batch sends no empty upsert), **write-side
+  per-record isolation of any non-`ok` sub-batch** (poison or transient): a record-specific
+  **transient** (`429`/`5xx`/transport) is isolated too, so its healthy siblings are
+  make-collected while only the bad record is left to retry — never make-failed; a
+  deterministic-`4xx` record is make-failed only when ≥1 sibling upserted `200`; a systemic
+  sub-batch (all-`4xx`, **or** an all-transient outage with no healthy sibling) quarantines
+  nothing and fails loud — counted once per sub-batch, not per record — and the run then ends
+  by **throwing** after the summary logs (Failed execution → GAS failure email, with the
+  successful records' labels applied before the throw); a missing token fails fast rather than
+  masking as a transient; a `UrlFetchApp` transport throw is transient; DRY_RUN quarantines
+  nothing), the
   **`SUB_BATCH_SIZE > 10` clamp** (no oversized request / 422 livelock), the happy
   path, `DRY_RUN`, the **offline link-cleanup wiring** (`HtmlLength` stays the original
   body length, `CleanText` is decoded + utm-stripped, the per-run `Links:` metric is
