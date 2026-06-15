@@ -86,7 +86,11 @@ function poisonMessage(i) {
 // blip), so gmailReadWithRetry_ is exercised end-to-end. `attempt` is 0-based and PER-ID for get
 // (the retry re-calls get for the SAME id) and global for list — so `(id, a) => id==='m2' && a===0`
 // throws once then heals, `(id) => id==='m2'` throws on every attempt (a persistent read failure).
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, getThrows = () => false, listThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false, backoffMs = null }) {
+// scriptProps seeds the mutable Script Properties store with arbitrary keys (e.g. a wretry:<id>
+// strike count, or a MAX_TRANSIENT_WRITE_RETRIES override) BEFORE the run; the run's
+// setProperty/deleteProperty mutate it, and the post-run store + the recorded set/delete calls are
+// returned so a test can inspect the strike counter and assert DRY_RUN touched nothing.
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, getThrows = () => false, listThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false, backoffMs = null, scriptProps = {} }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -102,6 +106,21 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
   const upserts = [];     // { count, code }
   const getAttempts = {}; // id -> times Gmail.get has been called for it (the retry re-calls per id)
   let listAttempts = 0;   // times Gmail.list has been called (global; the once-per-run list + retries)
+
+  // Mutable Script Properties store: getProperty/getProperties/setProperty/deleteProperty all back
+  // onto one object, so the run's strike-counter writes/deletes are observable post-run. Seeded with
+  // the config keys the run reads (DRY_RUN, AIRTABLE_TOKEN) plus any caller scriptProps (a missing
+  // AIRTABLE_TOKEN is modelled by airtableToken:null leaving the key UNSET, so getProperty -> null).
+  const propsStore = Object.assign({}, scriptProps);
+  if (dryRun) propsStore.DRY_RUN = 'true';
+  if (airtableToken !== null) propsStore.AIRTABLE_TOKEN = airtableToken;
+  const propCalls = { set: [], delete: [], getProperties: 0 }; // recorded so DRY_RUN "touches nothing" is assertable
+  const scriptPropertiesStub = {
+    getProperty: (k) => (Object.prototype.hasOwnProperty.call(propsStore, k) ? propsStore[k] : null),
+    getProperties: () => { propCalls.getProperties++; return Object.assign({}, propsStore); }, // GAS returns a fresh copy
+    setProperty: (k, v) => { propCalls.set.push([k, String(v)]); propsStore[k] = String(v); },
+    deleteProperty: (k) => { propCalls.delete.push(k); delete propsStore[k]; },
+  };
 
   gas.CONFIG.MAX_RUNTIME_MS = budgetMs;
   gas.CONFIG.SUB_BATCH_SIZE = subBatch;
@@ -151,7 +170,7 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
         return { getResponseCode: () => code, getContentText: () => (code === 200 ? '' : 'ERR ' + code) };
       },
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => (k === 'DRY_RUN' ? (dryRun ? 'true' : null) : k === 'AIRTABLE_TOKEN' ? airtableToken : null) }) },
+    PropertiesService: { getScriptProperties: () => scriptPropertiesStub },
     Utilities: {
       getUuid: () => 'uuid-test',
       newBlob: (data) => ({ getDataAsString: () => Buffer.from(data).toString('utf8') }),
@@ -175,6 +194,8 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     upserts,
     threw,
     logs: gas.logs.map(fmt),
+    store: propsStore, // the post-run Script Properties (seed via scriptProps; inspect wretry:<id> here)
+    propCalls,         // recorded setProperty/deleteProperty/getProperties calls
   };
 }
 
@@ -719,4 +740,128 @@ test('DRY_RUN still fails loud on a persistent read outage, but keeps suppressin
   );
   assert.ok(r.logs.some(l => /DRY_RUN complete:/.test(l)), 'the dry-run summary still logs before the throw');
   assert.ok(r.logs.includes('Footer: msg=m0 domain=reed.co.uk marker=miss bytes_cut=0'), 'the footer miss was detected (logged, just not thrown)');
+});
+
+// ---------- repeatedly-transient write cap (strike counter -> make-failed at N) ----------
+// A RECORD-SPECIFIC transient write (a healthy sibling proves the system is up) strikes a cross-run
+// counter (Script Properties, wretry:<id>); at MAX_TRANSIENT_WRITE_RETRIES consecutive strikes it is
+// make-failed (quarantined) so it stops re-presenting and failing the run forever. A SYSTEMIC outage
+// (no healthy sibling) never strikes (the mass-quarantine guard), success clears the counter, and
+// DRY_RUN touches no Script Properties. The whole-batch 503 + per-record stub mirrors the isolation
+// tests above; the new dimension is the seeded/post-run wretry: store and the quarantine alarm.
+const strikeUpsertCode = (i, recs) => {
+  if (recs.length > 1) return 503;                       // the all-or-nothing batch PATCH 503s
+  return recs[0].fields.MessageId === 'm1' ? 503 : 200;  // isolation: only m1 is the bad record
+};
+
+test('record-specific transient below the cap: m1 stuck, NOT make-failed, its wretry: counter incremented to 1, run FAILED', () => {
+  // No seed (default cap 5): m1's first record-specific transient strikes to 1 — below the cap, so it
+  // stays stuck (uncollected, retries next run) exactly as before, but now its counter is persisted.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: strikeUpsertCode, expectThrow: true });
+  assert.deepEqual(r.collected.sort(), ['m0', 'm2'], 'the healthy siblings still collect');
+  assert.equal(r.failed.length, 0, 'a first strike never make-fails — a transient is not poison');
+  assert.equal(r.store['wretry:m1'], '1', 'm1\'s strike counter persisted to 1 in Script Properties');
+  assert.equal(r.store['wretry:m0'], undefined, 'a healthy sibling never gets a counter');
+  assert.ok(r.threw, 'a stuck record still ends the run Failed');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, 'a below-cap strike is still counted as a stuck sub-batch upsert failure');
+  assert.ok(r.logs.some(l => /Airtable individual upsert FAILED \(transient 503\) for message m1 — strike 1\/5, stays uncollected/.test(l)), 'the strike count is logged n/N');
+});
+
+test('quarantine at the cap: seed wretry:m1 = N-1, the Nth record-specific strike make-fails m1, deletes its counter, alarms (exact string)', () => {
+  // Seed m1 one short of the default cap (5). The same record-specific 503 strikes it to 5 == cap ->
+  // make-failed (quarantined), counter deleted, and the run throws naming the quarantine.
+  // Mutation: a `>` cap check (instead of `>=`) leaves m1 stuck at 5 -> failed.length flips 1->0 and
+  // the throw reverts to the upsert-failure message.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: strikeUpsertCode, scriptProps: { 'wretry:m1': '4' }, expectThrow: true });
+  assert.deepEqual(r.collected.sort(), ['m0', 'm2'], 'the healthy siblings still collect');
+  assert.deepEqual(r.failed, ['m1'], 'm1 is make-failed (quarantined) at the cap');
+  assert.equal('wretry:m1' in r.store, false, 'the strike counter is cleared on quarantine (no leak)');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(r.threw.message, /^1 write\(s\) quarantined after repeated transient failures; first: m1 after 5 strikes$/, 'the quarantine alarm names the message + strike count (exact string), NOT an upsert-failure');
+  assert.ok(r.logs.some(l => /Labeled m1 as job-vacancies\/make-failed — repeatedly-transient write quarantined after 5 strike\(s\) \(max 5\)/.test(l)), 'the quarantine is logged with the strike count + cap');
+});
+
+test('systemic transient outage NEVER strikes or quarantines, even with wretry:m1 seeded at N-1 (the mass-quarantine guard)', () => {
+  // Every record 503s (no healthy sibling), so the failure is systemic, not record-specific. Even
+  // with m1 one short of the cap, it must NOT strike and NOT quarantine — a multi-hour Airtable
+  // outage can't mass-quarantine the queue. Mutation: removing the anyHealthy gate (striking on
+  // systemic) strikes m1 to 5 -> it quarantines -> failed.length flips 0->1 and the counter is deleted.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: () => 503, scriptProps: { 'wretry:m1': '4' }, expectThrow: true });
+  assert.equal(r.collected.length, 0, 'a systemic outage collects nothing');
+  assert.equal(r.failed.length, 0, 'and quarantines NOTHING (no healthy sibling — the guard holds)');
+  assert.equal(r.store['wretry:m1'], '4', 'the seeded counter is UNCHANGED — no strike on a systemic outage');
+  assert.equal(r.propCalls.set.length, 0, 'no setProperty fired (nothing struck)');
+  assert.ok(r.threw, 'the run still ends Failed (stuck records, fail-loud)');
+  assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, 'counted once as a stuck sub-batch, NOT a quarantine');
+});
+
+test('success resets: a seeded wretry:m1 counter is deleted when m1 upserts 200 (and only m1\'s, in-memory no-op for the rest)', () => {
+  // m1 carries 3 prior strikes but upserts cleanly this run (whole-batch 200, no isolation). The
+  // collect path clears m1's counter; the healthy siblings that never had one fire no deleteProperty.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, scriptProps: { 'wretry:m1': '3' } });
+  assert.deepEqual(r.collected.sort(), ['m0', 'm1', 'm2'], 'all three collected');
+  assert.equal('wretry:m1' in r.store, false, 'the strike counter is cleared on a successful upsert');
+  assert.deepEqual(r.propCalls.delete, ['wretry:m1'], 'exactly one deleteProperty — only the struck message, not every collected one');
+  assert.ok(!r.threw, 'a clean run does not throw');
+});
+
+test('DRY_RUN touches no Script Properties: a would-fail m1 with a seeded counter -> no setProperty/deleteProperty, no make-failed, counter unchanged', () => {
+  // DRY_RUN short-circuits before any upsert/isolation, so no strike, no quarantine, no Script
+  // Properties write. The map may be LOADED (one getProperties read) but is never mutated. Mutation:
+  // moving the strike/quarantine logic outside the dryRun short-circuit would fire setProperty here.
+  const r = runCollector({ n: 2, budgetMs: 1e9, getDelta: 1, upsertCode: strikeUpsertCode, scriptProps: { 'wretry:m1': '4' }, dryRun: true });
+  assert.equal(r.upserts.length, 0, 'DRY_RUN sends no PATCH');
+  assert.equal(r.failed.length, 0, 'DRY_RUN never make-fails / quarantines');
+  assert.equal(r.store['wretry:m1'], '4', 'the seeded counter is UNCHANGED');
+  assert.equal(r.propCalls.set.length, 0, 'no setProperty in a dry run');
+  assert.equal(r.propCalls.delete.length, 0, 'no deleteProperty in a dry run');
+  assert.equal(r.propCalls.getProperties, 1, 'the strike map is loaded exactly once per run (a read is fine)');
+  assert.ok(!r.threw, 'no read failure / footer miss here, so the dry run completes without throwing');
+  assert.ok(!r.logs.some(l => /quarantined after/.test(l)), 'no quarantine even logged');
+});
+
+test('N is runtime-tunable via MAX_TRANSIENT_WRITE_RETRIES: an override quarantines earlier; an out-of-range value falls back to the CONFIG default + logs', () => {
+  // Override the cap to 2: with m1 seeded at 1, the next record-specific strike hits 2 == cap and
+  // quarantines THIS run — whereas the default cap (5) would have left it merely stuck. Proves the
+  // Script Property override is read (mutation: ignore the override -> m1 strikes to 2, below 5, no
+  // quarantine -> failed.length flips 1->0).
+  const over = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: strikeUpsertCode, scriptProps: { 'MAX_TRANSIENT_WRITE_RETRIES': '2', 'wretry:m1': '1' }, expectThrow: true });
+  assert.deepEqual(over.failed, ['m1'], 'with the cap lowered to 2, the 2nd strike quarantines m1');
+  assert.match(over.threw.message, /^1 write\(s\) quarantined after repeated transient failures; first: m1 after 2 strikes$/, 'quarantined at the overridden cap of 2');
+  assert.ok(over.logs.some(l => /repeatedly-transient write quarantined after 2 strike\(s\) \(max 2\)/.test(l)), 'the log reflects the overridden cap');
+
+  // An out-of-range value (0 < min 1) is rejected by getIntProp_ -> falls back to the CONFIG default
+  // (5) and logs the misconfig, exactly like MAX_MESSAGES. With m1 seeded at 4 it quarantines at 5.
+  const bad = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: strikeUpsertCode, scriptProps: { 'MAX_TRANSIENT_WRITE_RETRIES': '0', 'wretry:m1': '4' }, expectThrow: true });
+  assert.deepEqual(bad.failed, ['m1'], 'with the bad override ignored, the default cap (5) applies');
+  assert.ok(bad.logs.some(l => /Ignoring Script property MAX_TRANSIENT_WRITE_RETRIES=.*not an integer in \[1, 100\]/.test(l)), 'the out-of-range value is warned');
+  assert.ok(bad.logs.some(l => /repeatedly-transient write quarantined after 5 strike\(s\) \(max 5\)/.test(l)), 'fell back to the CONFIG default cap of 5');
+});
+
+test('F1 — a quarantine co-occurring with a COMMITTED footer miss throws ONE error naming BOTH (none swallowed)', () => {
+  // The F1 contract for the new signal: m0 is a reed no-footer message that upserts OK (committed +
+  // labelled, so its miss will NOT recur) and m1 is a record-specific transient seeded at the cap-1
+  // that quarantines. Both share one sub-batch (so m0 is m1's healthy sibling). The single thrown
+  // error must name the quarantine (precedence: after upserts, before the footer) AND fold in the
+  // footer-miss summary. Mutation: dropping either signal from the composed throw flips the string.
+  const reedNoFooter = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const r = runCollector({
+    n: 2, budgetMs: 1e9, getDelta: 1,
+    from: (i) => (i === 0 ? 'jobs@reed.co.uk' : 'someone@x.com'),
+    bodyHtml: (i) => (i === 0 ? reedNoFooter : '<html><body>hi</body></html>'),
+    upsertCode: (i, recs) => (recs.length > 1 ? 503 : (recs[0].fields.MessageId === 'm1' ? 503 : 200)),
+    scriptProps: { 'wretry:m1': '4' },
+    expectThrow: true,
+  });
+  assert.ok(r.collected.includes('m0'), 'the missed-marker message committed + was labelled (so its signal must survive)');
+  assert.deepEqual(r.failed, ['m1'], 'm1 quarantined at the cap');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(
+    r.threw.message,
+    /^1 write\(s\) quarantined after repeated transient failures; first: m1 after 5 strikes\. Also 1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/,
+    'one error names the quarantine AND folds in the footer-miss summary, in precedence order',
+  );
+  // Prove both conditions really occurred (not just that the string was composed):
+  assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss did occur');
+  assert.ok(r.logs.some(l => /repeatedly-transient write quarantined after 5 strike\(s\)/.test(l)), 'the quarantine did occur');
 });
