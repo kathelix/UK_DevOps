@@ -1,7 +1,9 @@
 # Tests
 
-Node-only unit tests for the Gmail collector (`apps-script/gmail-collector.gs`),
-run with the built-in test runner — no framework, no dependencies.
+Node-only tests run with the built-in test runner — no framework, no dependencies.
+Most cover the Gmail collector (`apps-script/gmail-collector.gs`); one
+(`instructions-stub.test.js`) is a contract test for the externalized project
+instructions and uses no collector harness.
 
 ```sh
 node --test        # from the repo root  (or: npm test)
@@ -147,6 +149,15 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   (mutation-checked with eligible rows present), the starvation warning vs the
   `PURGE_EMERGENCY` throw (949/950 boundary), `DRY_RUN` (full plan logged, nothing
   deleted), runtime-tunable thresholds, and fail-loud non-200 list/delete throws.
+- **`instructions-stub.test.js`** — the externalized-instructions loading contract
+  (M6.1), **not** a collector test: the claude.ai project field is a thin pointer
+  (`instructions/PROJECT_FIELD_STUB.md`) to the canonical, `VERSION`-ed
+  `instructions/Claude_project_instructions.md`, and this is its only automated guard.
+  Pure `fs` reads (no `vm` harness): the stub references the exact canonical path **and
+  that file exists** (no dangling pointer), the stub carries the fail-loud /
+  no-network-fallback / version-echo trio, and the canonical file has a `VERSION:` line
+  (presence only — M6.2 bumps it to 2.0). Rationale: `docs/OPERATIONS.md` → "Instructions
+  loading".
 
 ## Not covered (deliberately)
 

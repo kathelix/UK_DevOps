@@ -11,7 +11,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-During the **parallel-run period** the screening run still reads Gmail directly (authoritative); RawEmails is shadow data. Do not write RawEmails-sourced decisions to the real Vacancies table until M6 cutover.
+During the **parallel-run period** the screening run still reads Gmail directly (authoritative); RawEmails is shadow data. Do not write RawEmails-sourced decisions to the real Vacancies table until the M6.2 intake cutover.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -22,6 +22,54 @@ During the **parallel-run period** the screening run still reads Gmail directly 
 | `AIRTABLE_TOKEN` ("UK DevOps - GAS collector") | PAT: `data.records:read+write`, Job Search base only | GAS Script Properties |
 
 PAT names appear in Airtable record revision history — name them for the actor.
+
+## Instructions loading
+
+The screening run's complete instructions are **not** stored in the claude.ai project
+field. The field holds only a **bootstrap pointer** (`instructions/PROJECT_FIELD_STUB.md`);
+the canonical, `VERSION`-ed instructions live in
+`instructions/Claude_project_instructions.md` in the mounted **UK_DevOps** folder
+(design rationale: [TECH_DESIGN §6](TECH_DESIGN.md#6-screening-layer)).
+
+**Contract — local-file-primary, fail-loud, no fallback.** At the start of every run
+Claude reads the repo file from the mounted folder and echoes the loaded `VERSION:` in
+the batch report. If the folder is **not attached**, the run **halts**: it does not
+screen, read Gmail, write Airtable, or label anything, and it does **not** fall back to
+memory, a cached/previous copy, or any network source (no GitHub fetch, no web search
+for the instructions). An absent folder stops the run by design — it must never screen
+on stale or absent instructions.
+
+- **To change the instructions:** edit `instructions/Claude_project_instructions.md`,
+  bump its `VERSION:` per the file's own rule, and commit. Never edit the claude.ai
+  field except to (re)paste the stub.
+- **To confirm what ran:** the batch report echoes `VERSION:` — a missing or wrong
+  version means the field still holds an old inline copy, or the stub points at the
+  wrong path.
+
+### Owner-activation checklist (one-time — ordered to never break a scheduled run)
+
+The order matters: activating the stub **before** the scheduled run is guaranteed to
+mount the folder would make the next scheduled screening **halt**. So:
+
+1. **Reconcile.** Confirm the repo file matches your current field content (diff the
+   claude.ai field against `instructions/Claude_project_instructions.md`). If they
+   differ, update the **repo file** first and commit — the stub loads whatever the repo
+   says.
+2. **Verify folder attachment for scheduled runs.** Confirm the scheduled daily
+   screening task runs in a session with **UK_DevOps mounted**. **CRITICAL RISK:** if
+   Cowork scheduled tasks can't guarantee the folder is attached, the fail-loud stub
+   halts every scheduled run — resolve this *before* step 3 (and flag back to the
+   Architect if attachment can't be guaranteed; the "no fallback" contract may need
+   revisiting).
+3. **Activate.** Replace the inline instructions in the claude.ai project field with the
+   contents of `instructions/PROJECT_FIELD_STUB.md`.
+4. **Verify load.** Run the pipeline once; confirm the batch report **echoes
+   `VERSION: 1.2` loaded from `instructions/Claude_project_instructions.md`** and
+   screening behaves exactly as before (parity — nothing about triage/output changed).
+5. **Verify fail-loud.** Run once with the folder detached; confirm it **halts** with
+   the "folder must be attached" message and does **not** screen.
+6. **Leave Make running.** Do **not** pause the Make scenario — that happens at the
+   intake cutover (M6.2), not here.
 
 ## Collector: routine procedures
 
@@ -48,7 +96,7 @@ The Airtable free plan caps a **base** at 1,000 records across **all** tables (`
 - **Trigger setup (one-time, manual — runtime state, never deployed by CI):** GAS editor → Triggers → Add trigger → function `purgeRawEmails`, time-driven, day timer, in the nightly window per [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci). Same pattern as the collector trigger. **Prereq:** `AIRTABLE_TOKEN` must include `data.records:read` (the purge counts and lists records before deleting) — the secrets inventory above already records `read+write`, but re-scope or replace an older write-only PAT before enabling the trigger.
 - **Script Properties (optional tuning):** `PURGE_HIGH_WATER` (default 700) and `PURGE_LOW_WATER` (default 500), integers 0–1000, read each run with the standard validation (invalid → default, logged `Ignoring Script property …`). If the resolved pair has HIGH ≤ LOW, the run logs `Purge thresholds misconfigured …` and falls back to **both** defaults.
 - **Log line** (Executions panel), once per run: `Purge: count=N high=H low=L eligible=E deleted=D remaining=R`. At/below high water: `Purge: count=N high=H — nothing to do.`
-- **Starvation (the normal state pre-M6):** over high-water with 0 eligible rows (nothing is ever `Processed` until the screening cutover) logs `capacity risk, manual action may be needed` and exits cleanly. At `count ≥ 950` (`PURGE_EMERGENCY`) with 0 eligible the run **throws** → Failed execution → failure email, before Airtable starts blocking writes at the cap.
+- **Starvation (the normal state pre-M6.2):** over high-water with 0 eligible rows (nothing is ever `Processed` until the screening cutover) logs `capacity risk, manual action may be needed` and exits cleanly. At `count ≥ 950` (`PURGE_EMERGENCY`) with 0 eligible the run **throws** → Failed execution → failure email, before Airtable starts blocking writes at the cap.
 - **DRY_RUN:** the shared `DRY_RUN=true` Script Property makes the purge log the full plan (count, eligible, the exact ids it would delete) and delete nothing.
 - **Failures:** any non-200 from Airtable (list or delete) throws → Failed execution → failure email. List and delete now retry a **transient** blip (`429`/`5xx`) with `[1s, 2s, 4s]` backoff first, so a final non-200 in the log is genuinely persistent. **Deletes never retry a transport throw** (`retryOnThrow:false`): a re-delete of an already-gone id returns `404 MODEL_ID_NOT_FOUND`, so after a connection blip mid-delete the run fails loud rather than risk 404-ing a delete that actually landed — safe, since a purge is non-critical and the next night re-counts. Deletes are still paced (~4 req/s) under Airtable's 5 req/s/base rate limit.
 - **Concurrency:** the purge shares the collector's script lock and never runs concurrently with a collector run — whichever starts second skips cleanly (a skipped night catches up the next one).
@@ -124,7 +172,7 @@ Pipeline marks processed mail read; collector labels collected mail. In the Gmai
 
 ## Parity check (end of parallel-run week)
 
-Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run reports processing. Equal modulo index-orphans → cutover is safe → execute M6 (`TODO.md`).
+Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run reports processing. Equal modulo index-orphans → cutover is safe → execute the M6.2 intake cutover (`TODO.md`).
 
 ## When things break
 
@@ -135,8 +183,10 @@ Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run re
 | One message `make-failed` while its siblings collected | A deterministic, record-specific Airtable reject (`4xx`) isolated from a healthy sub-batch | Follow *Failed message (`make-failed`)* above — the record's data vs the schema; fix and remove the label to retry |
 | Collector run red with `… footer marker miss(es)` | A mapped sender changed its footer template, so its `FOOTER_MARKERS` marker no longer matches (fail-loudly is by design) | No data lost (rows committed before the throw). Follow the marker-miss runbook above: re-capture the footer as a redacted fixture, update the marker, suite green, merge |
 | Collector run red with `… write(s) quarantined after repeated transient failures` | A record's own Airtable write kept failing transiently (`429`/`5xx`/transport) for `MAX_TRANSIENT_WRITE_RETRIES` runs (default 5) — first strike earned with a healthy sibling, then sticky once alone — and hit the cap, so it was auto-quarantined to `make-failed` | No data lost (the record was never written). The named message (`first: <id> after <N> strikes`) is now `make-failed`; inspect its data in Gmail for what Airtable's server rejects every time (oversized/edge-case field), fix the cause, then remove the `make-failed` label to re-queue it with a fresh strike count. A **fresh** message can't trigger this (the first strike needs a healthy sibling, so a broad outage never mass-quarantines fresh traffic). **Struck-then-outage residual:** a record already part-way to the cap *can* finish capping during a later outage while alone — same triage, just remove the label to retry once the outage clears |
-| Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm: manually purge old rows or accelerate M6 (nothing is `Processed` pre-cutover) |
+| Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm: manually purge old rows or accelerate the M6.2 intake cutover (nothing is `Processed` pre-cutover) |
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |
 | RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then canary check |
 | Screening run reports fewer emails than UI shows unread | Index orphans (KNOWN_ISSUES §1) | Expected for securityclearedjobs.com; investigate only for senders that matter |
+| Screening run halts: "The UK_DevOps folder must be attached to run the screening pipeline" | The field is now a bootstrap stub; the mounted folder is missing, so it fails loud with no fallback (by design) | Attach the UK_DevOps folder to the session and re-run. If scheduled runs can't mount it, see *Instructions loading* — the no-fallback contract may need revisiting (flag the Architect) |
+| Batch report echoes the wrong `VERSION:` or none | The field still holds an old inline copy, or the stub points at a moved/renamed path | Re-paste `instructions/PROJECT_FIELD_STUB.md` into the field; confirm `instructions/Claude_project_instructions.md` exists at that path and carries a `VERSION:` line |

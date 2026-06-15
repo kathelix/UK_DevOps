@@ -31,7 +31,7 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 
 - `apps-script/` — the collector script, manifest, setup guide
 - `airtable/` — desired schema + idempotent apply script (additive-only)
-- `instructions/` — Claude's pipeline instructions (`VERSION`-ed, source of truth)
+- `instructions/` — Claude's pipeline instructions (`VERSION`-ed, source of truth); `PROJECT_FIELD_STUB.md` is the bootstrap pointer pasted into the claude.ai project field (it reads the canonical file from the mounted folder — `docs/OPERATIONS.md` → "Instructions loading")
 - `docs/` — technical design & decisions (`TECH_DESIGN.md`), project brief, daily workflow, design notes, known issues, operations runbook + slice prompt template (`SLICE_PROMPT_TEMPLATE.md`)
 - `tests/` — `node:test` harness + fixtures for the collector (cleaning regex, offline link cleanup, parsers, reliability helpers)
 - `scripts/slice-passing-parked/` — the **parked** Cowork→Code slice-dispatch tooling (`dispatch-slice.sh` et al.); the kept flow is manual `/run-slice`. See `scripts/slice-passing-parked/README.md`
