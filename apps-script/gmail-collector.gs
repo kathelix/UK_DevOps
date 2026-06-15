@@ -135,10 +135,23 @@ function collectJobEmailsLocked_() {
   const collectedAt = new Date().toISOString(); // Sheets column B: {{now}}
   const startMs = Date.now(); // anchor for the MAX_RUNTIME_MS timeout-safety budget
 
-  const listResp = Gmail.Users.Messages.list('me', {
-    q: CONFIG.QUERY,
-    maxResults: maxMessages,
-  });
+  // Budget predicate for the Gmail-read retry wrapper (gmailReadWithRetry_), threaded into BOTH the
+  // once-per-run list below and the per-message get in the loop: given the next backoff sleep's
+  // duration, true if sleeping it would push the run past MAX_RUNTIME_MS. The wrapper then stops
+  // retrying rather than risk a hard ~6-min kill mid-read. Mirrors upsertRetryOpts on the write
+  // side (same predicate, separate wrapper — the two transports differ; see TECH_DESIGN §2).
+  const gmailReadOpts = { isOverBudget: function (ms) { return isOverRuntimeBudget_(startMs, Date.now() + ms); } };
+
+  // A transient list blip (429/5xx/transport throw) heals on retry; a PERSISTENT list failure lets
+  // gmailReadWithRetry_'s tagged error propagate out of collectJobEmailsLocked_ (collectJobEmails's
+  // finally only releases the lock), so the run still ends Failed — same canary, minus a spurious
+  // single-blip failure. Deliberately NOT wrapped in a try/catch here: a persistent read must fail loud.
+  const listResp = gmailReadWithRetry_(function () {
+    return Gmail.Users.Messages.list('me', {
+      q: CONFIG.QUERY,
+      maxResults: maxMessages,
+    });
+  }, gmailReadOpts);
   const messageRefs = (listResp.messages || []);
   if (messageRefs.length === 0) {
     Logger.log('No new messages. Done.');
@@ -175,6 +188,15 @@ function collectJobEmailsLocked_() {
   // domain + msg id seed the end-of-run alarm message. Logged once after the loop next to the
   // Links:/Unwrap: lines; a miss ends a REAL run Failed (see below) so the GAS failure email fires.
   const footerStats = { hits: 0, misses: 0, bytesCut: 0, firstMissDomain: '', firstMissMsgId: '' };
+  // Fail-loudly accumulator for un-quarantined transient Gmail-READ failures: a per-message get
+  // that still throws after gmailReadWithRetry_'s retries. The message is left UNCOLLECTED (stays
+  // unlabelled → re-presents next run, made a no-dup by the MessageId upsert) and NEVER make-failed
+  // — a transient read is not poison. Counted per message; the first error seeds the end-of-run
+  // alarm. Like upsertFailures, a run with any read failure must END Failed (GAS failure emails fire
+  // only on Failed executions) so a persistent Gmail-read outage can't silently stall the queue
+  // while every run shows "Completed". A deterministic PARSE failure is the other branch (make-failed,
+  // below) and does NOT count here — that is handled/quarantined, not an un-collected read.
+  const readFailures = { count: 0, first: '' };
   // Fail-loudly accumulator, incremented ONCE per sub-batch that leaves records stuck — a
   // transient batch (429/5xx/transport throw), or an isolated batch with any stuck record (a
   // transient individual retry, or a systemic 4xx with no healthy sibling). Counting per
@@ -205,13 +227,32 @@ function collectJobEmailsLocked_() {
       break;
     }
 
-    // Fetch + parse this sub-batch; isolate poisoned messages (label make-failed on
-    // real runs) so one bad message does not block its neighbours or the queue.
+    // Fetch + parse this sub-batch in two narrow stages with separate failure handling:
+    //   1. gmailReadWithRetry_ around the per-message get — a transient blip is retried, and a read
+    //      that still fails leaves the message UNCOLLECTED (retried next run, never make-failed).
+    //   2. headerMap_/processMessage_ — a deterministic parse failure isolates the message as
+    //      make-failed (real runs) so one bad message does not block its neighbours or the queue.
+    // Catching the two at the NARROWEST scope keeps a transient read from being mis-quarantined as
+    // poison and a parse poison from being mistaken for a transient (CLAUDE.md narrow-catch lesson).
     const records = []; // {fields:..., messageId:...}
     for (const ref of messageRefs.slice(start, start + subBatchSize)) {
-      let msg, headers;
+      let msg;
       try {
-        msg = Gmail.Users.Messages.get('me', ref.id, { format: 'full' });
+        msg = gmailReadWithRetry_(function () { return Gmail.Users.Messages.get('me', ref.id, { format: 'full' }); }, gmailReadOpts);
+      } catch (e) {
+        if (e && e.isGmailReadFailure) {
+          // Transient read failure surviving all retries: leave the message uncollected (stays
+          // unlabelled → re-presents next run, made a no-dup by the MessageId upsert), count toward
+          // the fail-loud canary, and NEVER make-failed — a transient read is not poison.
+          readFailures.count++;
+          if (!readFailures.first) readFailures.first = ref.id + ': ' + (e.message ? e.message : String(e));
+          Logger.log('Gmail get FAILED (transient) for %s — stays uncollected, retries next run.', ref.id);
+          continue;
+        }
+        throw e; // a genuine programming bug propagates with its own stack, unmasked
+      }
+      let headers;
+      try {
         headers = headerMap_(msg.payload.headers || []);
         processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats, footerStats);
       } catch (e) {
@@ -337,32 +378,33 @@ function collectJobEmailsLocked_() {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
   } else {
     Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
-    // Footer-miss summary, built once and surfaced whether it stands alone or is folded into the
-    // upsert-failure throw below. '' when there were no misses this run.
-    const footerMissMsg = footerStats.misses > 0
-      ? footerStats.misses + ' footer marker miss(es); first: ' +
-        footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
-      : '';
-    if (upsertFailures.count > 0) {
-      // The upsert failure is the PRIMARY signal (a data-integrity event) and is named first. But
-      // a footer miss in a sub-batch that DID commit is already make-collected and will NOT recur
-      // — so the upsert throw must not silently swallow it (F1, PR #17): fold the footer-miss
-      // summary into the SAME thrown error, so the one GAS failure email carries both signals.
-      // Thrown only AFTER the loop and the summary logs: every successful sub-batch is already
-      // committed and labelled, so no work is lost — the throw only flips the execution to Failed
-      // to trigger the GAS failure notification.
-      let msg = upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first;
-      if (footerMissMsg) msg += '. Also ' + footerMissMsg;
-      throw new Error(msg);
-    }
-    // Footer-marker miss alarm (no upsert failure this run). Fires only AFTER the loop and the
-    // summary: every cut row is already committed, the throw only flips the execution to Failed so
-    // the GAS failure email tells Ivan to update the changed marker. The cost (owner-accepted
-    // 2026-06-10): a changed template fails ~48 runs/day until the marker is fixed.
-    if (footerMissMsg) {
-      throw new Error(footerMissMsg);
-    }
   }
+
+  // End-of-run fail-loud canary, evaluated in BOTH real and DRY_RUN modes. Up to three independent
+  // signals can co-occur — an un-quarantined transient READ failure, a transient/systemic UPSERT
+  // failure, and a footer-marker MISS — and none may be swallowed (F1, PR #17): a signal riding on
+  // already-committed-and-labelled work never re-presents, so a co-occurring throw that suppressed it
+  // would lose it forever. We collect EVERY present signal and throw ONE error naming all of them, in
+  // precedence order — data-integrity first (reads, then writes — the order they hit the pipeline) —
+  // then the footer template-change alarm. Thrown only AFTER the summary logs, so it loses no work; it
+  // only flips the execution to Failed so the single GAS failure email fires.
+  //   DRY_RUN policy (Codex F1[P2], PR #25): a persistent Gmail-READ failure is a real outage, NOT a
+  //   side effect — DRY_RUN does real reads, so it must fail loud on a read outage too, or dry-run
+  //   validation silently misses the exact failure this slice exists to surface. The write-path
+  //   signals do NOT fire in DRY_RUN: an upsert never runs (so a write failure can't occur), and a
+  //   footer miss is a side-effect-only template alarm deliberately suppressed in DRY_RUN (it still
+  //   logs, but never throws — owner-accepted; a changed template would otherwise fail every manual
+  //   dry run). The footer alarm's cost on REAL runs (owner-accepted 2026-06-10): a changed template
+  //   fails ~48 runs/day until the marker is fixed.
+  const footerMissMsg = (!dryRun && footerStats.misses > 0)
+    ? footerStats.misses + ' footer marker miss(es); first: ' +
+      footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
+    : '';
+  const alarms = [];
+  if (readFailures.count > 0) alarms.push(readFailures.count + ' Gmail read(s) failed; first: ' + readFailures.first);
+  if (!dryRun && upsertFailures.count > 0) alarms.push(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+  if (footerMissMsg) alarms.push(footerMissMsg);
+  if (alarms.length > 0) throw new Error(alarms.join('. Also '));
 }
 
 // Timeout-safety predicate (pure, unit-tested): true once a run has used its
@@ -376,6 +418,55 @@ function isOverRuntimeBudget_(startMs, nowMs) {
 // advancing; <=10 keeps each upsert within Airtable's records/request cap.
 function clampSubBatchSize_(n) {
   return Math.max(1, Math.min(n, 10));
+}
+
+// Retry an idempotent Gmail read (Messages.get / Messages.list) through a transient blip. A Gmail
+// read has NO side effect, so EVERY throw is retried — there is no retryOnThrow:false exception
+// (contrast airtableFetchWithRetry_ + the non-idempotent DELETE): re-reading can't double-apply
+// anything. We deliberately do NOT parse the HTTP status out of the thrown error — classifying by
+// code (429/5xx vs 404 vs other 4xx) depends on the Gmail advanced service's runtime error shape
+// (GoogleJsonResponseException), which the stubbed Node harness can't verify (that is Option B and
+// is out of scope; a 404-skip refinement is a possible future follow-up gated on a real-runtime
+// probe). Backoff is CONFIG.RETRY_BACKOFF_MS ([1s, 2s, 4s] => 3 retries / 4 attempts), the SAME
+// constant the write side uses; budget-aware via the same isOverBudget predicate so a backoff
+// sleep can't cross MAX_RUNTIME_MS and risk a hard ~6-min kill mid-read. After the retries are
+// exhausted it re-throws the LAST error TAGGED isGmailReadFailure, so the caller maps ONLY that to
+// "transient read — leave the message uncollected" and a genuine programming bug propagates with
+// its own stack (mirrors airtableFetchWithRetry_'s isAirtableTransportFailure tag; the CLAUDE.md
+// narrow-catch lesson). Kept SEPARATE from airtableFetchWithRetry_ on purpose — different transport
+// contracts (the Gmail advanced service throws on a non-2xx and returns no response object;
+// Airtable uses muteHttpExceptions + getResponseCode) — sharing only the backoff constant and the
+// budget predicate, never one function.
+// opts (all optional, for injection/tests):
+//   sleep(ms)        - defaults to Utilities.sleep; injected as a recorder in unit tests (no real sleep in CI)
+//   backoffMs        - defaults to CONFIG.RETRY_BACKOFF_MS
+//   isOverBudget(ms) - optional predicate; given the NEXT sleep's duration, returns true if that
+//                      sleep would cross the run's MAX_RUNTIME_MS budget. When true we stop and
+//                      re-throw rather than risk a hard ~6-min kill mid-read. The collector wires
+//                      (ms) => isOverRuntimeBudget_(startMs, now()+ms).
+function gmailReadWithRetry_(readFn, opts) {
+  opts = opts || {};
+  const backoffs = opts.backoffMs || CONFIG.RETRY_BACKOFF_MS;
+  const sleep = opts.sleep || function (ms) { Utilities.sleep(ms); };
+  const isOverBudget = opts.isOverBudget || null;
+
+  let lastErr = null;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return readFn(); // idempotent read: a success returns immediately, any throw is retryable
+    } catch (e) {
+      lastErr = e; // remember it, then back off below — retry on ANY throw (no status parsing)
+    }
+    if (attempt >= backoffs.length) break; // retries exhausted
+    const nextSleepMs = backoffs[attempt];
+    if (isOverBudget && isOverBudget(nextSleepMs)) break; // the next sleep would cross the budget
+    sleep(nextSleepMs);
+  }
+  // Every attempt threw. Tag the last error so a caller that maps a transient read to "leave the
+  // message uncollected" (the collect loop) can tell it apart from a genuine programming error and
+  // translate ONLY the former; everything else propagates with its own stack (Codex F1 lesson).
+  if (lastErr && typeof lastErr === 'object') lastErr.isGmailReadFailure = true;
+  throw lastErr;
 }
 
 // Classify an Airtable write HTTP status (pure, unit-tested): true for a transient,

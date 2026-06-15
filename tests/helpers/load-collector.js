@@ -38,6 +38,7 @@ const EXPORTS = [
   'decodeB64Url_',
   'isOverRuntimeBudget_',
   'clampSubBatchSize_',
+  'gmailReadWithRetry_', // idempotent Gmail-read retry/backoff wrapper (Messages.get / Messages.list)
   'isTransientWriteFailure_', // write-failure classifier (429/5xx transient vs deterministic 4xx)
   'parseIntProp_',
   'getIntProp_',
