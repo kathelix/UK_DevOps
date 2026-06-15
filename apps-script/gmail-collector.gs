@@ -64,9 +64,11 @@ const CONFIG = {
   // counter), loaded once per run and cleared on any successful upsert or on quarantine. Default 5
   // (~2.5 h of sustained record-specific failure at the ~30-min, ~48 runs/day cadence before
   // quarantine). Runtime-tunable via the MAX_TRANSIENT_WRITE_RETRIES Script Property (getIntProp_,
-  // bounds [1, 100]) without a redeploy, like MAX_MESSAGES. A SYSTEMIC outage (no healthy sibling
-  // that run) NEVER strikes — the mass-quarantine guard, so a multi-hour Airtable outage can't
-  // mass-quarantine the queue.
+  // bounds [1, 100]) without a redeploy, like MAX_MESSAGES. Record-specificity is proven by a same-run
+  // healthy sibling for the FIRST strike, then carried (sticky): once a message has a strike, its solo
+  // failures keep counting to the cap (else the cap is unreachable, since #26 make-collects the
+  // siblings out of the queue — Codex F1). A FRESH (never-struck) message in a SYSTEMIC outage never
+  // strikes — the mass-quarantine guard, holding for the bulk of the queue.
   MAX_TRANSIENT_WRITE_RETRIES: 5,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
@@ -341,10 +343,12 @@ function collectJobEmailsLocked_() {
     // uncollected on every run is gone, so a record-specific 5xx no longer holds its healthy
     // siblings hostage until the sub-batch composition happens to change. A SYSTEMIC failure (every
     // record fails, no healthy sibling — a transient outage or a systemic 4xx) still leaves the whole
-    // sub-batch uncollected and quarantines nothing, reached now via isolation rather than a
-    // short-circuit (the anyHealthy guard below). This is the foundation the repeatedly-transient
-    // cap (Slice B) builds on — the per-record 'transient' outcome it exposes is where a strike
-    // counter would later hang.
+    // sub-batch uncollected and make-failed nothing for a FRESH message, reached now via isolation
+    // rather than a short-circuit (the anyHealthy guard below). The per-record 'transient' outcome this
+    // exposes is where the repeatedly-transient write cap below hangs its strike counter: a transient
+    // that recurs record-specifically across runs IS capped there (an already-struck record can even
+    // finish capping during an outage — residual #1), while a fresh message in a systemic outage is
+    // still never struck.
     Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the failure.',
       String(batch.code), String(start), String(records.length));
     const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }], upsertRetryOpts) }; });
@@ -368,10 +372,17 @@ function collectJobEmailsLocked_() {
         clearTransientStrike_(transientStrikes, scriptProperties, o.r.messageId); // success resets the strike
       } else if (o.res.kind === 'transient') {
         // Rate-limit/outage on this record's PATCH (including one provoked by firing the individual
-        // PATCHes in quick succession) — retry next run, not poison. Two sub-cases gate on anyHealthy:
-        if (anyHealthy) {
-          // RECORD-SPECIFIC transient: a sibling upserted 200 this run, so the system is up and the
-          // failure is this record's. Count a CONSECUTIVE strike; cap it at maxTransientRetries.
+        // PATCHes in quick succession) — retry next run, not poison. Strike when record-specificity is
+        // proven: a same-run healthy sibling (anyHealthy) OR a STICKY prior strike — this message
+        // already earned one with a sibling on an earlier run. Stickiness is load-bearing because #26
+        // make-collects the healthy siblings, so they leave CONFIG.QUERY and a genuinely-stuck record
+        // is SOLO on every later run; without it the counter freezes at its run-1 value and the cap is
+        // never reached (Codex F1, PR #27). priorStrikes is read BEFORE this run's bump (each message
+        // is processed once per run, so transientStrikes[id] still holds the prior-run count here).
+        const priorStrikes = transientStrikes[o.r.messageId] || 0;
+        if (anyHealthy || priorStrikes > 0) {
+          // RECORD-SPECIFIC transient — proven this run (a healthy sibling) OR carried from a prior run
+          // (a sticky strike). Count a CONSECUTIVE strike; cap it at maxTransientRetries.
           const n = bumpTransientStrike_(transientStrikes, scriptProperties, o.r.messageId);
           if (shouldQuarantineTransient_(n, maxTransientRetries)) {
             // Repeatedly transient on its own PATCH across runs (a payload Airtable chokes on every
@@ -394,11 +405,13 @@ function collectJobEmailsLocked_() {
               String(o.res.code), o.r.messageId, String(n), String(maxTransientRetries));
           }
         } else {
-          // SYSTEMIC transient outage (no healthy sibling this run): NO strike — a multi-hour Airtable
-          // outage must never mass-quarantine the queue. Left uncollected + fail-loud, exactly as before.
+          // SYSTEMIC outage AND never proven record-specific (no healthy sibling this run, no prior
+          // strike): NO strike — a FRESH message in a multi-hour outage must never be quarantined.
+          // This is the mass-quarantine guard, and it still holds for the bulk of the queue (every
+          // message that hasn't already earned a strike). Left uncollected + fail-loud, as before.
           stuck = true;
           if (!stuckFirst) stuckFirst = o.res.first;
-          Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — systemic outage, no healthy sibling; no strike, stays uncollected, retries next run.',
+          Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — systemic/unproven (no healthy sibling, no prior strike); no strike, stays uncollected, retries next run.',
             String(o.res.code), o.r.messageId);
         }
       } else if (anyHealthy) {
@@ -580,9 +593,11 @@ function getIntProp_(name, fallback, min, max) {
 
 // ---------- repeatedly-transient write strike counter (Script Properties) ----------
 // Caps the "retries forever, fails the run every run" behaviour of a RECORD-SPECIFIC transient
-// write: a record whose own PATCH trips a 429/5xx/transport blip on every run (while a healthy
-// sibling proves the endpoint/auth/schema is fine) is make-failed after MAX_TRANSIENT_WRITE_RETRIES
-// CONSECUTIVE strikes. The counter can't live in Airtable (the failing write means there is no row),
+// write: a record whose own PATCH trips a 429/5xx/transport blip on every run is make-failed after
+// MAX_TRANSIENT_WRITE_RETRIES CONSECUTIVE strikes. Record-specificity is proven by a same-run healthy
+// sibling for the first strike, then carried by the counter itself (sticky) for subsequent solo
+// failures — the collect loop owns that gating (anyHealthy || priorStrikes > 0); these helpers just
+// load/bump/clear/test. The counter can't live in Airtable (the failing write means there is no row),
 // so it lives in Script Properties, one integer per message keyed wretry:<messageId>. The map is
 // loaded ONCE per run (loadTransientStrikes_) into memory, mutated by bump/clear, and each mutation
 // persisted immediately (setProperty on a strike, deleteProperty on clear/quarantine) — loading once
@@ -620,8 +635,9 @@ function loadTransientStrikes_(props) {
 
 // Record one consecutive record-specific transient strike against a message: increment the
 // in-memory map and persist the new value. Returns the new count, which the caller compares to the
-// cap (shouldQuarantineTransient_). Only ever called when a healthy sibling proved the failure is
-// record-specific (the anyHealthy guard) — a systemic outage never strikes.
+// cap (shouldQuarantineTransient_). Called once record-specificity is proven — a same-run healthy
+// sibling for the first strike, or a carried prior strike (sticky) thereafter; never on a fresh
+// message in a systemic outage (the caller's anyHealthy || priorStrikes > 0 gate).
 function bumpTransientStrike_(strikes, props, msgId) {
   const n = (strikes[msgId] || 0) + 1;
   strikes[msgId] = n;

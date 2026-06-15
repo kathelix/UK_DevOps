@@ -125,12 +125,16 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   empty-records guard, the clamp, or any cleaning-stage wiring flips an assertion. The integration
   harness backs `PropertiesService` with a **mutable store** (`getProperty`/`getProperties`/
   `setProperty`/`deleteProperty`, seedable + inspectable post-run) so it also pins the
-  **repeatedly-transient write cap**: a record-specific transient strikes its `wretry:<id>` counter
-  (below the cap → stuck + counted; at `MAX_TRANSIENT_WRITE_RETRIES` → `make-failed`/quarantined,
-  counter deleted, its own fail-loud alarm); a **systemic** outage never strikes even seeded at N−1
-  (the mass-quarantine guard, mutation-checked against the `anyHealthy` gate); a successful upsert
-  clears the counter; `DRY_RUN` writes/deletes nothing (only one `getProperties` load); the cap is
-  runtime-tunable via `MAX_TRANSIENT_WRITE_RETRIES` (out-of-range → default + warn); and a quarantine
+  **repeatedly-transient write cap** with **sticky record-specificity** (Codex F1): a record-specific
+  transient strikes its `wretry:<id>` counter (below the cap → stuck + counted; at
+  `MAX_TRANSIENT_WRITE_RETRIES` → `make-failed`/quarantined, counter deleted, its own fail-loud alarm).
+  A **multi-run** regression threads the store across `runCollector` calls — a stuck record proven with
+  a sibling on run 1 keeps striking **solo** on later runs until it caps (the F1 mutation check: frozen
+  at 1 on the pre-fix head). The **mass-quarantine guard** is pinned for *fresh* never-struck messages
+  (a systemic outage strikes/quarantines nothing, single- and multi-run), and the **struck-then-outage
+  residual** is pinned too (an already-struck record finishes capping during an outage while its fresh
+  siblings don't strike). A successful upsert clears the counter; `DRY_RUN` writes/deletes nothing (one
+  `getProperties` load); the cap is runtime-tunable (out-of-range → default + warn); and a quarantine
   folds into the one F1 throw alongside a committed footer miss.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,

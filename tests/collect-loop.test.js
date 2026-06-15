@@ -781,18 +781,38 @@ test('quarantine at the cap: seed wretry:m1 = N-1, the Nth record-specific strik
   assert.ok(r.logs.some(l => /Labeled m1 as job-vacancies\/make-failed — repeatedly-transient write quarantined after 5 strike\(s\) \(max 5\)/.test(l)), 'the quarantine is logged with the strike count + cap');
 });
 
-test('systemic transient outage NEVER strikes or quarantines, even with wretry:m1 seeded at N-1 (the mass-quarantine guard)', () => {
-  // Every record 503s (no healthy sibling), so the failure is systemic, not record-specific. Even
-  // with m1 one short of the cap, it must NOT strike and NOT quarantine — a multi-hour Airtable
-  // outage can't mass-quarantine the queue. Mutation: removing the anyHealthy gate (striking on
-  // systemic) strikes m1 to 5 -> it quarantines -> failed.length flips 0->1 and the counter is deleted.
-  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: () => 503, scriptProps: { 'wretry:m1': '4' }, expectThrow: true });
+test('mass-quarantine guard: FRESH never-struck records in a systemic outage strike nothing and quarantine nothing', () => {
+  // Every record 503s (no healthy sibling) and none has a prior strike — so none can earn a FIRST
+  // strike. The systemic outage quarantines nothing and writes no counter. This is the guard the
+  // sticky rule must preserve for fresh traffic. Mutation: dropping the first-strike anyHealthy
+  // requirement (strike on any transient) would strike + eventually quarantine the whole queue.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: () => 503, expectThrow: true });
   assert.equal(r.collected.length, 0, 'a systemic outage collects nothing');
-  assert.equal(r.failed.length, 0, 'and quarantines NOTHING (no healthy sibling — the guard holds)');
-  assert.equal(r.store['wretry:m1'], '4', 'the seeded counter is UNCHANGED — no strike on a systemic outage');
+  assert.equal(r.failed.length, 0, 'and quarantines NOTHING — no fresh message earns a first strike');
   assert.equal(r.propCalls.set.length, 0, 'no setProperty fired (nothing struck)');
+  assert.ok(Object.keys(r.store).every(k => k.indexOf('wretry:') !== 0), 'no wretry: counter created');
   assert.ok(r.threw, 'the run still ends Failed (stuck records, fail-loud)');
   assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, 'counted once as a stuck sub-batch, NOT a quarantine');
+});
+
+test('accepted residual (struck-then-outage): an ALREADY-struck record still caps during a systemic outage, but its FRESH siblings do not strike', () => {
+  // Sticky record-specificity's documented residual #1 (TECH_DESIGN §2 / OPERATIONS). m1 carries a
+  // strike from a prior record-specific run (seeded N-1=4); m0/m2 are fresh. Now a SYSTEMIC outage hits
+  // (all 503, no healthy sibling this run). m1's carried proof keeps it striking -> it caps at 5 and is
+  // quarantined; m0/m2, never proven record-specific, do NOT strike (bounded to already-suspicious
+  // records — never a *mass* quarantine). The run names BOTH the stuck-sibling upsert failure and the
+  // quarantine. Mutation: a non-sticky gate (anyHealthy only) leaves m1 frozen at 4, failed.length 0.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: () => 503, scriptProps: { 'wretry:m1': '4' }, expectThrow: true });
+  assert.deepEqual(r.failed, ['m1'], 'only the already-struck record caps; the fresh siblings do not');
+  assert.equal('wretry:m1' in r.store, false, 'm1\'s counter cleared on quarantine');
+  assert.ok(Object.keys(r.store).every(k => k.indexOf('wretry:') !== 0), 'no NEW counter for the fresh siblings (m0/m2 never strike)');
+  assert.equal(r.collected.length, 0, 'nothing collected in a full outage');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(
+    r.threw.message,
+    /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503\. Also 1 write\(s\) quarantined after repeated transient failures; first: m1 after 5 strikes$/,
+    'names the fresh-sibling stuck upsert AND the m1 quarantine, in precedence order',
+  );
 });
 
 test('success resets: a seeded wretry:m1 counter is deleted when m1 upserts 200 (and only m1\'s, in-memory no-op for the rest)', () => {
@@ -864,4 +884,59 @@ test('F1 — a quarantine co-occurring with a COMMITTED footer miss throws ONE e
   // Prove both conditions really occurred (not just that the string was composed):
   assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss did occur');
   assert.ok(r.logs.some(l => /repeatedly-transient write quarantined after 5 strike\(s\)/.test(l)), 'the quarantine did occur');
+});
+
+// ---------- sticky record-specificity across runs (Codex F1 [P1] regression, PR #27) ----------
+// THE F1 regression: the strike counter must keep advancing once a stuck record's healthy siblings
+// are make-collected and leave CONFIG.QUERY (so the record is SOLO on later runs), or the cap is
+// never reached. These thread the SAME Script Properties store across several runCollector calls.
+// m0 is the persistently-stuck record (n=1 later runs generate m0 alone — a genuine solo run).
+
+test('sticky record-specificity: a proven record-specific write keeps striking SOLO across runs until it caps (F1 regression)', () => {
+  // Run 1: m0 (503) batched with healthy m1/m2 (200) — m0 earns its first strike WITH a sibling, then
+  // m1/m2 collect and leave the query. Runs 2-5: m0 is ALONE (n=1) and 503s with no healthy sibling —
+  // anyHealthy is false, but the carried strike (sticky) keeps it counting 2,3,4,5 until it caps and is
+  // make-failed. On the PR head BEFORE this fix, m0 freezes at 1 forever — so this is the mutation check
+  // for the sticky rule (assert the SOLO strike advances; the buggy code leaves it at 1).
+  const stuckUpsert = (i, recs) => {
+    if (recs.length > 1) return 503;                       // a batch containing m0 fails all-or-nothing
+    return recs[0].fields.MessageId === 'm0' ? 503 : 200;  // isolation: m0 is the bad record
+  };
+  let store = {};
+
+  const r1 = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: stuckUpsert, scriptProps: store, expectThrow: true });
+  assert.deepEqual(r1.collected.sort(), ['m1', 'm2'], 'run 1: the healthy siblings collect (and leave the query)');
+  assert.equal(r1.failed.length, 0, 'run 1: m0 not yet capped');
+  assert.equal(r1.store['wretry:m0'], '1', 'run 1: m0 earns its first strike (with a sibling) -> 1');
+  store = r1.store;
+
+  // Runs 2-4: m0 SOLO, below the cap -> keeps striking (sticky), not yet quarantined.
+  for (let expected = 2; expected <= 4; expected++) {
+    const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, upsertCode: stuckUpsert, scriptProps: store, expectThrow: true });
+    assert.equal(r.failed.length, 0, `run ${expected}: still below the cap, not make-failed`);
+    assert.equal(r.store['wretry:m0'], String(expected), `run ${expected}: SOLO strike advanced to ${expected} (FROZEN at 1 on the pre-fix head)`);
+    assert.match(r.threw.message, /^1 sub-batch upsert\(s\) failed; first: 503: ERR 503$/, `run ${expected}: stuck + fail-loud while below the cap`);
+    store = r.store;
+  }
+
+  // Run 5: m0 SOLO hits the cap (5) -> quarantined though it has been alone since run 1.
+  const r5 = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, upsertCode: stuckUpsert, scriptProps: store, expectThrow: true });
+  assert.deepEqual(r5.failed, ['m0'], 'run 5: m0 quarantined (make-failed) at the cap, SOLO the whole time since run 1');
+  assert.equal('wretry:m0' in r5.store, false, 'run 5: the counter is cleared on quarantine');
+  assert.match(r5.threw.message, /^1 write\(s\) quarantined after repeated transient failures; first: m0 after 5 strikes$/, 'run 5: the quarantine alarm names m0 + the strike count');
+});
+
+test('mass-quarantine guard holds across runs: fresh never-struck records in a sustained systemic outage never strike or quarantine', () => {
+  // The guard the sticky rule must NOT weaken: every record 503s (no healthy sibling) on every run and
+  // none ever earns a first strike, so across many runs nothing is struck or quarantined — a multi-hour
+  // outage on fresh traffic stays a no-quarantine fail-loud. Threads the store so a leaked strike would
+  // accumulate and surface. Mutation: dropping the first-strike sibling requirement caps the whole queue.
+  let store = {};
+  for (let k = 1; k <= 6; k++) {
+    const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, upsertCode: () => 503, scriptProps: store, expectThrow: true });
+    assert.equal(r.failed.length, 0, `run ${k}: a systemic outage on fresh traffic quarantines nothing`);
+    assert.equal(r.propCalls.set.length, 0, `run ${k}: no strike persisted (no first-strike sibling proof)`);
+    assert.ok(Object.keys(r.store).every(key => key.indexOf('wretry:') !== 0), `run ${k}: no wretry: counter ever created`);
+    store = r.store;
+  }
 });
