@@ -378,27 +378,33 @@ function collectJobEmailsLocked_() {
     Logger.log('DRY_RUN complete: %s message(s) inspected, nothing written, nothing labeled.', String(inspected));
   } else {
     Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
-    // End-of-run fail-loud canary. Up to THREE independent signals can co-occur in one run — an
-    // un-quarantined transient READ failure, a transient/systemic UPSERT failure, and a footer-marker
-    // MISS — and none may be swallowed (F1, PR #17): a signal riding on already-committed-and-labelled
-    // work never re-presents, so a co-occurring throw that suppressed it would lose it forever. So we
-    // collect EVERY present signal and throw ONE error naming all of them. Precedence: data-integrity
-    // first (reads, then writes — the order they hit the pipeline), then the footer template-change
-    // alarm. Thrown only AFTER the loop and the summary logs — every successful sub-batch is already
-    // committed and labelled, so the throw loses no work; it only flips the execution to Failed so the
-    // single GAS failure email fires (a read/upsert outage to fix, or a changed footer marker to update).
-    // The cost of the footer alarm (owner-accepted 2026-06-10): a changed template fails ~48 runs/day
-    // until the marker is fixed.
-    const footerMissMsg = footerStats.misses > 0
-      ? footerStats.misses + ' footer marker miss(es); first: ' +
-        footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
-      : '';
-    const alarms = [];
-    if (readFailures.count > 0) alarms.push(readFailures.count + ' Gmail read(s) failed; first: ' + readFailures.first);
-    if (upsertFailures.count > 0) alarms.push(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
-    if (footerMissMsg) alarms.push(footerMissMsg);
-    if (alarms.length > 0) throw new Error(alarms.join('. Also '));
   }
+
+  // End-of-run fail-loud canary, evaluated in BOTH real and DRY_RUN modes. Up to three independent
+  // signals can co-occur — an un-quarantined transient READ failure, a transient/systemic UPSERT
+  // failure, and a footer-marker MISS — and none may be swallowed (F1, PR #17): a signal riding on
+  // already-committed-and-labelled work never re-presents, so a co-occurring throw that suppressed it
+  // would lose it forever. We collect EVERY present signal and throw ONE error naming all of them, in
+  // precedence order — data-integrity first (reads, then writes — the order they hit the pipeline) —
+  // then the footer template-change alarm. Thrown only AFTER the summary logs, so it loses no work; it
+  // only flips the execution to Failed so the single GAS failure email fires.
+  //   DRY_RUN policy (Codex F1[P2], PR #25): a persistent Gmail-READ failure is a real outage, NOT a
+  //   side effect — DRY_RUN does real reads, so it must fail loud on a read outage too, or dry-run
+  //   validation silently misses the exact failure this slice exists to surface. The write-path
+  //   signals do NOT fire in DRY_RUN: an upsert never runs (so a write failure can't occur), and a
+  //   footer miss is a side-effect-only template alarm deliberately suppressed in DRY_RUN (it still
+  //   logs, but never throws — owner-accepted; a changed template would otherwise fail every manual
+  //   dry run). The footer alarm's cost on REAL runs (owner-accepted 2026-06-10): a changed template
+  //   fails ~48 runs/day until the marker is fixed.
+  const footerMissMsg = (!dryRun && footerStats.misses > 0)
+    ? footerStats.misses + ' footer marker miss(es); first: ' +
+      footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
+    : '';
+  const alarms = [];
+  if (readFailures.count > 0) alarms.push(readFailures.count + ' Gmail read(s) failed; first: ' + readFailures.first);
+  if (!dryRun && upsertFailures.count > 0) alarms.push(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+  if (footerMissMsg) alarms.push(footerMissMsg);
+  if (alarms.length > 0) throw new Error(alarms.join('. Also '));
 }
 
 // Timeout-safety predicate (pure, unit-tested): true once a run has used its

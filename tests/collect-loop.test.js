@@ -643,3 +643,33 @@ test('F1 — read + upsert + footer failures co-occur: ONE thrown error names al
   assert.ok(r.logs.some(l => /Airtable upsert FAILED \(transient 503\)/.test(l)), 'the upsert failure occurred');
   assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss occurred');
 });
+
+test('DRY_RUN still fails loud on a persistent read outage, but keeps suppressing the footer-miss alarm (Codex F1[P2], PR #25)', () => {
+  // DRY_RUN does REAL reads, so a persistent read outage must NOT be silently swallowed — it is the
+  // very failure this slice exists to surface. Earlier the read canary was built only in the
+  // non-DRY_RUN branch, so a dry run logged the failure then returned "DRY_RUN complete" (Codex's
+  // repro). Compose a dry run with BOTH a read failure and a footer miss: m1's get throws on every
+  // attempt (read outage); m0 is a reed no-footer message whose read succeeds (a footer MISS). In
+  // DRY_RUN nothing is written/labelled, the footer-miss alarm stays SUPPRESSED (side-effect-only),
+  // but the read-failure alarm STILL throws so dry-run validation reports the outage. Mutation:
+  // gating the read alarm behind !dryRun (the bug) makes r.threw null and flips the throw asserts.
+  const reedNoFooter = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const r = runCollector({
+    n: 2, budgetMs: 1e9, getDelta: 1, dryRun: true,
+    from: (i) => (i === 0 ? 'jobs@reed.co.uk' : 'someone@x.com'),
+    bodyHtml: (i) => (i === 0 ? reedNoFooter : '<html><body>hi</body></html>'),
+    getThrows: (id) => id === 'm1',
+    expectThrow: true,
+  });
+  assert.equal(r.upserts.length, 0, 'DRY_RUN sends no PATCH');
+  assert.equal(r.collected.length, 0, 'DRY_RUN labels nothing make-collected');
+  assert.equal(r.failed.length, 0, 'DRY_RUN never make-faileds');
+  assert.ok(r.threw, 'a persistent read outage fails the run loud even in DRY_RUN');
+  assert.match(
+    r.threw.message,
+    /^1 Gmail read\(s\) failed; first: m1: gmail read blip #4$/,
+    'ONLY the read-failure alarm — the footer miss stays suppressed in DRY_RUN, the upsert never ran',
+  );
+  assert.ok(r.logs.some(l => /DRY_RUN complete:/.test(l)), 'the dry-run summary still logs before the throw');
+  assert.ok(r.logs.includes('Footer: msg=m0 domain=reed.co.uk marker=miss bytes_cut=0'), 'the footer miss was detected (logged, just not thrown)');
+});
