@@ -197,11 +197,13 @@ function collectJobEmailsLocked_() {
   // while every run shows "Completed". A deterministic PARSE failure is the other branch (make-failed,
   // below) and does NOT count here — that is handled/quarantined, not an un-collected read.
   const readFailures = { count: 0, first: '' };
-  // Fail-loudly accumulator, incremented ONCE per sub-batch that leaves records stuck — a
-  // transient batch (429/5xx/transport throw), or an isolated batch with any stuck record (a
-  // transient individual retry, or a systemic 4xx with no healthy sibling). Counting per
-  // sub-batch (not per record) keeps the "N sub-batch upsert(s) failed" message honest. A
-  // make-failed poison record (isolated, with a healthy sibling) is handled, NOT counted.
+  // Fail-loudly accumulator, incremented ONCE per sub-batch that leaves any record stuck after
+  // per-record isolation (a transient individual retry, or a systemic failure — a 4xx OR a
+  // transient — with no healthy sibling). Every non-ok sub-batch now flows through the SAME
+  // isolation block (there is no longer a transient early-continue), so the count is sourced in
+  // one place. Counting per sub-batch (not per record) keeps the "N sub-batch upsert(s) failed"
+  // message honest. A make-failed poison record (isolated, with a healthy sibling) is handled,
+  // NOT counted.
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity contract:
   // failed messages stay unlabelled and retry next run), but a run with any such failure
   // must END Failed: GAS failure emails fire only on Failed executions, so a hard Airtable
@@ -298,23 +300,22 @@ function collectJobEmailsLocked_() {
       }
       continue;
     }
-    if (batch.kind === 'transient') {
-      // 429/5xx, or a transport failure (code 0 from a thrown UrlFetchApp.fetch): leave the
-      // WHOLE sub-batch uncollected and retry next run (write-then-label means an unlabelled
-      // message re-presents). Count toward the fail-loud throw; never make-failed — not poison.
-      upsertFailures.count++;
-      if (!upsertFailures.first) upsertFailures.first = batch.first;
-      Logger.log('Airtable upsert FAILED (transient %s) for sub-batch starting at %s — those messages stay uncollected and will retry next run.', String(batch.code), String(start));
-      continue;
-    }
-
-    // batch.kind === 'poison': a deterministic 4xx rejected the whole PATCH (Airtable batch
-    // writes are all-or-nothing), so >=1 record is a record-specific reject. Re-send each
-    // record on its OWN PATCH — through airtableUpsert_ (via attemptUpsert_), so the transient
-    // retry/backoff wrapper composes here too — to tell a poison record (4xx) apart from a
-    // healthy sibling (200) or a transient blip (429/5xx/throw). This isolates poison from
-    // its good siblings on the WRITE side, mirroring the per-message read-side isolation above.
-    Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the reject.',
+    // Any non-ok batch (poison OR transient) falls through to per-record isolation. Airtable batch
+    // writes are all-or-nothing, so a SINGLE record-specific failure — a deterministic 4xx reject
+    // OR a 5xx/transport blip that trips on one record — fails the WHOLE sub-batch PATCH. Re-send
+    // each record on its OWN PATCH (through airtableUpsert_ via attemptUpsert_, so the transient
+    // retry/backoff wrapper composes here too) to tell a poison record (4xx) apart from a healthy
+    // sibling (200) or a transient blip (429/5xx/throw), and COLLECT the healthy siblings instead of
+    // stranding them behind one bad record. This unified isolation mirrors the per-message read-side
+    // isolation above; the early-`continue` that used to leave a whole TRANSIENT sub-batch
+    // uncollected on every run is gone, so a record-specific 5xx no longer holds its healthy
+    // siblings hostage until the sub-batch composition happens to change. A SYSTEMIC failure (every
+    // record fails, no healthy sibling — a transient outage or a systemic 4xx) still leaves the whole
+    // sub-batch uncollected and quarantines nothing, reached now via isolation rather than a
+    // short-circuit (the anyHealthy guard below). This is the foundation the repeatedly-transient
+    // cap (Slice B) builds on — the per-record 'transient' outcome it exposes is where a strike
+    // counter would later hang.
+    Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the failure.',
       String(batch.code), String(start), String(records.length));
     const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }], upsertRetryOpts) }; });
     // Quarantine guard (prevents mass-quarantine on a systemic error): only make-failed a
@@ -1302,7 +1303,8 @@ function airtableUpsert_(records, failures, opts) {
 }
 
 // Attempt one Airtable upsert — the whole sub-batch, or a single record during isolation —
-// and classify the outcome for the poison-isolation logic. Returns
+// and classify the outcome for the per-record isolation logic (any non-ok batch, poison or
+// transient, is re-sent record-by-record through here). Returns
 // { kind: 'ok' | 'transient' | 'poison', code, first }:
 //   - 'ok'        HTTP 200: the record(s) are written; safe to label make-collected.
 //   - 'transient' code 0 (UrlFetchApp transport failure) OR HTTP 429/5xx: a rate-limit/outage,
