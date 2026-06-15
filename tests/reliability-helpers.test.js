@@ -422,3 +422,89 @@ test('gmailReadWithRetry_ default backoff comes from CONFIG.RETRY_BACKOFF_MS (sh
   // primitive ms so deepEqual compares values, not cross-realm prototypes (loader realm caveat).
   assert.deepEqual(sleeps, Array.from(CONFIG.RETRY_BACKOFF_MS), 'backoff schedule is CONFIG.RETRY_BACKOFF_MS, not a literal');
 });
+
+// ---------- repeatedly-transient write strike counter (Script Properties, wretry:<messageId>) ----------
+// The cross-run cap: a record-specific transient write (a healthy sibling proved the system is up)
+// is make-failed after MAX_TRANSIENT_WRITE_RETRIES consecutive strikes. These pin the pure cap
+// predicate, the prefix-filtered load, and the bump/clear persistence. A mutable in-memory Script
+// Properties stub backs getProperties/setProperty/deleteProperty and records every call.
+function fakeProps(seed) {
+  const store = Object.assign({}, seed);
+  const calls = { set: [], delete: [], getProperties: 0 };
+  return {
+    store,
+    calls,
+    getProperties: () => { calls.getProperties++; return Object.assign({}, store); },
+    setProperty: (k, v) => { calls.set.push([k, v]); store[k] = String(v); },
+    deleteProperty: (k) => { calls.delete.push(k); delete store[k]; },
+  };
+}
+
+test('TRANSIENT_STRIKE_PREFIX is the operator-facing wretry: namespace (pinned — OPERATIONS documents it)', () => {
+  const { TRANSIENT_STRIKE_PREFIX } = loadCollector();
+  assert.equal(TRANSIENT_STRIKE_PREFIX, 'wretry:', 'the Script Property key prefix is wretry: (do not drift from the runbook)');
+});
+
+test('shouldQuarantineTransient_ is true only at/above the cap (>=, so the Nth strike quarantines)', () => {
+  const { shouldQuarantineTransient_ } = loadCollector();
+  assert.equal(shouldQuarantineTransient_(1, 5), false, '1 of 5 — below the cap');
+  assert.equal(shouldQuarantineTransient_(4, 5), false, '4 of 5 — still below');
+  assert.equal(shouldQuarantineTransient_(5, 5), true, 'the 5th strike hits the cap (>=, not >) — quarantine');
+  assert.equal(shouldQuarantineTransient_(6, 5), true, 'above the cap — quarantine');
+  assert.equal(shouldQuarantineTransient_(1, 1), true, 'a cap of 1 quarantines on the first strike');
+  // Mutation: `>` instead of `>=` flips the (5,5) case; counting strikes off-by-one flips (5,5)/(1,1).
+});
+
+test('loadTransientStrikes_ reads ONLY wretry:* keys, int-parses them, ignores everything else', () => {
+  const { loadTransientStrikes_ } = loadCollector();
+  const props = fakeProps({
+    'wretry:m1': '3',
+    'wretry:m2': '1',
+    // non-strike keys that must be ignored (DRY_RUN, the token, the two int knobs):
+    DRY_RUN: 'true',
+    AIRTABLE_TOKEN: 'tok',
+    MAX_MESSAGES: '25',
+    MAX_TRANSIENT_WRITE_RETRIES: '5',
+    // a corrupted / non-integer strike value reads as "no strike" (start fresh), not a crash:
+    'wretry:m3': 'abc',
+    'wretry:m4': '0',     // 0 is not a live strike
+    'wretry:': '7',       // a bare prefix with no message id is ignored
+  });
+  const strikes = loadTransientStrikes_(props);
+  assert.deepEqual(Object.keys(strikes).sort(), ['m1', 'm2'], 'only the two well-formed wretry: keys load');
+  assert.equal(strikes.m1, 3, 'value int-parsed');
+  assert.equal(strikes.m2, 1);
+  assert.equal(strikes.m3, undefined, 'a non-integer wretry value is ignored');
+  assert.equal(strikes.m4, undefined, 'a 0 value is not a live strike');
+  // Mutation: dropping the prefix filter pulls DRY_RUN/AIRTABLE_TOKEN/MAX_* in (Object.keys grows).
+});
+
+test('bumpTransientStrike_ increments the in-memory map AND persists setProperty(wretry:<id>, n)', () => {
+  const { bumpTransientStrike_ } = loadCollector();
+  const props = fakeProps({ 'wretry:m1': '2' });
+  const strikes = { m1: 2 }; // as loadTransientStrikes_ would have produced
+  const n1 = bumpTransientStrike_(strikes, props, 'm1');
+  assert.equal(n1, 3, 'returns the new count');
+  assert.equal(strikes.m1, 3, 'in-memory map incremented');
+  assert.equal(props.store['wretry:m1'], '3', 'persisted as a string');
+  // A first strike on an unseen message starts at 1.
+  const n2 = bumpTransientStrike_(strikes, props, 'mNew');
+  assert.equal(n2, 1, 'an unseen message strikes to 1');
+  assert.equal(props.store['wretry:mNew'], '1');
+  assert.deepEqual(props.calls.set, [['wretry:m1', '3'], ['wretry:mNew', '1']], 'one setProperty per bump, with the wretry: key');
+});
+
+test('clearTransientStrike_ deletes a struck counter, but is an in-memory no-op (no deleteProperty) when unstruck', () => {
+  const { clearTransientStrike_ } = loadCollector();
+  const props = fakeProps({ 'wretry:m1': '4' });
+  const strikes = { m1: 4 };
+  // Clearing a message that HAD a strike: drops it from the map AND deletes the property.
+  clearTransientStrike_(strikes, props, 'm1');
+  assert.equal(strikes.m1, undefined, 'dropped from the in-memory map');
+  assert.equal('wretry:m1' in props.store, false, 'property deleted');
+  assert.deepEqual(props.calls.delete, ['wretry:m1'], 'one deleteProperty');
+  // Clearing a message that was NEVER struck: pure in-memory no-op, NO deleteProperty fired (so a
+  // healthy run doesn't delete-spam Script Properties for every message it collects).
+  clearTransientStrike_(strikes, props, 'mUnseen');
+  assert.deepEqual(props.calls.delete, ['wretry:m1'], 'no extra deleteProperty for an unstruck message');
+});

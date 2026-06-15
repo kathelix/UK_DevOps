@@ -55,6 +55,21 @@ const CONFIG = {
   // A constant (not a Script Property) is enough — tune here and redeploy if Airtable's
   // limits change. Worst-case added latency per call: sum = 7s.
   RETRY_BACKOFF_MS: [1000, 2000, 4000],
+  // Cross-run cap on a RECORD-SPECIFIC repeatedly-transient write. A record whose own PATCH trips a
+  // transient (429/5xx/transport) on every run — while a healthy sibling that run proves the system
+  // is up — is make-failed (quarantined) after this many CONSECUTIVE such strikes, so a payload
+  // Airtable chokes on every time stops re-presenting and failing the run forever (the unbounded
+  // upsertFailures alarm storm the TODO flagged). Strikes live in Script Properties, one integer per
+  // message keyed wretry:<messageId> (the write fails so the message has no Airtable row to hold a
+  // counter), loaded once per run and cleared on any successful upsert or on quarantine. Default 5
+  // (~2.5 h of sustained record-specific failure at the ~30-min, ~48 runs/day cadence before
+  // quarantine). Runtime-tunable via the MAX_TRANSIENT_WRITE_RETRIES Script Property (getIntProp_,
+  // bounds [1, 100]) without a redeploy, like MAX_MESSAGES. Record-specificity is proven by a same-run
+  // healthy sibling for the FIRST strike, then carried (sticky): once a message has a strike, its solo
+  // failures keep counting to the cap (else the cap is unreachable, since #26 make-collects the
+  // siblings out of the queue — Codex F1). A FRESH (never-struck) message in a SYSTEMIC outage never
+  // strikes — the mass-quarantine guard, holding for the bulk of the queue.
+  MAX_TRANSIENT_WRITE_RETRIES: 5,
   AIRTABLE_BASE_ID: 'appV9puNHinuRKTk9',
   AIRTABLE_TABLE: 'RawEmails',
   // Upsert merge key (Gmail message id): re-collecting the same message updates
@@ -202,14 +217,30 @@ function collectJobEmailsLocked_() {
   // transient — with no healthy sibling). Every non-ok sub-batch now flows through the SAME
   // isolation block (there is no longer a transient early-continue), so the count is sourced in
   // one place. Counting per sub-batch (not per record) keeps the "N sub-batch upsert(s) failed"
-  // message honest. A make-failed poison record (isolated, with a healthy sibling) is handled,
-  // NOT counted.
+  // message honest. A make-failed record is handled, NOT counted — both a poison record (isolated,
+  // with a healthy sibling) and a repeatedly-transient write quarantined at the strike cap (which
+  // carries its OWN quarantine fail-loud signal instead).
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity contract:
   // failed messages stay unlabelled and retry next run), but a run with any such failure
   // must END Failed: GAS failure emails fire only on Failed executions, so a hard Airtable
   // write-block would otherwise stall RawEmails silently while every run shows "Completed".
   // Re-raised after the summary logs.
   const upsertFailures = { count: 0, first: '' };
+  // Per-message repeatedly-transient strike counters (Script Properties, keyed wretry:<messageId>),
+  // loaded ONCE per run into an in-memory map (see the strike-counter helpers). This is a READ, so
+  // it is safe in DRY_RUN; the map is never MUTATED in a dry run because the whole upsert/isolation
+  // block where strikes/quarantines happen is short-circuited by the `if (dryRun) … continue` below.
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const transientStrikes = loadTransientStrikes_(scriptProperties);
+  // N: make-failed a record-specific transient write after this many CONSECUTIVE strikes. Runtime-
+  // tunable like MAX_MESSAGES (getIntProp_, bounds [1,100]); CONFIG default. An out-of-range value
+  // falls back + logs (getIntProp_), so a misconfig can't disable or unbound the cap silently.
+  const maxTransientRetries = getIntProp_('MAX_TRANSIENT_WRITE_RETRIES', CONFIG.MAX_TRANSIENT_WRITE_RETRIES, 1, 100);
+  // Fail-loud accumulator for quarantine events — its OWN end-of-run signal (precedence: reads →
+  // upserts → quarantines → footer). A quarantined record is HANDLED (make-failed), like a poison
+  // quarantine, so it does NOT count toward upsertFailures; but the event is still surfaced loud so a
+  // repeatedly-failing record can't be capped silently. `first` names the first message + its strike.
+  const quarantine = { count: 0, first: '' };
   // Clamp the configured sub-batch size to a safe stride: a 0/negative value would never
   // advance `start` (infinite loop), and a value > 10 exceeds Airtable's records/request
   // cap (the oversized PATCH is rejected 422 and the sub-batch would never commit).
@@ -297,6 +328,7 @@ function collectJobEmailsLocked_() {
       for (const r of records) {
         Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', r.messageId);
         collected++;
+        clearTransientStrike_(transientStrikes, scriptProperties, r.messageId); // success resets the strike (in-memory no-op unless it had one)
       }
       continue;
     }
@@ -311,10 +343,12 @@ function collectJobEmailsLocked_() {
     // uncollected on every run is gone, so a record-specific 5xx no longer holds its healthy
     // siblings hostage until the sub-batch composition happens to change. A SYSTEMIC failure (every
     // record fails, no healthy sibling — a transient outage or a systemic 4xx) still leaves the whole
-    // sub-batch uncollected and quarantines nothing, reached now via isolation rather than a
-    // short-circuit (the anyHealthy guard below). This is the foundation the repeatedly-transient
-    // cap (Slice B) builds on — the per-record 'transient' outcome it exposes is where a strike
-    // counter would later hang.
+    // sub-batch uncollected and make-failed nothing for a FRESH message, reached now via isolation
+    // rather than a short-circuit (the anyHealthy guard below). The per-record 'transient' outcome this
+    // exposes is where the repeatedly-transient write cap below hangs its strike counter: a transient
+    // that recurs record-specifically across runs IS capped there (an already-struck record can even
+    // finish capping during an outage — residual #1), while a fresh message in a systemic outage is
+    // still never struck.
     Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the failure.',
       String(batch.code), String(start), String(records.length));
     const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }], upsertRetryOpts) }; });
@@ -325,21 +359,61 @@ function collectJobEmailsLocked_() {
     // leave it all uncollected for a human and fail loud.
     const anyHealthy = isolated.some(function (o) { return o.res.kind === 'ok'; });
     // Count this isolated sub-batch as ONE failure if it leaves ANY record stuck (a transient
-    // individual retry, or a systemic poison with no healthy sibling) — NOT once per record, so
-    // a 5-record systemic outage reports "1 sub-batch upsert(s) failed", not "5" (Codex F-P3). A
-    // quarantined poison record (with a healthy sibling) is handled, not stuck — it doesn't count.
+    // individual retry below the strike cap, or a systemic poison/transient with no healthy sibling)
+    // — NOT once per record, so a 5-record systemic outage reports "1 sub-batch upsert(s) failed",
+    // not "5" (Codex F-P3). A make-failed record is handled, not stuck, so it doesn't count: a poison
+    // record (with a healthy sibling) OR a repeatedly-transient write quarantined at the strike cap.
     let stuck = false;
     let stuckFirst = '';
     for (const o of isolated) {
       if (o.res.kind === 'ok') {
         Gmail.Users.Messages.modify({ addLabelIds: [collectedLabelId] }, 'me', o.r.messageId);
         collected++;
+        clearTransientStrike_(transientStrikes, scriptProperties, o.r.messageId); // success resets the strike
       } else if (o.res.kind === 'transient') {
-        // Rate-limit/outage on this record's PATCH (including one provoked by firing the
-        // individual PATCHes in quick succession) — retry next run, never make-failed.
-        stuck = true;
-        if (!stuckFirst) stuckFirst = o.res.first;
-        Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — stays uncollected, retries next run.', String(o.res.code), o.r.messageId);
+        // Rate-limit/outage on this record's PATCH (including one provoked by firing the individual
+        // PATCHes in quick succession) — retry next run, not poison. Strike when record-specificity is
+        // proven: a same-run healthy sibling (anyHealthy) OR a STICKY prior strike — this message
+        // already earned one with a sibling on an earlier run. Stickiness is load-bearing because #26
+        // make-collects the healthy siblings, so they leave CONFIG.QUERY and a genuinely-stuck record
+        // is SOLO on every later run; without it the counter freezes at its run-1 value and the cap is
+        // never reached (Codex F1, PR #27). priorStrikes is read BEFORE this run's bump (each message
+        // is processed once per run, so transientStrikes[id] still holds the prior-run count here).
+        const priorStrikes = transientStrikes[o.r.messageId] || 0;
+        if (anyHealthy || priorStrikes > 0) {
+          // RECORD-SPECIFIC transient — proven this run (a healthy sibling) OR carried from a prior run
+          // (a sticky strike). Count a CONSECUTIVE strike; cap it at maxTransientRetries.
+          const n = bumpTransientStrike_(transientStrikes, scriptProperties, o.r.messageId);
+          if (shouldQuarantineTransient_(n, maxTransientRetries)) {
+            // Repeatedly transient on its own PATCH across runs (a payload Airtable chokes on every
+            // time): quarantine it so it stops re-presenting and failing the run forever. Reuse
+            // make-failed (excludes it from CONFIG.QUERY); clear its counter. A quarantined record is
+            // HANDLED, like the poison quarantine — it is NOT `stuck`, so it does not count toward
+            // upsertFailures; the quarantine accumulator carries its own fail-loud signal instead.
+            const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
+            Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', o.r.messageId);
+            clearTransientStrike_(transientStrikes, scriptProperties, o.r.messageId);
+            quarantine.count++;
+            if (!quarantine.first) quarantine.first = o.r.messageId + ' after ' + n + ' strikes';
+            Logger.log('Labeled %s as %s — repeatedly-transient write quarantined after %s strike(s) (max %s); excluded from future runs, inspect manually.',
+              o.r.messageId, CONFIG.FAILED_LABEL_NAME, String(n), String(maxTransientRetries));
+          } else {
+            // Below the cap: stuck (uncollected, retries next run) as before — but now counted.
+            stuck = true;
+            if (!stuckFirst) stuckFirst = o.res.first;
+            Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — strike %s/%s, stays uncollected, retries next run.',
+              String(o.res.code), o.r.messageId, String(n), String(maxTransientRetries));
+          }
+        } else {
+          // SYSTEMIC outage AND never proven record-specific (no healthy sibling this run, no prior
+          // strike): NO strike — a FRESH message in a multi-hour outage must never be quarantined.
+          // This is the mass-quarantine guard, and it still holds for the bulk of the queue (every
+          // message that hasn't already earned a strike). Left uncollected + fail-loud, as before.
+          stuck = true;
+          if (!stuckFirst) stuckFirst = o.res.first;
+          Logger.log('Airtable individual upsert FAILED (transient %s) for message %s — systemic/unproven (no healthy sibling, no prior strike); no strike, stays uncollected, retries next run.',
+            String(o.res.code), o.r.messageId);
+        }
       } else if (anyHealthy) {
         // Record-specific poison with a proven-healthy sibling: quarantine it so its good
         // siblings stop being re-fetched (and the run stops failing) every run. make-failed
@@ -381,22 +455,25 @@ function collectJobEmailsLocked_() {
     Logger.log('Collected %s of %s message(s).', String(collected), String(messageRefs.length));
   }
 
-  // End-of-run fail-loud canary, evaluated in BOTH real and DRY_RUN modes. Up to three independent
+  // End-of-run fail-loud canary, evaluated in BOTH real and DRY_RUN modes. Up to four independent
   // signals can co-occur — an un-quarantined transient READ failure, a transient/systemic UPSERT
-  // failure, and a footer-marker MISS — and none may be swallowed (F1, PR #17): a signal riding on
-  // already-committed-and-labelled work never re-presents, so a co-occurring throw that suppressed it
-  // would lose it forever. We collect EVERY present signal and throw ONE error naming all of them, in
-  // precedence order — data-integrity first (reads, then writes — the order they hit the pipeline) —
-  // then the footer template-change alarm. Thrown only AFTER the summary logs, so it loses no work; it
-  // only flips the execution to Failed so the single GAS failure email fires.
+  // failure, a repeatedly-transient write QUARANTINE, and a footer-marker MISS — and none may be
+  // swallowed (F1, PR #17): a signal riding on already-committed-and-labelled (or make-failed) work
+  // never re-presents, so a co-occurring throw that suppressed it would lose it forever. We collect
+  // EVERY present signal and throw ONE error naming all of them, in precedence order — data-integrity
+  // first (reads, then writes — the order they hit the pipeline), then the quarantine (a write-side
+  // cap), then the footer template-change alarm. Thrown only AFTER the summary logs, so it loses no
+  // work; it only flips the execution to Failed so the single GAS failure email fires.
   //   DRY_RUN policy (Codex F1[P2], PR #25): a persistent Gmail-READ failure is a real outage, NOT a
   //   side effect — DRY_RUN does real reads, so it must fail loud on a read outage too, or dry-run
   //   validation silently misses the exact failure this slice exists to surface. The write-path
-  //   signals do NOT fire in DRY_RUN: an upsert never runs (so a write failure can't occur), and a
-  //   footer miss is a side-effect-only template alarm deliberately suppressed in DRY_RUN (it still
-  //   logs, but never throws — owner-accepted; a changed template would otherwise fail every manual
-  //   dry run). The footer alarm's cost on REAL runs (owner-accepted 2026-06-10): a changed template
-  //   fails ~48 runs/day until the marker is fixed.
+  //   signals do NOT fire in DRY_RUN: an upsert never runs (so a write failure can't occur), a
+  //   quarantine never happens (it make-fails a message + writes Script Properties, both
+  //   side effects the short-circuited isolation block can't reach in a dry run), and a footer miss is
+  //   a side-effect-only template alarm deliberately suppressed in DRY_RUN (it still logs, but never
+  //   throws — owner-accepted; a changed template would otherwise fail every manual dry run). The
+  //   footer alarm's cost on REAL runs (owner-accepted 2026-06-10): a changed template fails ~48
+  //   runs/day until the marker is fixed.
   const footerMissMsg = (!dryRun && footerStats.misses > 0)
     ? footerStats.misses + ' footer marker miss(es); first: ' +
       footerStats.firstMissDomain + ' msg=' + footerStats.firstMissMsgId
@@ -404,6 +481,10 @@ function collectJobEmailsLocked_() {
   const alarms = [];
   if (readFailures.count > 0) alarms.push(readFailures.count + ' Gmail read(s) failed; first: ' + readFailures.first);
   if (!dryRun && upsertFailures.count > 0) alarms.push(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
+  // Quarantine is a side-effect signal (make-failed + a Script Properties write) that cannot occur in
+  // DRY_RUN — the isolation block is short-circuited above — so quarantine.count is structurally 0 in
+  // a dry run; the !dryRun guard states that classification explicitly (Codex F1[P2], PR #25).
+  if (!dryRun && quarantine.count > 0) alarms.push(quarantine.count + ' write(s) quarantined after repeated transient failures; first: ' + quarantine.first);
   if (footerMissMsg) alarms.push(footerMissMsg);
   if (alarms.length > 0) throw new Error(alarms.join('. Also '));
 }
@@ -508,6 +589,70 @@ function getIntProp_(name, fallback, min, max) {
       name, JSON.stringify(raw), String(min), String(max), String(fallback));
   }
   return fallback;
+}
+
+// ---------- repeatedly-transient write strike counter (Script Properties) ----------
+// Caps the "retries forever, fails the run every run" behaviour of a RECORD-SPECIFIC transient
+// write: a record whose own PATCH trips a 429/5xx/transport blip on every run is make-failed after
+// MAX_TRANSIENT_WRITE_RETRIES CONSECUTIVE strikes. Record-specificity is proven by a same-run healthy
+// sibling for the first strike, then carried by the counter itself (sticky) for subsequent solo
+// failures — the collect loop owns that gating (anyHealthy || priorStrikes > 0); these helpers just
+// load/bump/clear/test. The counter can't live in Airtable (the failing write means there is no row),
+// so it lives in Script Properties, one integer per message keyed wretry:<messageId>. The map is
+// loaded ONCE per run (loadTransientStrikes_) into memory, mutated by bump/clear, and each mutation
+// persisted immediately (setProperty on a strike, deleteProperty on clear/quarantine) — loading once
+// is what keeps clear-on-success from firing a deleteProperty for every collected message (only the
+// rare struck-then-recovered one is in the map). NB: these run OUTSIDE any upsert try/catch (the
+// collect loop calls them after attemptUpsert_ has returned), so a Script Properties error surfaces
+// with its own stack rather than being masked as a transient write failure (CLAUDE.md narrow-catch).
+const TRANSIENT_STRIKE_PREFIX = 'wretry:';
+
+// Pure (unit-tested): true once a message's consecutive-transient strike count reaches the cap.
+// `>=` (not `>`) so the Nth strike quarantines, matching the "after N strikes" contract.
+function shouldQuarantineTransient_(count, max) {
+  return count >= max;
+}
+
+// Read every wretry:<messageId> Script Property into an in-memory { messageId: int } map, ignoring
+// all other keys (DRY_RUN, AIRTABLE_TOKEN, MAX_MESSAGES, MAX_TRANSIENT_WRITE_RETRIES, …). A value
+// that is not a run of digits (a manual edit, a corrupted write) is skipped, so a garbage counter
+// reads as "no strike" (start fresh) rather than auto-quarantining — strict like parseIntProp_.
+function loadTransientStrikes_(props) {
+  const all = props.getProperties() || {};
+  const out = {};
+  for (const key in all) {
+    if (!Object.prototype.hasOwnProperty.call(all, key)) continue;
+    if (key.indexOf(TRANSIENT_STRIKE_PREFIX) !== 0) continue; // not a strike key
+    const msgId = key.slice(TRANSIENT_STRIKE_PREFIX.length);
+    if (!msgId) continue;                                     // a bare "wretry:" key has no message
+    const s = String(all[key]).trim();
+    if (!/^\d+$/.test(s)) continue;                           // non-integer -> ignore (read as no strike)
+    const n = parseInt(s, 10);
+    if (n > 0) out[msgId] = n;                                // 0 is not a live strike
+  }
+  return out;
+}
+
+// Record one consecutive record-specific transient strike against a message: increment the
+// in-memory map and persist the new value. Returns the new count, which the caller compares to the
+// cap (shouldQuarantineTransient_). Called once record-specificity is proven — a same-run healthy
+// sibling for the first strike, or a carried prior strike (sticky) thereafter; never on a fresh
+// message in a systemic outage (the caller's anyHealthy || priorStrikes > 0 gate).
+function bumpTransientStrike_(strikes, props, msgId) {
+  const n = (strikes[msgId] || 0) + 1;
+  strikes[msgId] = n;
+  props.setProperty(TRANSIENT_STRIKE_PREFIX + msgId, String(n));
+  return n;
+}
+
+// Clear a message's strike count on a successful upsert (or on quarantine): drop it from the
+// in-memory map and delete its Script Property. A deleteProperty is fired ONLY when the message
+// actually had a strike — the common "collected, never struck" case is an in-memory no-op, so a
+// healthy run does not delete-spam Script Properties for every message it collects.
+function clearTransientStrike_(strikes, props, msgId) {
+  if (!Object.prototype.hasOwnProperty.call(strikes, msgId)) return; // never struck -> nothing to delete
+  delete strikes[msgId];
+  props.deleteProperty(TRANSIENT_STRIKE_PREFIX + msgId);
 }
 
 function processMessage_(msg, headers, records, executionId, collectedAt, labelsById, linkStats, unwrapStats, footerStats) {

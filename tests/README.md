@@ -79,6 +79,11 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   pinned), `buildUpsertPayload_`, and `airtableUpsert_` (the PATCH-upsert dedupe contract,
   now returning the numeric HTTP code + capturing the first error into `failures`; a missing
   token fails fast, a `UrlFetchApp` transport throw maps to code `0` with a `network error:` capture).
+  Also the **repeatedly-transient write strike counter**: `TRANSIENT_STRIKE_PREFIX` pinned to
+  `wretry:`, `shouldQuarantineTransient_` (the `>=`-cap predicate), `loadTransientStrikes_` (the
+  prefix-filtered + int-parsed load that ignores all non-`wretry:` keys), and `bumpTransientStrike_` /
+  `clearTransientStrike_` (mutating the in-memory map + persisting `setProperty`/`deleteProperty`,
+  the clear an in-memory no-op when the message was never struck).
 - **`max-messages.test.js`** — the runtime-tunable `MAX_MESSAGES` Script Property:
   `parseIntProp_` (the strict, non-clamping `[0,500]` parser — `0`/`"50"`/`" 50 "`
   accepted, decimal/sign/garbage/out-of-range → default), `getIntProp_` (warns on a
@@ -117,7 +122,20 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   branch, the individual-retry isolation branch, the `≥1 healthy sibling` quarantine guard,
   the `isTransientWriteFailure_` `5xx` arm, the per-sub-batch (vs per-record) failure count,
   the narrowed token-error catch, either fail-loudly throw, the `. Also …` miss fold, the
-  empty-records guard, the clamp, or any cleaning-stage wiring flips an assertion.
+  empty-records guard, the clamp, or any cleaning-stage wiring flips an assertion. The integration
+  harness backs `PropertiesService` with a **mutable store** (`getProperty`/`getProperties`/
+  `setProperty`/`deleteProperty`, seedable + inspectable post-run) so it also pins the
+  **repeatedly-transient write cap** with **sticky record-specificity** (Codex F1): a record-specific
+  transient strikes its `wretry:<id>` counter (below the cap → stuck + counted; at
+  `MAX_TRANSIENT_WRITE_RETRIES` → `make-failed`/quarantined, counter deleted, its own fail-loud alarm).
+  A **multi-run** regression threads the store across `runCollector` calls — a stuck record proven with
+  a sibling on run 1 keeps striking **solo** on later runs until it caps (the F1 mutation check: frozen
+  at 1 on the pre-fix head). The **mass-quarantine guard** is pinned for *fresh* never-struck messages
+  (a systemic outage strikes/quarantines nothing, single- and multi-run), and the **struck-then-outage
+  residual** is pinned too (an already-struck record finishes capping during an outage while its fresh
+  siblings don't strike). A successful upsert clears the counter; `DRY_RUN` writes/deletes nothing (one
+  `getProperties` load); the cap is runtime-tunable (out-of-range → default + warn); and a quarantine
+  folds into the one F1 throw alongside a committed footer miss.
 - **`purge.test.js`** — the RawEmails purge job: pure helpers
   (`resolvePurgeThresholds_` — HIGH>LOW coherence with both-defaults fallback,
   `buildPurgePlan_` — at-high no-op / down-to-low / eligible-capped boundaries,

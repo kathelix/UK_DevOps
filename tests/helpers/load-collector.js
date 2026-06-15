@@ -42,6 +42,12 @@ const EXPORTS = [
   'isTransientWriteFailure_', // write-failure classifier (429/5xx transient vs deterministic 4xx)
   'parseIntProp_',
   'getIntProp_',
+  // repeatedly-transient write strike counter (Script Properties, wretry:<messageId>)
+  'TRANSIENT_STRIKE_PREFIX',     // the 'wretry:' namespace constant (pinned by a unit test)
+  'shouldQuarantineTransient_',  // pure: count >= max
+  'loadTransientStrikes_',       // read wretry:* props -> { messageId: int } map
+  'bumpTransientStrike_',        // +1 in-memory + persist setProperty
+  'clearTransientStrike_',       // drop in-memory + deleteProperty (no-op if never struck)
   'buildUpsertPayload_',
   'airtableFetchWithRetry_', // transient-retry/backoff wrapper around the Airtable fetch
   'airtableUpsert_',
