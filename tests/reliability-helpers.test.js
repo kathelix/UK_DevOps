@@ -8,6 +8,9 @@
 //   airtableFetchWithRetry_  -> the transient-retry/backoff wrapper (429/5xx/transport throw with
 //                               [1s,2s,4s] backoff; 200 + deterministic 4xx pass through; the
 //                               budget guard; retryOnThrow:false for the non-idempotent DELETE)
+//   gmailReadWithRetry_      -> the idempotent Gmail-read retry/backoff wrapper (retry on ANY throw,
+//                               no status parsing; [1s,2s,4s] backoff from the SAME CONFIG constant;
+//                               the budget guard; re-throws the last error tagged isGmailReadFailure)
 //
 // The LockService single-flight guard is intentionally not unit-tested here: it is
 // pure side effect around the unchanged batch loop and would need the whole run
@@ -312,4 +315,110 @@ test('airtableFetchWithRetry_ retryOnThrow:false still retries 429/5xx (a server
   assert.equal(resp.getResponseCode(), 200, 'a 429 is safe to retry even for DELETE — the delete did not apply');
   assert.equal(calls.n, 2);
   assert.deepEqual(sleeps, [1000]);
+});
+
+// ---------- gmailReadWithRetry_ (the idempotent Gmail-read retry/backoff wrapper) ----------
+// Mirrors the airtableFetchWithRetry_ suite, but for a THUNK-based idempotent read: there is no
+// HTTP response object and no status parsing — the wrapper retries on ANY throw (a Gmail read has
+// no side effect, so there is no retryOnThrow:false exception) and, after exhaustion, re-throws the
+// LAST error tagged isGmailReadFailure. Every test injects a recording sleep so the backoff
+// schedule is asserted with no real sleep. A scripted read returns a coded value or throws.
+function scriptedRead(script) {
+  const calls = { n: 0 };
+  const read = () => {
+    const step = script[Math.min(calls.n, script.length - 1)];
+    calls.n++;
+    if (step === 'throw') throw new Error('read blip #' + calls.n);
+    return step; // the value returned on a successful read
+  };
+  return { read, calls };
+}
+
+test('gmailReadWithRetry_: throw then succeed -> one retry, returns the value, sleeps [1000]', () => {
+  const { gmailReadWithRetry_ } = loadCollector();
+  const { read, calls } = scriptedRead(['throw', 'VALUE']);
+  const sleeps = [];
+  const out = gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms) });
+  assert.equal(out, 'VALUE', 'the retry recovered the read');
+  assert.equal(calls.n, 2, 'one retry after the throw');
+  assert.deepEqual(sleeps, [1000], 'one backoff sleep (first step of the schedule)');
+});
+
+test('gmailReadWithRetry_: throws on all 4 attempts -> re-throws the LAST error tagged isGmailReadFailure, sleeps [1000,2000,4000]', () => {
+  const { gmailReadWithRetry_ } = loadCollector();
+  const { read, calls } = scriptedRead(['throw']); // always throws, no value ever returned
+  const sleeps = [];
+  let caught = null;
+  assert.throws(
+    () => gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms) }),
+    (e) => { caught = e; return /read blip #4/.test(e.message); }, // the 4th attempt's error surfaces
+  );
+  assert.equal(caught.isGmailReadFailure, true, 'tagged so the caller maps ONLY a read failure to "leave uncollected"');
+  assert.equal(calls.n, 4, '4 attempts = 1 + 3 retries');
+  assert.deepEqual(sleeps, [1000, 2000, 4000], 'the full backoff schedule, in order');
+});
+
+test('gmailReadWithRetry_: succeeds first attempt -> returns the value, sleeps []', () => {
+  const { gmailReadWithRetry_ } = loadCollector();
+  const { read, calls } = scriptedRead(['VALUE']);
+  const sleeps = [];
+  const out = gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms) });
+  assert.equal(out, 'VALUE');
+  assert.equal(calls.n, 1, 'no retry on a first-attempt success');
+  assert.deepEqual(sleeps, []);
+});
+
+test('gmailReadWithRetry_ retries on ANY throw (idempotent read — no retryOnThrow:false exception)', () => {
+  // Contrast airtableFetchWithRetry_ + the non-idempotent DELETE: a Gmail read has no side effect,
+  // so a transport-style throw is always retried — two throws then a success still recovers.
+  const { gmailReadWithRetry_ } = loadCollector();
+  const { read, calls } = scriptedRead(['throw', 'throw', 'VALUE']);
+  const sleeps = [];
+  const out = gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms) });
+  assert.equal(out, 'VALUE', 'recovered after two throws');
+  assert.equal(calls.n, 3);
+  assert.deepEqual(sleeps, [1000, 2000]);
+});
+
+test('gmailReadWithRetry_ budget guard: a clock past budget re-throws WITHOUT sleeping (mutation: drop the guard -> it sleeps)', () => {
+  const { gmailReadWithRetry_ } = loadCollector();
+  const { read, calls } = scriptedRead(['throw']); // would retry to exhaustion without the guard
+  const sleeps = [];
+  let caught = null;
+  // isOverBudget always true: the next sleep would cross MAX_RUNTIME_MS, so the wrapper stops.
+  assert.throws(
+    () => gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms), isOverBudget: () => true }),
+    (e) => { caught = e; return true; },
+  );
+  assert.equal(caught.isGmailReadFailure, true, 'still tagged when the budget guard stops the retries');
+  assert.equal(calls.n, 1, 'no retry once the budget guard trips');
+  assert.deepEqual(sleeps, [], 'NEVER slept — removing the budget check flips this to [1000,2000,4000]');
+});
+
+test('gmailReadWithRetry_ budget guard mirrors the collector wiring (now+nextSleep vs MAX_RUNTIME_MS)', () => {
+  // Pins the exact predicate the collector threads: isOverRuntimeBudget_(startMs, now()+ms). With
+  // the clock 100ms below budget, the next 1000ms backoff WOULD cross it, so no sleep happens —
+  // proving the guard accounts for the prospective sleep, not just "are we already over".
+  const { gmailReadWithRetry_, isOverRuntimeBudget_, CONFIG } = loadCollector();
+  const { read, calls } = scriptedRead(['throw']);
+  const sleeps = [];
+  const startMs = 0;
+  const nowMs = CONFIG.MAX_RUNTIME_MS - 100; // under budget now, but a 1000ms sleep crosses it
+  const isOverBudget = (ms) => isOverRuntimeBudget_(startMs, nowMs + ms);
+  assert.throws(() => gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms), isOverBudget }));
+  assert.equal(calls.n, 1);
+  assert.deepEqual(sleeps, [], 'the prospective sleep would cross the 5-min budget, so it does not sleep');
+});
+
+test('gmailReadWithRetry_ default backoff comes from CONFIG.RETRY_BACKOFF_MS (shared with the write side, not hardcoded)', () => {
+  // The read wrapper must read the SAME backoff constant as airtableFetchWithRetry_. Assert the
+  // recorded sleeps equal CONFIG.RETRY_BACKOFF_MS itself, not a hardcoded [1000,2000,4000], so a
+  // change to the constant can't silently leave the read path on a stale schedule.
+  const { gmailReadWithRetry_, CONFIG } = loadCollector();
+  const { read } = scriptedRead(['throw']);
+  const sleeps = [];
+  assert.throws(() => gmailReadWithRetry_(read, { sleep: (ms) => sleeps.push(ms) }));
+  // CONFIG.RETRY_BACKOFF_MS is a VM-realm array; Array.from re-homes it to a Node-realm array of
+  // primitive ms so deepEqual compares values, not cross-realm prototypes (loader realm caveat).
+  assert.deepEqual(sleeps, Array.from(CONFIG.RETRY_BACKOFF_MS), 'backoff schedule is CONFIG.RETRY_BACKOFF_MS, not a literal');
 });

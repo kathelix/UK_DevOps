@@ -23,6 +23,11 @@
 //     and per-run "Footer:" metrics log in real AND DRY_RUN; a MISS ends a real run Failed but
 //     a DRY_RUN run never throws; when an upsert failure co-occurs, its error is named first AND
 //     the footer-miss summary is folded into the same throw so the alarm is never lost — F1).
+//   - the Gmail-read retry wiring (gmailReadWithRetry_): a transient get heals in-run (collected,
+//     NOT make-failed) — mutation-checked by disabling retries; a persistent get is left
+//     uncollected, NOT make-failed, run Failed; a parse-poison still make-faileds and does NOT
+//     trip the read canary; a transient list blip heals while a persistent list failure propagates
+//     (run Failed); and a read failure folds into the same one fail-loud throw as upsert + footer (F1).
 // Each is mutation-checked: removing the guarded behaviour flips an assertion.
 
 const test = require('node:test');
@@ -75,7 +80,11 @@ function poisonMessage(i) {
 // fetchThrows(callIndex, records) → truthy makes UrlFetchApp.fetch THROW (a transport failure,
 // not an HTTP error response). airtableToken: null simulates a missing AIRTABLE_TOKEN Script
 // Property (a config error that must fail the run fast, not be masked transient).
-function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false, backoffMs = null }) {
+// getThrows(id, attempt) / listThrows(attempt) → truthy makes a Gmail read THROW (a transient
+// blip), so gmailReadWithRetry_ is exercised end-to-end. `attempt` is 0-based and PER-ID for get
+// (the retry re-calls get for the SAME id) and global for list — so `(id, a) => id==='m2' && a===0`
+// throws once then heals, `(id) => id==='m2'` throws on every attempt (a persistent read failure).
+function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BATCH, poison = [], upsertCode = () => 200, fetchThrows = () => false, getThrows = () => false, listThrows = () => false, airtableToken = 'tok', bodyHtml = null, from = null, expectThrow = false, backoffMs = null }) {
   const gas = loadCollector();
   const clock = makeClock();
   const messages = Array.from({ length: n }, (_, i) => {
@@ -89,6 +98,8 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
   });
   const labelCalls = []; // { id, label }
   const upserts = [];     // { count, code }
+  const getAttempts = {}; // id -> times Gmail.get has been called for it (the retry re-calls per id)
+  let listAttempts = 0;   // times Gmail.list has been called (global; the once-per-run list + retries)
 
   gas.CONFIG.MAX_RUNTIME_MS = budgetMs;
   gas.CONFIG.SUB_BATCH_SIZE = subBatch;
@@ -100,8 +111,18 @@ function runCollector({ n, budgetMs, getDelta, dryRun = false, subBatch = SUB_BA
     Gmail: {
       Users: {
         Messages: {
-          list: () => ({ messages: messages.map(m => ({ id: m.id })) }),
-          get: (_user, id) => { clock.advance(getDelta); return messages.find(m => m.id === id); },
+          list: () => {
+            const a = listAttempts++;
+            if (listThrows(a)) throw new Error('gmail list blip #' + (a + 1));
+            return { messages: messages.map(m => ({ id: m.id })) };
+          },
+          get: (_user, id) => {
+            clock.advance(getDelta);
+            const a = getAttempts[id] || 0;
+            getAttempts[id] = a + 1;
+            if (getThrows(id, a)) throw new Error('gmail read blip #' + (a + 1));
+            return messages.find(m => m.id === id);
+          },
           modify: (body, _user, id) => { labelCalls.push({ id, label: body.addLabelIds[0] }); },
         },
         Labels: {
@@ -512,4 +533,113 @@ test('F1 — an upsert failure co-occurring with a COMMITTED footer miss throws 
   // The footer-miss alarm is the load-bearing feature; prove both conditions were really present:
   assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss did occur (rollup shows misses=1)');
   assert.ok(r.logs.some(l => /Airtable upsert FAILED/.test(l)), 'the upsert failure did occur');
+});
+
+// ---------- Gmail-read retry (gmailReadWithRetry_) ----------
+
+test('transient get heals in-run: a get that throws once then succeeds is COLLECTED, not make-failed, run Completed', () => {
+  // The headline data-loss fix: a transient Gmail-read blip during get must NOT mis-quarantine the
+  // message. get throws once for m0 then succeeds on the retry, so m0 is upserted + make-collected,
+  // never make-failed, and the run ends Completed.
+  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, getThrows: (id, a) => id === 'm0' && a === 0 });
+  assert.deepEqual(r.collected, ['m0'], 'the message recovered on retry and was make-collected');
+  assert.equal(r.failed.length, 0, 'a transient read failure is NEVER make-failed (the old data-loss bug)');
+  assert.ok(!r.threw, 'a recovered transient read does NOT fail the run');
+  assert.ok(r.logs.some(l => l.includes('Collected 1 of 1')), 'run ends Completed with the message collected');
+  assert.ok(!r.logs.some(l => /Gmail get FAILED/.test(l)), 'the in-run heal logs no FAILED line (the caller only sees success)');
+
+  // Mutation: with retries disabled the SAME transient get is never retried -> the message is left
+  // UNCOLLECTED (retried next run) and the run ends Failed — proving the retry is the load-bearing
+  // recovery (mirrors the backoffMs:[] mutation on the 429-then-200 upsert test).
+  const m = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, getThrows: (id, a) => id === 'm0' && a === 0, backoffMs: [], expectThrow: true });
+  assert.equal(m.collected.length, 0, 'with no retry the transient get leaves the message uncollected');
+  assert.equal(m.failed.length, 0, 'still never make-failed (transient, not poison)');
+  assert.ok(m.threw, 'the run ends Failed (no retry to recover the read blip)');
+  assert.match(m.threw.message, /^1 Gmail read\(s\) failed; first: m0: /, 'fail-loud names the read failure');
+});
+
+test('persistent get failure: message left UNCOLLECTED, NOT make-failed, run ends Failed naming the read failure', () => {
+  // get throws on every attempt for m0 — a persistent read outage. After gmailReadWithRetry_'s 4
+  // attempts the message is left uncollected (stays unlabelled -> re-presents next run), NEVER
+  // make-failed (it is not poison), and the run ends Failed so the GAS failure email fires.
+  // Mutation: routing the read failure into the make-failed branch would flip failed.length to 1.
+  const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, getThrows: (id) => id === 'm0', expectThrow: true });
+  assert.equal(r.collected.length, 0, 'a persistent read failure leaves the message uncollected');
+  assert.equal(r.failed.length, 0, 'a persistent read failure is NEVER make-failed (not poison)');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(r.threw.message, /^1 Gmail read\(s\) failed; first: m0: gmail read blip #4$/, 'read-failure count + first error (after all 4 attempts) named');
+  assert.ok(r.logs.some(l => /Gmail get FAILED \(transient\) for m0 — stays uncollected, retries next run\./.test(l)), 'the persistent read failure is logged');
+});
+
+test('parse-poison still make-faileds and does NOT trip the read canary (run stays Completed)', () => {
+  // get SUCCEEDS; processMessage_ throws (undecodable body). The message is quarantined via the
+  // SECOND, narrower try/catch (make-failed) — which must NOT increment the read-failure canary: a
+  // deterministic parse poison is handled/quarantined, not an un-collected transient read. So the
+  // run ends Completed even though one message was make-failed. This pins the narrow-catch split:
+  // a parse poison and a transient read take different branches with different outcomes.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, poison: [1] });
+  assert.deepEqual(r.failed, ['m1'], 'the parse-poison message is make-failed (unchanged outcome)');
+  assert.equal(r.collected.length, 2, 'its two siblings are collected');
+  assert.ok(!r.collected.includes('m1'), 'the poison message is not make-collected');
+  assert.ok(!r.threw, 'a quarantined parse-poison does NOT trip the read canary — run stays Completed');
+  assert.ok(r.logs.some(l => l.includes('Collected 2 of 3')), 'completed summary logged');
+  assert.ok(!r.logs.some(l => /Gmail get FAILED/.test(l)), 'a parse poison is never logged as a transient read failure');
+});
+
+test('list heals a transient blip: list throws once then succeeds, the run proceeds and collects normally', () => {
+  // The once-per-run list is wrapped too: a single transient throw must not kill the whole run.
+  // list throws on attempt 0 then succeeds on the retry, so the run lists, fetches, and collects
+  // every message normally. Mutation lives in the next test (a persistent list failure fails loud).
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, listThrows: (a) => a === 0 });
+  assert.equal(r.collected.length, 3, 'all messages collected after the list retry recovered');
+  assert.equal(r.failed.length, 0, 'nothing make-failed');
+  assert.ok(!r.threw, 'a recovered list blip does NOT fail the run (the spurious single-blip failure is gone)');
+  assert.ok(r.logs.some(l => l.includes('Collected 3 of 3')), 'run completed normally');
+});
+
+test('persistent list failure ends the run Failed (the tagged read error propagates, no make-failed, nothing collected)', () => {
+  // list throws on every attempt — a persistent outage. gmailReadWithRetry_'s tagged error
+  // propagates out of collectJobEmailsLocked_ (the collectJobEmails finally only releases the lock),
+  // so the run ends Failed with zero forward progress — same canary as the pre-wrapper unguarded
+  // list, minus the spurious single-blip failure the heal test above proves is now absorbed.
+  const r = runCollector({ n: 3, budgetMs: 1e9, getDelta: 1, listThrows: () => true, expectThrow: true });
+  assert.ok(r.threw, 'a persistent list failure ends the run Failed');
+  assert.match(r.threw.message, /^gmail list blip #4$/, 'the tagged read error (after 4 attempts) propagates out of the run');
+  assert.equal(r.collected.length, 0, 'nothing collected');
+  assert.equal(r.failed.length, 0, 'nothing make-failed');
+});
+
+test('F1 — read + upsert + footer failures co-occur: ONE thrown error names all three (none swallowed)', () => {
+  // The widest F1 case: a transient READ failure, a transient UPSERT failure, and a committed
+  // footer MISS all in one run. Each rides on work that won't re-present its signal on its own (the
+  // missed-marker row committed + was labelled; an uncollected message retries but its SIGNAL would
+  // be lost if a co-occurring throw swallowed it), so the run must throw ONE error naming every
+  // signal, in the fixed precedence (reads, then writes, then the footer alarm). subBatch=1 = one
+  // message per sub-batch: m0 = reed no-footer (commits, misses), m1 = persistent read failure,
+  // m2 = transient 503 upsert. Mutation: dropping any signal from the composed throw flips the
+  // exact-string assert below.
+  const reedNoFooter = '<html><body><p>a reed job alert with no footer marker present</p></body></html>';
+  const r = runCollector({
+    n: 3, budgetMs: 1e9, getDelta: 1, subBatch: 1,
+    from: (i) => (i === 0 ? 'jobs@reed.co.uk' : 'someone@x.com'),
+    bodyHtml: (i) => (i === 0 ? reedNoFooter : '<html><body>hi</body></html>'),
+    getThrows: (id) => id === 'm1',
+    upsertCode: (i, recs) => (recs[0].fields.MessageId === 'm2' ? 503 : 200),
+    expectThrow: true,
+  });
+
+  assert.ok(r.collected.includes('m0'), 'the missed-marker message committed + was labelled (so its signal must survive)');
+  assert.ok(!r.collected.includes('m1'), 'the persistent-read-failure message is left uncollected');
+  assert.ok(!r.collected.includes('m2'), 'the 503 upsert sub-batch is left uncollected');
+  assert.equal(r.failed.length, 0, 'neither a transient read nor a transient upsert is ever make-failed');
+  assert.ok(r.threw, 'the run ends Failed');
+  assert.match(
+    r.threw.message,
+    /^1 Gmail read\(s\) failed; first: m1: gmail read blip #4\. Also 1 sub-batch upsert\(s\) failed; first: 503: ERR 503\. Also 1 footer marker miss\(es\); first: reed\.co\.uk msg=m0$/,
+    'one error names all three signals, reads -> writes -> footer, none swallowed',
+  );
+  // Prove all three conditions really occurred (not just that the string was composed):
+  assert.ok(r.logs.some(l => /Gmail get FAILED \(transient\) for m1/.test(l)), 'the read failure occurred');
+  assert.ok(r.logs.some(l => /Airtable upsert FAILED \(transient 503\)/.test(l)), 'the upsert failure occurred');
+  assert.ok(r.logs.includes('Footer: hits=0 misses=1 bytes_cut=0'), 'the footer miss occurred');
 });
