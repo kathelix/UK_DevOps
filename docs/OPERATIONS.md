@@ -6,12 +6,12 @@
 |---|---|---|
 | Frequent — cadence in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | Collector run: Gmail → clean → RawEmails, label `make-collected` | GAS time trigger |
 | Nightly — time in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | RawEmails purge: delete oldest `Processed` rows when over high-water | GAS time trigger |
-| 06:00 | Screening run: read job alerts, screen, write Vacancies, daily report | Claude Cowork scheduled task |
+| 06:00 | Screening run: read RawEmails `New` rows, screen, flip them to `Processed`, write Vacancies, daily report | Claude Cowork scheduled task |
 | Ad hoc | Ivan reviews flags, applies, reports back; Claude logs Applied/Skipped | Chat |
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-During the **parallel-run period** the screening run still reads Gmail directly (authoritative); RawEmails is shadow data. Do not write RawEmails-sourced decisions to the real Vacancies table until the M6.2 intake cutover.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario and the GAS collector both stay live **in parallel as the safety net** for the first few 2.0 runs — Make is **not** decommissioned yet (a later slice, once 2.0 is proven). One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -68,8 +68,45 @@ mount the folder would make the next scheduled screening **halt**. So:
    screening behaves exactly as before (parity — nothing about triage/output changed).
 5. **Verify fail-loud.** Run once with the folder detached; confirm it **halts** with
    the "folder must be attached" message and does **not** screen.
-6. **Leave Make running.** Do **not** pause the Make scenario — that happens at the
-   intake cutover (M6.2), not here.
+6. **Leave Make running.** Do **not** pause the Make scenario — it stays live as the
+   parallel safety net through the M6.2 cutover and is retired only in a later slice once
+   2.0 is proven (see *Intake cutover (M6.2)* below).
+
+## Intake cutover (M6.2) — one-time activation
+
+The M6.2 cutover flips the screening run's source of truth from Gmail to the collector's
+RawEmails queue (instructions §1/§9, `VERSION: 2.0`). Ordered so a first 2.0 run never
+re-screens the backlog or darks the pipeline. **The live run is the test** — no automated
+test guards the instructions body, so this leans on an owner live-run validation, a
+git-revert rollback, and keeping Make running as the safety net.
+
+1. **Pre-cutover backlog migration (REQUIRED — do before activating 2.0).** Nothing has
+   ever been `Processed`, so RawEmails holds the **entire parallel-run backlog as `New`**;
+   a first 2.0 run would otherwise re-screen weeks of mail in one go. Flip the backlog to
+   `Processed` first — recommended floor: every row whose `CollectedAt` is **before
+   today** (the parallel Gmail path already screened them; the Vacancies skip-list is the
+   real dedup), leaving only today's `New` rows for the first real run. Bulk-update in the
+   Airtable UI (filter `CollectedAt` before today → select all → set `Status` =
+   `Processed`), or a one-off script.
+2. **Activate 2.0.** Merge the M6.2 PR. The live instructions update the moment it's on
+   `main` (the M6.1 stub reads the repo file each run).
+3. **Validate on a run.** Trigger `daily-job-vacancy-screen` manually (don't wait for the
+   06:00 run). Confirm it: echoes **`VERSION: 2.0`**; reads **RawEmails** (not a Gmail
+   search) in the primary path; screens today's rows; **flips them to `Processed`**; and
+   produces normal output. Spot-check that the §1 canary does **not** fire on a normal day,
+   and that no row is left `New` unintentionally (a left-`New` row = a failed Status flip,
+   re-screened next run — see *When things break*).
+4. **Keep Make running.** Leave the Make.com scenario and the GAS collector both live for a
+   few 2.0 runs as the parallel safety net. **Do not** decommission Make yet — that's a
+   later slice once 2.0 is proven (`TODO.md`).
+5. **Update the scheduled task's reminders (owner action, outside the PR).** The prompt at
+   `~/Claude/Scheduled/daily-job-vacancy-screen/SKILL.md` (not in this repo) still reminds
+   the run about the Gmail query / pagination / `get_thread`. The project instructions win,
+   so it's not fatal, but update those reminders to the RawEmails intake to avoid confusion.
+6. **Rollback.** If a 2.0 run misbehaves, `git revert` the PR (or re-point the field to an
+   inline 1.2 copy) — that restores the pre-2.0 Gmail-direct screening. Make + the
+   collector are still live too, so no day is lost; re-run the parity check (below) before
+   reverting.
 
 ## Collector: routine procedures
 
@@ -96,7 +133,7 @@ The Airtable free plan caps a **base** at 1,000 records across **all** tables (`
 - **Trigger setup (one-time, manual — runtime state, never deployed by CI):** GAS editor → Triggers → Add trigger → function `purgeRawEmails`, time-driven, day timer, in the nightly window per [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci). Same pattern as the collector trigger. **Prereq:** `AIRTABLE_TOKEN` must include `data.records:read` (the purge counts and lists records before deleting) — the secrets inventory above already records `read+write`, but re-scope or replace an older write-only PAT before enabling the trigger.
 - **Script Properties (optional tuning):** `PURGE_HIGH_WATER` (default 700) and `PURGE_LOW_WATER` (default 500), integers 0–1000, read each run with the standard validation (invalid → default, logged `Ignoring Script property …`). If the resolved pair has HIGH ≤ LOW, the run logs `Purge thresholds misconfigured …` and falls back to **both** defaults.
 - **Log line** (Executions panel), once per run: `Purge: count=N high=H low=L eligible=E deleted=D remaining=R`. At/below high water: `Purge: count=N high=H — nothing to do.`
-- **Starvation (the normal state pre-M6.2):** over high-water with 0 eligible rows (nothing is ever `Processed` until the screening cutover) logs `capacity risk, manual action may be needed` and exits cleanly. At `count ≥ 950` (`PURGE_EMERGENCY`) with 0 eligible the run **throws** → Failed execution → failure email, before Airtable starts blocking writes at the cap.
+- **Starvation:** over high-water with 0 eligible rows logs `capacity risk, manual action may be needed` and exits cleanly. At `count ≥ 950` (`PURGE_EMERGENCY`) with 0 eligible the run **throws** → Failed execution → failure email, before Airtable starts blocking writes at the cap. Pre-M6.2 this was the *normal* state (nothing was ever `Processed`, so nothing was eligible); since the M6.2 cutover the screening run flips rows to `Processed`, so eligible rows now accrue and ordinary purges resume — **persistent** starvation now points at the screening run not flipping rows (check the daily report) rather than at the expected pre-cutover backlog.
 - **DRY_RUN:** the shared `DRY_RUN=true` Script Property makes the purge log the full plan (count, eligible, the exact ids it would delete) and delete nothing.
 - **Failures:** any non-200 from Airtable (list or delete) throws → Failed execution → failure email. List and delete now retry a **transient** blip (`429`/`5xx`) with `[1s, 2s, 4s]` backoff first, so a final non-200 in the log is genuinely persistent. **Deletes never retry a transport throw** (`retryOnThrow:false`): a re-delete of an already-gone id returns `404 MODEL_ID_NOT_FOUND`, so after a connection blip mid-delete the run fails loud rather than risk 404-ing a delete that actually landed — safe, since a purge is non-critical and the next night re-counts. Deletes are still paced (~4 req/s) under Airtable's 5 req/s/base rate limit.
 - **Concurrency:** the purge shares the collector's script lock and never runs concurrently with a collector run — whichever starts second skips cleanly (a skipped night catches up the next one).
@@ -168,11 +205,31 @@ While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost 
 
 ## Canary: missing-email check
 
-Pipeline marks processed mail read; collector labels collected mail. In the Gmail UI, search `label:job-vacancies label:unread` — anything old sitting there (not post-run arrivals) is a search-index orphan (see `KNOWN_ISSUES.md` §1). Same logic for uncollected: old mail without `make-collected`.
+The screening run's **§1 discrepancy canary** is the primary check post-cutover. On a run
+with **0 New RawEmails rows** the run does **not** assume a quiet day — it queries Gmail
+`label:job-vacancies label:unread`. If that returns mail, the run surfaces a
+**collector-failure alert** (`⚠️ 0 New RawEmails rows but N unread job-vacancies emails in
+Gmail — the collector may have failed; check GAS executions`) instead of reporting
+"nothing today". **0 New rows _and_ 0 unread = a genuine quiet day.**
 
-## Parity check (end of parallel-run week)
+securityclearedjobs.com and other Gmail **search-index orphans** (`KNOWN_ISSUES.md` §1)
+are invisible to the Gmail API, so they never reach RawEmails *and* never show in the
+canary's Gmail query — a UI-only unread count for those senders is expected and does
+**not** mean the collector failed.
 
-Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run reports processing. Equal modulo index-orphans → cutover is safe → execute the M6.2 intake cutover (`TODO.md`).
+Manual cross-check (unchanged): the pipeline still marks processed mail read and the
+collector labels collected mail, so in the Gmail UI `label:job-vacancies label:unread` —
+anything old sitting there beyond post-run arrivals is a search-index orphan; same logic
+for uncollected mail without `make-collected`.
+
+## Parity check (complete — gated the M6.2 cutover)
+
+Before the cutover this compared, per day, RawEmails rows (`CollectedAt` date) against the
+emails the 06:00 run reported processing; equal modulo index-orphans meant the cutover was
+safe. **Parity was confirmed 2026-06-15 and the M6.2 cutover shipped** — the ongoing
+equivalent is now the automated §1 canary above. Kept here as the rollback's success
+criterion: if a 2.0 run looks wrong, re-run this comparison before reverting (see *Intake
+cutover (M6.2)* → Rollback).
 
 ## When things break
 
@@ -183,10 +240,13 @@ Compare, per day: RawEmails rows (`CollectedAt` date) vs emails the 06:00 run re
 | One message `make-failed` while its siblings collected | A deterministic, record-specific Airtable reject (`4xx`) isolated from a healthy sub-batch | Follow *Failed message (`make-failed`)* above — the record's data vs the schema; fix and remove the label to retry |
 | Collector run red with `… footer marker miss(es)` | A mapped sender changed its footer template, so its `FOOTER_MARKERS` marker no longer matches (fail-loudly is by design) | No data lost (rows committed before the throw). Follow the marker-miss runbook above: re-capture the footer as a redacted fixture, update the marker, suite green, merge |
 | Collector run red with `… write(s) quarantined after repeated transient failures` | A record's own Airtable write kept failing transiently (`429`/`5xx`/transport) for `MAX_TRANSIENT_WRITE_RETRIES` runs (default 5) — first strike earned with a healthy sibling, then sticky once alone — and hit the cap, so it was auto-quarantined to `make-failed` | No data lost (the record was never written). The named message (`first: <id> after <N> strikes`) is now `make-failed`; inspect its data in Gmail for what Airtable's server rejects every time (oversized/edge-case field), fix the cause, then remove the `make-failed` label to re-queue it with a fresh strike count. A **fresh** message can't trigger this (the first strike needs a healthy sibling, so a broad outage never mass-quarantines fresh traffic). **Struck-then-outage residual:** a record already part-way to the cap *can* finish capping during a later outage while alone — same triage, just remove the label to retry once the outage clears |
-| Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm: manually purge old rows or accelerate the M6.2 intake cutover (nothing is `Processed` pre-cutover) |
+| Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm (`≥950`, 0 eligible) post-cutover: confirm the pre-cutover backlog migration ran **and** the screening run is flipping rows to `Processed` (eligible rows should now accrue — see *Starvation* above; persistent 0-eligible points at Status flips not happening); manually purge old `Processed` rows if the count is still near the cap |
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |
-| RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then canary check |
+| Screening run fires the §1 canary: `⚠️ 0 New RawEmails rows but N unread … emails in Gmail` | The collector didn't write today's mail — trigger missing/failed, a persistent upsert failure, or the record cap blocking writes | **Not** a quiet day. GAS Executions panel first (collector run red? trigger present?); then the *Collector* rows above. The screening run reported the alert instead of "nothing today", so nothing was silently missed |
+| Screening run alerts `⚠️ Airtable unreachable …` and stops | RawEmails couldn't be read at all (Airtable outage/error) — §1 Path 3 is **alert-and-stop**, there is no Gmail-direct screening fallback | By design, not a screening failure. Check Airtable status + the Claude→Airtable connector. Nothing was screened/marked/persisted; recovery is automatic — during the outage the collector's writes also fail, so that mail stays uncollected in Gmail and the next run screens it once Airtable is back (skip-list dedups). Do **not** screen manually via Gmail |
+| A RawEmails row is still `New` after a screening run | Its §9 Status flip failed (reported in the run's done-marker tally) | Fail-safe by design — the row is re-screened next run. If rows pile up `New`, check the Claude→Airtable connector / write permissions; a row stuck `New` across runs but never re-reported means the run isn't reaching §9 |
+| RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then the §1 canary distinguishes them (orphans don't trigger it) |
 | Screening run reports fewer emails than UI shows unread | Index orphans (KNOWN_ISSUES §1) | Expected for securityclearedjobs.com; investigate only for senders that matter |
 | Screening run halts: "The UK_DevOps folder must be attached to run the screening pipeline" | The field is now a bootstrap stub; the mounted folder is missing, so it fails loud with no fallback (by design) | Attach the UK_DevOps folder to the session and re-run. If scheduled runs can't mount it, see *Instructions loading* — the no-fallback contract may need revisiting (flag the Architect) |
 | Batch report echoes the wrong `VERSION:` or none | The field still holds an old inline copy, or the stub points at a moved/renamed path | Re-paste `instructions/PROJECT_FIELD_STUB.md` into the field; confirm `instructions/Claude_project_instructions.md` exists at that path and carries a `VERSION:` line |

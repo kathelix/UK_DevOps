@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 1.2
+VERSION: 2.0
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -28,12 +28,57 @@ If Airtable can't be read, say so and fall back to the email-history safety net 
 
 ---
 
-### 1. Gmail Search
+### 1. Intake
 
-- Query: `label:job-vacancies label:unread`
-- Paginate using `nextPageToken` from each response until no token is returned — that confirms the queue is fully drained
-- Fetch all pages automatically without prompting for confirmation between batches
-- Gmail's stated result count is unreliable; drive pagination by token availability only
+At run start, take the day's emails from the collector's **RawEmails** queue in
+Airtable — **not** from a Gmail search. The collector has already fetched and cleaned
+each email; the screening reads its cleaned text. Three paths, primary first.
+
+**RawEmails contract** (explicit IDs — do not resolve by name in the hot path, mirroring §0):
+
+- Base: **Job Search** — `baseId: appV9puNHinuRKTk9` (same base as Vacancies, §0)
+- Table: **RawEmails** — `tableId: tblm8d89dUVG16Bk0`
+- Fields the screening reads:
+  - `Status` — `fld4l6CSqEqHMgRWi` — singleSelect **New / Processed / Error**. Intake = `New`; the done-marker flips it to `Processed` (§9). A `Processed` row is never re-screened.
+  - `CleanText` — `fldjVAoDoLlAofeTT` — the **already-cleaned body** (the collector decoded embedded link destinations, stripped `utm_*`, cut footers, and unwrapped layout tables — all offline). Screen from this; do **not** re-fetch or HTML-extract. A digest row's `CleanText` still holds multiple roles — evaluate each, exactly as today (§3, §5).
+  - `Subject` — `fldJL9Ef4Ix5yq45a`, `FromEmail` — `fldYpA9VwsmBgBdHh`, `FromName` — `fld8WHi0qNfqyq3kE` — for triage Step 2 (instant-reject on subject/sender, §2).
+  - `MessageId` — `fldZ8YqUloxk4ASTT` (primary) and `ThreadId` — `fldJyZVs6sqzJxe2K` — carry both through screening so §9 can map the row back to its Gmail thread and mark it read.
+  - `EmailDate` — `fldvSWEKHFYjXXFq7`, `Snippet` — `fld1dU9mUnQcaoEhA`, `CollectedAt` — `fldD9AJWyzghCetED` — available if useful.
+
+#### Path 1 — Primary: RawEmails
+
+Read RawEmails rows where `Status = New` (filter on `fld4l6CSqEqHMgRWi`) via
+`list_records_for_table`. Each row is one email; screen it from `CleanText`. **No Gmail
+query, no pagination, no `get_thread`, no HTML extraction** in this path — the collector
+already cleaned the body. Carry `MessageId`/`ThreadId` through so §9 can mark the thread
+read.
+
+#### Path 2 — Discrepancy canary (Gmail demoted)
+
+If there are **0 New rows**, do **not** assume a quiet day. Query Gmail
+`label:job-vacancies label:unread`. If it returns mail, surface a **collector-failure
+alert** instead of a clean "nothing today":
+
+> ⚠️ 0 New RawEmails rows but N unread job-vacancies emails in Gmail — the collector may
+> have failed; check GAS executions.
+
+**0 New rows _and_ 0 unread = a genuine quiet day** (report normally). securityclearedjobs.com
+and other Gmail search-index orphans are invisible to the Gmail API, so they can't
+false-trigger this alert — see §3.
+
+#### Path 3 — Airtable outage: alert and stop
+
+If RawEmails **can't be read at all** (Airtable unreachable or erroring), do **not**
+screen — there is **no** Gmail-direct screening fallback. Emit one clear alert and stop:
+
+> ⚠️ Airtable unreachable — the screening pipeline can't run. Nothing screened, marked,
+> or persisted. The next run catches up automatically once Airtable is back (RawEmails
+> rows stay New; the collector + queue lose nothing).
+
+Then stop: produce no results, no Post, no Airtable writes, and no Gmail label changes.
+No email is lost — during the outage the **collector's** writes also fail, so that mail
+stays in Gmail uncollected; on recovery the collector collects it → RawEmails `New` → the
+next primary run screens it, deduped by the §0 skip-list.
 
 ---
 
@@ -77,14 +122,22 @@ Only when web search also fails to resolve. Provide the best available direct li
 
 ### 3. Handling Specific Email Types
 
+Each email's body is the **`CleanText`** field from its RawEmails row (§1) — already
+link-decoded, `utm_`-stripped, footer-cut and table-unwrapped by the collector offline.
+The content rules below apply to that cleaned text and never re-fetch from Gmail.
+
 #### Digest emails
 Senders: ApplyGateway, ZipRecruiter, Reed, NIJobs, hackajob, WhatJobs.
 - Read the full message and evaluate each role individually
 - Subject lines do not reflect full contents
 
 #### Tracking / redirect URLs
-Affected senders: NIJobs (`click.nijobs.com`), Reed (`clicks.reed.co.uk`), and similar.
-- Cannot be fetched directly
+The collector already **decoded embedded destinations and stripped `utm_*` offline**, so
+named click-trackers that carry their destination in a `?url=`-style param (NIJobs
+`click.nijobs.com`, Reed `clicks.reed.co.uk`, and similar) usually arrive in `CleanText`
+already canonical. What remains are **opaque** trackers the collector couldn't shrink
+offline — a `?data=<token>` with no embedded URL, server-expandable only.
+- An opaque tracker still cannot be fetched directly
 - Use `web_search` to locate the listing independently and capture the canonical link (see §6a)
 - Only escalate to manual review if search also fails
 
@@ -105,9 +158,12 @@ Reed's "WFH Remote" badge (and similar aggregator tags) is recruiter-set and unr
 - Never accept a tag alone as remote confirmation — only the job-spec text or web verification counts
 - A "Work From Home" line in a benefits list contradicted by "hybrid/onsite" in the description body = NOT remote
 
-#### securityclearedjobs.com
-Known irrelevant sender: 100% clearance-gated inventory → instant reject, no read needed.
-- These emails are also invisible to the Gmail API search index (visible in the UI only). If processed counts differ from UI unread counts, suspect these — it is not a pipeline failure. Details: `docs/KNOWN_ISSUES.md` in the UK_DevOps repo.
+#### securityclearedjobs.com (and other Gmail index orphans)
+securityclearedjobs.com is 100% clearance-gated inventory — but you will rarely see it.
+The collector reads Gmail through the same search index these emails never enter (they're
+visible in the Gmail UI only), so they **don't reach RawEmails** and won't appear in the
+primary path. No instant-reject step is needed for them — they simply aren't there.
+- They matter only for the **§1 canary**: a count mismatch between RawEmails `New` rows and Gmail UI unread driven by *these* senders is **expected**, not a collector failure. Details: `docs/KNOWN_ISSUES.md` in the UK_DevOps repo.
 
 ---
 
@@ -128,6 +184,20 @@ frequently overlap). When the same role surfaces twice:
 - Collapse to a single entry in the results table
 - Note the duplicate as a confirmation signal in the rejection breakdown ("INTEC SELECT — surfaced via Reed + Haystack, +1 confidence")
 - A second sighting from a *different* aggregator slightly raises confidence in the listing being live; a second sighting from the *same* aggregator (e.g. WhatJobs sending the same role twice) should be treated as routine spam, not fresh signal
+
+---
+
+### 5a. Cross-source vacancy identity (same role via different recruiters)
+
+§5 collapses the *same listing* seen twice. This rule handles the *same underlying
+vacancy* surfaced by **different recruiters**: a matching title-pattern + rate band +
+location + tech stack offered via a *different* agency is almost always one job that
+several agencies are advertising.
+
+- **Treat it as one vacancy.** Keep a single record; append `also via <recruiter> at <rate>` to its `Notes` rather than creating a second row.
+- **Never apply through a second channel once an application is in flight** — duplicate agency submissions for the same role can **disqualify the candidate**.
+- **Before the first application,** prefer the better terms / the most direct posting (direct employer or the company's own careers page over an agency) when the same role appears via more than one route.
+- **Uncertain identity → flag, don't auto-merge.** If you can't be confident two postings are the same underlying vacancy, surface both for review rather than silently merging them.
 
 ---
 
@@ -261,14 +331,16 @@ When the user says they APPLIED to a role: write an `Applied` row (today's date,
 
 Don't prompt if every role this batch was a clean accept or clean reject.
 
-### 9. Mark-as-read (automatic final step)
+### 9. Done-marker (automatic final step)
 
-After all sections above are produced, remove the `UNREAD` label from every thread processed in this batch. No confirmation needed — this is pre-authorised.
+After all output sections above are produced, mark **every** RawEmails row screened this
+batch — matches, flags, rejects, and skips alike, not just the matches. No confirmation
+needed — this is pre-authorised.
 
-- Call `unlabel_thread` with `labelIds: ["UNREAD"]` for each processed thread ID (every thread fetched/evaluated this batch, including instant-rejects and skips — not just the matches).
-- Run them in parallel; report a one-line tally: "🏷️ Marked N processed threads as read."
-- If the calls fail with a permissions/connector error, do NOT retry blindly — report that Gmail needs Write access reconnected, and leave the threads unread.
-- Never remove any label other than `UNREAD`.
+1. **Flip `Status` New → Processed.** Call `update_records_for_table` on the RawEmails table (base `appV9puNHinuRKTk9`, table `tblm8d89dUVG16Bk0`, field `Status` `fld4l6CSqEqHMgRWi`) for each screened row. This is the new dedup marker — a `Processed` row is never re-screened (it replaces the old unread-label marker).
+2. **Also mark the Gmail thread read.** Remove the `UNREAD` label from the row's `ThreadId` (`fldJyZVs6sqzJxe2K`) — call `unlabel_thread` with `labelIds: ["UNREAD"]`. *Why keep this:* it preserves the invariant "unread ⟺ not yet pipeline-processed", which the §1 canary and Ivan's inbox both rely on; the mapping is free (`ThreadId` is on the row). Run these in parallel.
+3. **Report a one-line tally:** `📥 Flipped N rows to Processed · 🏷️ marked N threads read.`
+4. **Fail-safe on errors, pre-authorised otherwise.** If a `Status` update fails, report it and **leave that row `New`** — it is re-screened next run (mirrors the old leave-unread behaviour). **Never** set `Status = Error` from the screening side (that is the collector's state). If the Gmail calls fail with a permissions/connector error, do **not** retry blindly — report that Gmail needs Write access reconnected, and leave those threads unread. **Never** remove any Gmail label other than `UNREAD`.
 
 ---
 
