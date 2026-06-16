@@ -87,6 +87,29 @@ function planTableChanges(want, liveTable) {
   return { creates, adds, warnings };
 }
 
+/**
+ * Build the request body for an Airtable create-field / create-table field. The
+ * Meta API defines a field by name/type/description/options — the `id` is
+ * server-assigned and returned in the *response*, never accepted in the request.
+ * schema.json now carries those ids (for rename-safe matching), so the additive
+ * create path must strip the top-level `id` before POSTing, or it would send a
+ * stale `fld…`. Drop the id and pass the rest through (shape guard, not an
+ * enumerated allow-list — any valid field property survives).
+ */
+function toCreateFieldPayload(field) {
+  const { id, ...rest } = field;
+  return rest;
+}
+
+/** Create-table body — name/description + id-stripped fields (same reason). */
+function toCreateTablePayload(table) {
+  return {
+    name: table.name,
+    description: table.description || '',
+    fields: (table.fields || []).map(toCreateFieldPayload),
+  };
+}
+
 async function api(method, url, token, body) {
   const resp = await fetch(url, {
     method,
@@ -115,17 +138,13 @@ async function main() {
 
     for (const table of creates) {
       console.log(`CREATE table: ${table.name} (${table.fields.length} fields)`);
-      await api('POST', base, token, {
-        name: table.name,
-        description: table.description || '',
-        fields: table.fields,
-      });
+      await api('POST', base, token, toCreateTablePayload(table));
       changes++;
     }
 
     for (const field of adds) {
       console.log(`ADD field: ${want.name}.${field.name} (${field.type})`);
-      await api('POST', `${base}/${liveTable.id}/fields`, token, field);
+      await api('POST', `${base}/${liveTable.id}/fields`, token, toCreateFieldPayload(field));
       changes++;
     }
 
@@ -135,7 +154,7 @@ async function main() {
   console.log(changes === 0 ? 'No changes — schema up to date.' : `Done: ${changes} change(s) applied.`);
 }
 
-module.exports = { planTableChanges, matchByIdOrName };
+module.exports = { planTableChanges, matchByIdOrName, toCreateFieldPayload, toCreateTablePayload };
 
 if (require.main === module) {
   main().catch(err => {

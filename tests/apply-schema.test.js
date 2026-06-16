@@ -14,7 +14,12 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { planTableChanges, matchByIdOrName } = require('../airtable/apply-schema.js');
+const {
+  planTableChanges,
+  matchByIdOrName,
+  toCreateFieldPayload,
+  toCreateTablePayload,
+} = require('../airtable/apply-schema.js');
 
 // A want-field with an id matching a live field of the SAME name → no-op.
 test('planTableChanges (a): id-matched field, same name → no add, no warning', () => {
@@ -116,6 +121,48 @@ test('matchByIdOrName: id wins when set; name is the fallback', () => {
   assert.equal(matchByIdOrName({ name: 'Alpha' }, list).id, 'tbl1');
   assert.equal(matchByIdOrName({ name: 'Missing' }, list), undefined);
   assert.equal(matchByIdOrName({ name: 'x' }, undefined), undefined);
+});
+
+// Codex [P2]: schema.json now carries Airtable field ids (for rename-safe matching),
+// but the Meta API rejects an `id` in a create-table/create-field request body — it's
+// server-assigned, returned in the response. The additive create path must strip the
+// top-level id before POSTing; these guard both the missing-field and missing-table paths.
+test('toCreateFieldPayload strips the server-assigned id, keeps name/type/description/options', () => {
+  const field = {
+    id: 'fldPxVR6FTbdV4nEn',
+    name: 'Role',
+    type: 'singleSelect',
+    description: 'Job title',
+    options: { choices: [{ name: 'A' }] },
+  };
+  const payload = toCreateFieldPayload(field);
+  assert.equal('id' in payload, false, 'a create-field body must not carry an id');
+  assert.deepEqual(payload, {
+    name: 'Role',
+    type: 'singleSelect',
+    description: 'Job title',
+    options: { choices: [{ name: 'A' }] },
+  });
+  // an already-id-less field passes through unchanged (back-compat)
+  assert.deepEqual(toCreateFieldPayload({ name: 'X', type: 'number' }), { name: 'X', type: 'number' });
+});
+
+test('toCreateTablePayload strips field ids (missing-table create path never POSTs fld… ids)', () => {
+  const table = {
+    id: 'tbl3abC60VRQWb21w',
+    name: 'Vacancies',
+    description: 'decisions store',
+    fields: [
+      { id: 'fldPxVR6FTbdV4nEn', name: 'Role', type: 'singleLineText' },
+      { id: 'fldz2C7r1hSNrET4i', name: 'Link', type: 'url' },
+    ],
+  };
+  const payload = toCreateTablePayload(table);
+  assert.equal('id' in payload, false, 'create-table body has no top-level table id');
+  assert.equal(payload.name, 'Vacancies');
+  assert.equal(payload.description, 'decisions store');
+  assert.ok(payload.fields.every(f => !('id' in f)), 'no field in the create-table body carries an id');
+  assert.deepEqual(payload.fields.map(f => f.name), ['Role', 'Link']);
 });
 
 // Acceptance criterion: applying the committed Vacancies entry against the live
