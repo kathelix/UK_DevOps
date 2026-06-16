@@ -40,7 +40,7 @@ Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise T
 
 ## 6. Airtable free-plan record cap is per base across all tables — and enforcement lags the notification
 
-**Symptom:** Airtable notified that the Job Search base was over its 1,000-record limit (observed 2026-06-10, notification at 11:13) after the collector swept a ~3-week backlog: RawEmails 940 + Vacancies 77 + Vacancies_test 1 = 1,018. Record **creation was still succeeding ≥5 hours after** the notification — the cap is announced before it is enforced, and the enforcement timing is unspecified.
+**Symptom:** Airtable notified that the Job Search base was over its 1,000-record limit (observed 2026-06-10, notification at 11:13) after the collector swept a ~3-week backlog: RawEmails 940 + Vacancies 77 = 1,017. Record **creation was still succeeding ≥5 hours after** the notification — the cap is announced before it is enforced, and the enforcement timing is unspecified.
 
 **Cause / contract:** the free plan's 1,000-record cap is a **per-base budget shared by every table in the base**, not a per-table limit. Any one table's growth spends everyone's headroom.
 
