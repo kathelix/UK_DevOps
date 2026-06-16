@@ -1,6 +1,6 @@
 {
   "baseId": "appV9puNHinuRKTk9",
-  "comment": "Desired Airtable schema, applied additively by apply-schema.js (Meta API cannot delete tables/fields or change field types — removals are manual). The existing Vacancies table is intentionally NOT managed here.",
+  "comment": "Desired Airtable schema, applied additively by apply-schema.js (Meta API cannot delete tables/fields or change field types — removals are manual). Tables and fields are matched by id when present, so a UI rename surfaces as a drift warning instead of a duplicate field; run airtable/import-schema.js to backfill ids and snapshot drift.",
   "tables": [
     {
       "name": "RawEmails",
@@ -23,17 +23,18 @@
       ]
     },
     {
-      "name": "Vacancies_test",
-      "description": "Sandbox mirror of Vacancies for dry-run pipeline sessions (roadmap M5). Same fields as the real Vacancies table; safe to wipe.",
+      "id": "tbl3abC60VRQWb21w",
+      "name": "Vacancies",
+      "description": "Tracked DevOps/Platform job vacancies (Status=Applied or Skipped). The screening pipeline's decisions store — read at run start as the §0 skip-list, written at run end. Skipped rows within 30 days of Date are skipped from re-screening; older Skipped rows are re-evaluated.",
       "fields": [
-        { "name": "Role", "type": "singleLineText" },
-        { "name": "Recruiter", "type": "singleLineText" },
-        { "name": "Type", "type": "singleSelect", "options": { "choices": [ { "name": "Contract" }, { "name": "Permanent" } ] } },
-        { "name": "Rate/Salary", "type": "singleLineText" },
-        { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "Applied", "color": "greenBright" }, { "name": "Skipped", "color": "grayBright" } ] } },
-        { "name": "Date", "type": "date", "options": { "dateFormat": { "name": "iso" } } },
-        { "name": "Notes", "type": "multilineText" },
-        { "name": "Link", "type": "url" }
+        { "id": "fldPxVR6FTbdV4nEn", "name": "Role", "type": "singleLineText", "description": "Job title" },
+        { "id": "fldv5NoMPKxDbuvmc", "name": "Recruiter", "type": "singleLineText", "description": "Recruiter / company / source" },
+        { "id": "fldyxDS4z1rn9N6fm", "name": "Type", "type": "singleSelect", "options": { "choices": [ { "name": "Contract" }, { "name": "Permanent" } ] } },
+        { "id": "fldtMUI44BWtBvpGs", "name": "Rate/Salary", "type": "singleLineText" },
+        { "id": "fldx0JREP7vvYiHjW", "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "Applied", "color": "greenBright" }, { "name": "Skipped", "color": "grayBright" } ] } },
+        { "id": "fldOCTCdsyPtuJuA5", "name": "Date", "type": "date", "options": { "dateFormat": { "name": "iso" } }, "description": "Date applied (Applied) or date reviewed (Skipped). Drives the 30-day skip window." },
+        { "id": "fldbnGIrNk8e1dmvK", "name": "Notes", "type": "multilineText", "description": "Reason not applied, applied status, or match notes" },
+        { "id": "fldz2C7r1hSNrET4i", "name": "Link", "type": "url", "description": "Best available direct link to the listing" }
       ]
     }
   ]

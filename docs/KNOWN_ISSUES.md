@@ -16,9 +16,13 @@
 
 `payload.body.data` arrives as a **byte array** (number[]), not the base64url string the raw Gmail API returns — the Apps Script client auto-converts `format: byte` fields. Decoders fed `String(byteArray)` fail with misleading errors (`invalid char "," …`). Handled in `decodeB64Url_()` (array → `newBlob(bytes)`); the string path is kept as fallback. Cost three debugging rounds on 2026-06-07; see commit `db60415`.
 
-## 3. Airtable schema apply is additive-only and name-matched
+## 3. Airtable schema apply is additive-only (rename-safe via field-ID matching)
 
-The Meta API cannot delete tables/fields or change field types, so `airtable/apply-schema.js` only creates and warns. Consequence: a field renamed in the Airtable UI looks "missing" to CI and gets re-created as a duplicate on the next run. Until the field-ID-matching improvement lands (`TODO.md` → Airtable), treat `schema.json` as the authority on names and avoid renaming fields in the UI.
+The Meta API cannot delete tables/fields or change field types, so `airtable/apply-schema.js` only creates and warns — removals/retypes stay manual.
+
+**Resolved — field-ID matching shipped.** apply-schema now matches tables/fields **by id when present** (name is the fallback). A field renamed in the Airtable UI is detected as a rename-drift warning (`schema.json says <name>, live is <liveName> (<id>) — reconcile`) and is **not** re-created as a duplicate. `airtable/import-schema.js` backfills the live ids into `schema.json` and snapshots structural drift; run it before editing the schema.
+
+**Residual:** rename-safety only applies to entries that carry an id. Any managed table/field still matched **by name** — i.e. whose id hasn't been backfilled yet (RawEmails until `import-schema.js` is run once with a token; Vacancies already carries ids) — keeps the old footgun: a UI rename there re-creates a duplicate. Run `import-schema.js` to close it; until then, treat `schema.json` as the authority on names for those entries and avoid renaming their fields in the UI.
 
 ## 4. Aggregator "remote" tags lie
 
@@ -36,7 +40,7 @@ Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise T
 
 ## 6. Airtable free-plan record cap is per base across all tables — and enforcement lags the notification
 
-**Symptom:** Airtable notified that the Job Search base was over its 1,000-record limit (observed 2026-06-10, notification at 11:13) after the collector swept a ~3-week backlog: RawEmails 940 + Vacancies 77 + Vacancies_test 1 = 1,018. Record **creation was still succeeding ≥5 hours after** the notification — the cap is announced before it is enforced, and the enforcement timing is unspecified.
+**Symptom:** Airtable notified that the Job Search base was over its 1,000-record limit (observed 2026-06-10, notification at 11:13) after the collector swept a ~3-week backlog: RawEmails 940 + Vacancies 77 = 1,017. Record **creation was still succeeding ≥5 hours after** the notification — the cap is announced before it is enforced, and the enforcement timing is unspecified.
 
 **Cause / contract:** the free plan's 1,000-record cap is a **per-base budget shared by every table in the base**, not a per-table limit. Any one table's growth spends everyone's headroom.
 

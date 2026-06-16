@@ -231,6 +231,38 @@ equivalent is now the automated §1 canary above. Kept here as the rollback's su
 criterion: if a 2.0 run looks wrong, re-run this comparison before reverting (see *Intake
 cutover (M6.2)* → Rollback).
 
+## Airtable schema (version control)
+
+`airtable/schema.json` is the version-controlled desired schema for the two managed tables
+(RawEmails, Vacancies). Two scripts manage it, both **additive-only** — the Meta API cannot
+delete fields/tables or change types, so removals and retypes stay manual:
+
+- **`apply-schema.js`** — schema → live base. Runs in CI (`Deploy Airtable schema`, on any
+  `airtable/**` push to `main`): creates missing tables, adds missing fields, warns on drift.
+  Tables and fields are matched **by id when present** (name otherwise), so it never
+  duplicates a UI-renamed field. Dry-check locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js`.
+- **`import-schema.js`** — live base → schema. `AIRTABLE_TOKEN=… node airtable/import-schema.js`
+  GETs the live base and **merges** field ids + any new managed structure back into
+  `schema.json`, preserving your curated comments/descriptions. Run it **before editing the
+  schema** to backfill live ids and capture a clean drift snapshot. Idempotent (a no-change run
+  rewrites nothing) and scoped to the managed-table allowlist, so it never pulls unrelated
+  tables in. The first run normalizes `schema.json` to canonical 2-space JSON — commit that
+  once, and later runs produce clean, id-only diffs.
+
+**Reconciling a rename-drift warning.** A field renamed in the Airtable UI makes the next apply
+log e.g. `WARN rename drift on Vacancies: schema.json says Link, live is Website (fldz2C7r1hSNrET4i) — reconcile`.
+apply-schema leaves it alone (no duplicate created). Pick the canonical name: to adopt the UI
+name, edit that field's `name` in `schema.json` (its id stays the anchor); to keep the schema
+name, rename the field back in the UI. The warning clears once the names agree. `import-schema.js`
+preserves curated names, so it won't auto-resolve this — it only confirms the id is present.
+
+**Retiring a table (e.g. `Vacancies_test`, 2026-06-16).** Because apply is additive, a table must
+leave `schema.json` **first** (so CI stops managing it and can't re-create it) — then the owner
+deletes the now-unmanaged live table in the Airtable UI (right-click → delete; the Meta API /
+connector can't, and a destructive delete is the owner's call). Order matters: the `schema.json`
+removal merges first, the manual UI delete second, so no `airtable/**` CI apply re-creates it in
+between.
+
 ## When things break
 
 | Symptom | Likely cause | Action |
@@ -243,6 +275,7 @@ cutover (M6.2)* → Rollback).
 | Purge run red in Executions | Airtable API error mid-purge, or ≥950 records with 0 eligible (emergency alarm) | Read execution log; an interrupted purge resumes next night. On the emergency alarm (`≥950`, 0 eligible) post-cutover: confirm the pre-cutover backlog migration ran **and** the screening run is flipping rows to `Processed` (eligible rows should now accrue — see *Starvation* above; persistent 0-eligible points at Status flips not happening); manually purge old `Processed` rows if the count is still near the cap |
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |
+| `Deploy Airtable schema` is green but logs `WARN … rename drift` / `WARN … type drift` | A field was renamed or retyped in the Airtable UI; apply-schema matched it by id and warned **without** acting (additive-only, so no duplicate/retype) | Not a failure. Reconcile per *Airtable schema (version control)* → "Reconciling a rename-drift warning": adopt the UI name in `schema.json` or rename back in the UI; type drift is a manual retype. The id stays the anchor |
 | Screening run fires the §1 canary: `⚠️ 0 New RawEmails rows but N unread … emails in Gmail` | The collector didn't write today's mail — trigger missing/failed, a persistent upsert failure, or the record cap blocking writes | **Not** a quiet day. GAS Executions panel first (collector run red? trigger present?); then the *Collector* rows above. The screening run reported the alert instead of "nothing today", so nothing was silently missed |
 | Screening run alerts `⚠️ Airtable unreachable …` and stops | RawEmails couldn't be read at all (Airtable outage/error) — §1 Path 3 is **alert-and-stop**, there is no Gmail-direct screening fallback | By design, not a screening failure. Check Airtable status + the Claude→Airtable connector. Nothing was screened/marked/persisted; recovery is automatic — during the outage the collector's writes also fail, so that mail stays uncollected in Gmail and the next run screens it once Airtable is back (skip-list dedups). Do **not** screen manually via Gmail |
 | A RawEmails row is still `New` after a screening run | Its §9 Status flip failed (reported in the run's done-marker tally) | Fail-safe by design — the row is re-screened next run. If rows pile up `New`, check the Claude→Airtable connector / write permissions; a row stuck `New` across runs but never re-reported means the run isn't reaching §9 |

@@ -33,7 +33,7 @@ Goal: new GAS script runs end-to-end — deployed from CI, fed by time trigger, 
 
 ## Airtable
 
-- [ ] **Import the existing Vacancies table schema into `airtable/schema.json`** so all schemas are under version control (RawEmails and Vacancies_test already are). Do it via a small repeatable export script (`airtable/import-schema.js`: GET Meta API → merge into schema.json) rather than hand-copying, so drift snapshots stay diffable. Prerequisite for safety: extend `apply-schema.js` to match fields **by field ID when present** (import IDs along with names) — name-only matching turns any UI rename into a duplicate field on the next CI run. With ID matching, renames become detectable drift warnings instead.
+- [x] **Import the existing Vacancies table schema into `airtable/schema.json`** — done. Vacancies is now version-controlled (with field ids); `apply-schema.js` matches **by field ID when present**, so a UI rename surfaces as a rename-drift warning instead of a duplicate field; and `airtable/import-schema.js` (GET Meta API → idempotent merge, managed-table allowlist) backfills ids / snapshots drift. Both the diff and merge paths are pure, fixture-tested (`tests/apply-schema.test.js`, `tests/import-schema.test.js`); `tests.yml` now also runs on `airtable/**`. The orphaned M5 `Vacancies_test` sandbox mirror was **retired** from `schema.json` + the managed allowlist in the same PR (owner deletes the now-unmanaged live table manually post-merge — additive CI / the Meta API can't). **Residual:** RawEmails stays id-less in `schema.json` until the owner runs `import-schema.js` once with a token (its rename-safety lands then) — see `docs/KNOWN_ISSUES.md` §3.
 
 ## Pipeline integration
 
