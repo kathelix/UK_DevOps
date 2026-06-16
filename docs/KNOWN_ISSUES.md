@@ -16,9 +16,13 @@
 
 `payload.body.data` arrives as a **byte array** (number[]), not the base64url string the raw Gmail API returns — the Apps Script client auto-converts `format: byte` fields. Decoders fed `String(byteArray)` fail with misleading errors (`invalid char "," …`). Handled in `decodeB64Url_()` (array → `newBlob(bytes)`); the string path is kept as fallback. Cost three debugging rounds on 2026-06-07; see commit `db60415`.
 
-## 3. Airtable schema apply is additive-only and name-matched
+## 3. Airtable schema apply is additive-only (rename-safe via field-ID matching)
 
-The Meta API cannot delete tables/fields or change field types, so `airtable/apply-schema.js` only creates and warns. Consequence: a field renamed in the Airtable UI looks "missing" to CI and gets re-created as a duplicate on the next run. Until the field-ID-matching improvement lands (`TODO.md` → Airtable), treat `schema.json` as the authority on names and avoid renaming fields in the UI.
+The Meta API cannot delete tables/fields or change field types, so `airtable/apply-schema.js` only creates and warns — removals/retypes stay manual.
+
+**Resolved — field-ID matching shipped.** apply-schema now matches tables/fields **by id when present** (name is the fallback). A field renamed in the Airtable UI is detected as a rename-drift warning (`schema.json says <name>, live is <liveName> (<id>) — reconcile`) and is **not** re-created as a duplicate. `airtable/import-schema.js` backfills the live ids into `schema.json` and snapshots structural drift; run it before editing the schema.
+
+**Residual:** rename-safety only applies to entries that carry an id. Any managed table/field still matched **by name** — i.e. whose id hasn't been backfilled yet (RawEmails and Vacancies_test until `import-schema.js` is run once with a token; Vacancies already carries ids) — keeps the old footgun: a UI rename there re-creates a duplicate. Run `import-schema.js` to close it; until then, treat `schema.json` as the authority on names for those entries and avoid renaming their fields in the UI.
 
 ## 4. Aggregator "remote" tags lie
 
