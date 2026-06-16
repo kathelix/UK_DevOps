@@ -39,4 +39,4 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 
 ## Status
 
-**Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a fallback + discrepancy canary. The Make.com scenario and the GAS collector still run in parallel as the safety net until Make is decommissioned (a later slice). Roadmap: `TODO.md`, milestone M6; runbook: `docs/OPERATIONS.md`.
+**Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a discrepancy canary only (an Airtable outage alerts and stops — there's no Gmail-direct screening fallback). The Make.com scenario and the GAS collector still run in parallel as the safety net until Make is decommissioned (a later slice). Roadmap: `TODO.md`, milestone M6; runbook: `docs/OPERATIONS.md`.

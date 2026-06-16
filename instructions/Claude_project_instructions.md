@@ -66,17 +66,19 @@ alert** instead of a clean "nothing today":
 and other Gmail search-index orphans are invisible to the Gmail API, so they can't
 false-trigger this alert — see §3.
 
-#### Path 3 — Fallback: Gmail-direct (resilience)
+#### Path 3 — Airtable outage: alert and stop
 
-Only if RawEmails/Airtable **can't be read at all** (outage or error), fall back to the
-**pre-2.0 Gmail-direct path** for that run and **note in the report that it ran in
-fallback mode**. An Airtable outage must not dark the pipeline:
+If RawEmails **can't be read at all** (Airtable unreachable or erroring), do **not**
+screen — there is **no** Gmail-direct screening fallback. Emit one clear alert and stop:
 
-- Query: `label:job-vacancies label:unread`
-- Paginate using `nextPageToken` from each response until no token is returned — that confirms the queue is fully drained
-- Fetch all pages automatically without prompting for confirmation between batches
-- Gmail's stated result count is unreliable; drive pagination by token availability only
-- Fetch, HTML-extract and clean each thread, then screen it (the original §1 behaviour), and mark threads read per §9 (no Status flip — there are no RawEmails rows in this path)
+> ⚠️ Airtable unreachable — the screening pipeline can't run. Nothing screened, marked,
+> or persisted. The next run catches up automatically once Airtable is back (RawEmails
+> rows stay New; the collector + queue lose nothing).
+
+Then stop: produce no results, no Post, no Airtable writes, and no Gmail label changes.
+No email is lost — during the outage the **collector's** writes also fail, so that mail
+stays in Gmail uncollected; on recovery the collector collects it → RawEmails `New` → the
+next primary run screens it, deduped by the §0 skip-list.
 
 ---
 
@@ -122,9 +124,7 @@ Only when web search also fails to resolve. Provide the best available direct li
 
 Each email's body is the **`CleanText`** field from its RawEmails row (§1) — already
 link-decoded, `utm_`-stripped, footer-cut and table-unwrapped by the collector offline.
-The content rules below apply to that cleaned text and never re-fetch from Gmail. (In the
-rare §1 *fallback* run the body is the freshly HTML-extracted Gmail thread instead — the
-same rules apply.)
+The content rules below apply to that cleaned text and never re-fetch from Gmail.
 
 #### Digest emails
 Senders: ApplyGateway, ZipRecruiter, Reed, NIJobs, hackajob, WhatJobs.
@@ -164,7 +164,6 @@ The collector reads Gmail through the same search index these emails never enter
 visible in the Gmail UI only), so they **don't reach RawEmails** and won't appear in the
 primary path. No instant-reject step is needed for them — they simply aren't there.
 - They matter only for the **§1 canary**: a count mismatch between RawEmails `New` rows and Gmail UI unread driven by *these* senders is **expected**, not a collector failure. Details: `docs/KNOWN_ISSUES.md` in the UK_DevOps repo.
-- In the rare §1 *fallback* (Gmail-direct) run they stay invisible to the API query too, so they don't surface there either.
 
 ---
 
@@ -342,11 +341,6 @@ needed — this is pre-authorised.
 2. **Also mark the Gmail thread read.** Remove the `UNREAD` label from the row's `ThreadId` (`fldJyZVs6sqzJxe2K`) — call `unlabel_thread` with `labelIds: ["UNREAD"]`. *Why keep this:* it preserves the invariant "unread ⟺ not yet pipeline-processed", which the §1 canary and Ivan's inbox both rely on; the mapping is free (`ThreadId` is on the row). Run these in parallel.
 3. **Report a one-line tally:** `📥 Flipped N rows to Processed · 🏷️ marked N threads read.`
 4. **Fail-safe on errors, pre-authorised otherwise.** If a `Status` update fails, report it and **leave that row `New`** — it is re-screened next run (mirrors the old leave-unread behaviour). **Never** set `Status = Error` from the screening side (that is the collector's state). If the Gmail calls fail with a permissions/connector error, do **not** retry blindly — report that Gmail needs Write access reconnected, and leave those threads unread. **Never** remove any Gmail label other than `UNREAD`.
-
-**Fallback mode (§1 Path 3):** there are no RawEmails rows, so there is nothing to flip —
-only the mark-read runs (pre-2.0 behaviour): `unlabel_thread` with `labelIds: ["UNREAD"]`
-for every thread processed this batch (including instant-rejects and skips), in parallel,
-with the same permissions caveat above.
 
 ---
 

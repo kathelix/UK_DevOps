@@ -11,7 +11,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a fallback + discrepancy canary (§1). The Make.com scenario and the GAS collector both stay live **in parallel as the safety net** for the first few 2.0 runs — Make is **not** decommissioned yet (a later slice, once 2.0 is proven). One-time activation steps: *Intake cutover (M6.2)* below.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario and the GAS collector both stay live **in parallel as the safety net** for the first few 2.0 runs — Make is **not** decommissioned yet (a later slice, once 2.0 is proven). One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -104,8 +104,9 @@ git-revert rollback, and keeping Make running as the safety net.
    the run about the Gmail query / pagination / `get_thread`. The project instructions win,
    so it's not fatal, but update those reminders to the RawEmails intake to avoid confusion.
 6. **Rollback.** If a 2.0 run misbehaves, `git revert` the PR (or re-point the field to an
-   inline 1.2 copy). The parallel Gmail path + Make are still live, so no day is lost;
-   re-run the parity check (below) before reverting.
+   inline 1.2 copy) — that restores the pre-2.0 Gmail-direct screening. Make + the
+   collector are still live too, so no day is lost; re-run the parity check (below) before
+   reverting.
 
 ## Collector: routine procedures
 
@@ -243,7 +244,7 @@ cutover (M6.2)* → Rollback).
 | `Deploy GAS` workflow fails | `CLASPRC_JSON` token expired/revoked | `clasp login` locally, update the GitHub secret |
 | `Deploy Airtable schema` fails | PAT scope/expiry, or schema.json invalid | Run locally: `AIRTABLE_TOKEN=… node airtable/apply-schema.js` |
 | Screening run fires the §1 canary: `⚠️ 0 New RawEmails rows but N unread … emails in Gmail` | The collector didn't write today's mail — trigger missing/failed, a persistent upsert failure, or the record cap blocking writes | **Not** a quiet day. GAS Executions panel first (collector run red? trigger present?); then the *Collector* rows above. The screening run reported the alert instead of "nothing today", so nothing was silently missed |
-| Screening run says it ran in **fallback mode** (Gmail-direct) | RawEmails/Airtable couldn't be read at all (outage/error), so §1 Path 3 fell back to the pre-2.0 Gmail path for that run | Check Airtable status + the Claude→Airtable connector. That run screened from Gmail and did **no** Status flip (only mark-read); the next run returns to RawEmails once Airtable recovers — no day lost |
+| Screening run alerts `⚠️ Airtable unreachable …` and stops | RawEmails couldn't be read at all (Airtable outage/error) — §1 Path 3 is **alert-and-stop**, there is no Gmail-direct screening fallback | By design, not a screening failure. Check Airtable status + the Claude→Airtable connector. Nothing was screened/marked/persisted; recovery is automatic — during the outage the collector's writes also fail, so that mail stays uncollected in Gmail and the next run screens it once Airtable is back (skip-list dedups). Do **not** screen manually via Gmail |
 | A RawEmails row is still `New` after a screening run | Its §9 Status flip failed (reported in the run's done-marker tally) | Fail-safe by design — the row is re-screened next run. If rows pile up `New`, check the Claude→Airtable connector / write permissions; a row stuck `New` across runs but never re-reported means the run isn't reaching §9 |
 | RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then the §1 canary distinguishes them (orphans don't trigger it) |
 | Screening run reports fewer emails than UI shows unread | Index orphans (KNOWN_ISSUES §1) | Expected for securityclearedjobs.com; investigate only for senders that matter |
