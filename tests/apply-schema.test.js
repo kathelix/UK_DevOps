@@ -65,6 +65,7 @@ test('planTableChanges (d): name-only field matching a live name → no add (bac
   const live = { id: 'tblT', name: 'T', fields: [{ id: 'fldA', name: 'Role', type: 'singleLineText' }] };
 
   const { creates, adds, warnings } = planTableChanges(want, live);
+  assert.deepEqual(creates, []);
   assert.deepEqual(adds, []);
   assert.deepEqual(warnings, []);
 });
