@@ -25,7 +25,7 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 | Airtable base "Job Search" | State store: email queue + vacancy decisions | `airtable/` (schema-as-code) |
 | Claude (Cowork) | The screening brain: split, dedupe, score, verify, report | `instructions/` (versioned rules) |
 | GitHub Actions | Deploys the script (clasp) and Airtable schema on merge to main | `.github/workflows/` |
-| Make.com | Legacy collector — parallel-run until cutover, then retired | `UK_DevOps_Gmail_Collector.blueprint.json` |
+| Make.com | Legacy collector — runs in parallel as the safety net until decommission, then retired | `UK_DevOps_Gmail_Collector.blueprint.json` |
 
 ## Repo map
 
@@ -39,4 +39,4 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 
 ## Status
 
-**Parallel-run week** (since 2026-06-07): the new collector shadows the legacy Gmail-direct screening path. Cutover plan: `TODO.md`, milestone M6.
+**Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a fallback + discrepancy canary. The Make.com scenario and the GAS collector still run in parallel as the safety net until Make is decommissioned (a later slice). Roadmap: `TODO.md`, milestone M6; runbook: `docs/OPERATIONS.md`.
