@@ -22,7 +22,7 @@ The Meta API cannot delete tables/fields or change field types, so `airtable/app
 
 **Resolved — field-ID matching shipped.** apply-schema now matches tables/fields **by id when present** (name is the fallback). A field renamed in the Airtable UI is detected as a rename-drift warning (`schema.json says <name>, live is <liveName> (<id>) — reconcile`) and is **not** re-created as a duplicate. `airtable/import-schema.js` backfills the live ids into `schema.json` and snapshots structural drift; run it before editing the schema.
 
-**Residual:** rename-safety only applies to entries that carry an id. Any managed table/field still matched **by name** — i.e. whose id hasn't been backfilled yet (RawEmails and Vacancies_test until `import-schema.js` is run once with a token; Vacancies already carries ids) — keeps the old footgun: a UI rename there re-creates a duplicate. Run `import-schema.js` to close it; until then, treat `schema.json` as the authority on names for those entries and avoid renaming their fields in the UI.
+**Residual:** rename-safety only applies to entries that carry an id. Any managed table/field still matched **by name** — i.e. whose id hasn't been backfilled yet (RawEmails until `import-schema.js` is run once with a token; Vacancies already carries ids) — keeps the old footgun: a UI rename there re-creates a duplicate. Run `import-schema.js` to close it; until then, treat `schema.json` as the authority on names for those entries and avoid renaming their fields in the UI.
 
 ## 4. Aggregator "remote" tags lie
 

@@ -23,20 +23,6 @@
       ]
     },
     {
-      "name": "Vacancies_test",
-      "description": "Sandbox mirror of Vacancies for dry-run pipeline sessions (roadmap M5). Same fields as the real Vacancies table; safe to wipe.",
-      "fields": [
-        { "name": "Role", "type": "singleLineText" },
-        { "name": "Recruiter", "type": "singleLineText" },
-        { "name": "Type", "type": "singleSelect", "options": { "choices": [ { "name": "Contract" }, { "name": "Permanent" } ] } },
-        { "name": "Rate/Salary", "type": "singleLineText" },
-        { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "Applied", "color": "greenBright" }, { "name": "Skipped", "color": "grayBright" } ] } },
-        { "name": "Date", "type": "date", "options": { "dateFormat": { "name": "iso" } } },
-        { "name": "Notes", "type": "multilineText" },
-        { "name": "Link", "type": "url" }
-      ]
-    },
-    {
       "id": "tbl3abC60VRQWb21w",
       "name": "Vacancies",
       "description": "Tracked DevOps/Platform job vacancies (Status=Applied or Skipped). The screening pipeline's decisions store — read at run start as the §0 skip-list, written at run end. Skipped rows within 30 days of Date are skipped from re-screening; older Skipped rows are re-evaluated.",

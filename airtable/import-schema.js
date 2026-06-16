@@ -35,7 +35,7 @@ const path = require('path');
 
 // Only these tables are version-controlled; the import never pulls anything else
 // live into schema.json. Keep in lockstep with schema.json's `tables`.
-const MANAGED_TABLES = ['RawEmails', 'Vacancies_test', 'Vacancies'];
+const MANAGED_TABLES = ['RawEmails', 'Vacancies'];
 
 // Project a live field/table into the schema's shape (id first), carrying its
 // structure and any live prose as a starting point. Used only when *adding* an

@@ -13,8 +13,8 @@ const assert = require('node:assert/strict');
 const { mergeLiveIntoSchema, MANAGED_TABLES } = require('../airtable/import-schema.js');
 
 // A name-only managed schema (no ids yet) plus the live base that carries them.
-// Mirrors the real first-run shape: RawEmails/Vacancies_test are name-only in
-// schema.json; the live base has ids; Vacancies is live but not yet in schema.
+// Mirrors the real first-run shape: RawEmails is name-only in schema.json; the
+// live base has ids; Vacancies is live but not yet in schema.
 function fixtures() {
   const schema = {
     baseId: 'appX',
@@ -130,6 +130,6 @@ test('mergeLiveIntoSchema warns, never auto-edits, on type drift', () => {
   assert.match(warnings[0], /type drift on RawEmails\.HtmlLength: schema=number live=singleLineText/);
 });
 
-test('MANAGED_TABLES is the documented three-table allowlist', () => {
-  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies_test', 'Vacancies']);
+test('MANAGED_TABLES is the documented two-table allowlist', () => {
+  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies']);
 });

@@ -233,9 +233,9 @@ cutover (M6.2)* → Rollback).
 
 ## Airtable schema (version control)
 
-`airtable/schema.json` is the version-controlled desired schema for the three managed tables
-(RawEmails, Vacancies_test, Vacancies). Two scripts manage it, both **additive-only** — the
-Meta API cannot delete fields/tables or change types, so removals and retypes stay manual:
+`airtable/schema.json` is the version-controlled desired schema for the two managed tables
+(RawEmails, Vacancies). Two scripts manage it, both **additive-only** — the Meta API cannot
+delete fields/tables or change types, so removals and retypes stay manual:
 
 - **`apply-schema.js`** — schema → live base. Runs in CI (`Deploy Airtable schema`, on any
   `airtable/**` push to `main`): creates missing tables, adds missing fields, warns on drift.
@@ -255,6 +255,13 @@ apply-schema leaves it alone (no duplicate created). Pick the canonical name: to
 name, edit that field's `name` in `schema.json` (its id stays the anchor); to keep the schema
 name, rename the field back in the UI. The warning clears once the names agree. `import-schema.js`
 preserves curated names, so it won't auto-resolve this — it only confirms the id is present.
+
+**Retiring a table (e.g. `Vacancies_test`, 2026-06-16).** Because apply is additive, a table must
+leave `schema.json` **first** (so CI stops managing it and can't re-create it) — then the owner
+deletes the now-unmanaged live table in the Airtable UI (right-click → delete; the Meta API /
+connector can't, and a destructive delete is the owner's call). Order matters: the `schema.json`
+removal merges first, the manual UI delete second, so no `airtable/**` CI apply re-creates it in
+between.
 
 ## When things break
 
