@@ -1,7 +1,7 @@
 /**
- * UK DevOps - Gmail Collector (Google Apps Script port of the Make.com scenario)
+ * UK DevOps - Gmail Collector (Google Apps Script port of the retired Make.com scenario)
  *
- * Faithful reproduction of blueprint "UK DevOps - Gmail Collector":
+ * Faithful reproduction of the retired Make scenario "UK DevOps - Gmail Collector":
  *   Gmail search -> Text parser (regex replace) -> store row -> add 'make-collected' label
  * Destination changed from Google Sheets to Airtable (table: RawEmails).
  * No other behavior changes. Improvements come later, iteratively.
@@ -97,13 +97,13 @@ const CONFIG = {
   // Records per REST DELETE request — the REST API's cap (NB: differs from the
   // Airtable scripting-environment batch cap of 50).
   PURGE_DELETE_BATCH: 10,
-  // Make's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
+  // The original Make scenario's 49k cap (Sheets cell limit) dropped. 100k is Airtable's hard
   // long-text limit - safety truncation only, not a design choice:
   CLEAN_TEXT_LIMIT: 100000,
 };
 
 // Module 5 (regexp:Replace) - pattern verbatim.
-// Make flags: global=true, sensitive=false, singleline=true, multiline=false  =>  /gis
+// Make-exported flags: global=true, sensitive=false, singleline=true, multiline=false  =>  /gis
 const CLEAN_REGEX = /(?:^.*?<body[^>]*>|<\/body>.*$|<img\b[^>]*>|\s(?:style|class|id|width|height|align|valign|bgcolor|border|cellpadding|cellspacing|role|aria-[\w-]+|data-[\w-]+)="[^"]*"|<!--[\s\S]*?-->|(?:&#8199;|&#x2007;|&amp;#8199;|&amp;#x2007;|&#65279;|&amp;#65279;|&#9;|&amp;#9;)|(?<=>)\s+(?=<))/gis;
 
 function collectJobEmails() {
@@ -320,7 +320,7 @@ function collectJobEmailsLocked_() {
     }
 
     // Upsert the sub-batch first (<=SUB_BATCH_SIZE <= Airtable's 10/request cap), then
-    // label as collected ONLY if the upsert succeeded (same ordering as Make: row ->
+    // label as collected ONLY if the upsert succeeded (same ordering as the original Make scenario: row ->
     // label). The MessageId upsert makes a re-collected message update its row instead
     // of duplicating it, so the write-then-label ordering is crash-safe.
     const batch = attemptUpsert_(records.map(r => ({ fields: r.fields })), upsertRetryOpts);
@@ -661,7 +661,7 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
   // Offline link cleanup (NO network): decode trackers that embed their destination in a
   // query param (URL/path-guarded) and strip utm_* analytics params, in place, BEFORE
   // CLEAN_REGEX. With neither present this is a byte-identical no-op, so CleanText matches
-  // the pre-cleanup output exactly. HtmlLength stays the ORIGINAL html length (Make parity);
+  // the pre-cleanup output exactly. HtmlLength stays the ORIGINAL html length (Make-port parity);
   // only CleanText / CleanLength reflect the cleanup.
   const linkClean = cleanLinksInHtml_(htmlBody);
   linkStats.decoded += linkClean.decoded;
@@ -714,7 +714,7 @@ function processMessage_(msg, headers, records, executionId, collectedAt, labels
         'HtmlLength': htmlBody.length,                             // K: {{length(1.htmlBody)}}
         'CleanLength': cleanText.length,                           // L: {{length(5.text)}}
         'CleanText': cleanText.substring(0, CONFIG.CLEAN_TEXT_LIMIT), // M: cleaned text (49k Sheets cap dropped)
-        'Status': 'New', // queue field for the screening pipeline (only addition vs Make)
+        'Status': 'New', // queue field for the screening pipeline (only addition vs the original Make scenario)
       },
     });
 }
@@ -912,7 +912,7 @@ function cleanLinksInHtml_(html) {
 // whose content is exactly ONE element and no non-whitespace text, is replaced
 // by that element, repeated to fixpoint. Runs in processMessage_ AFTER
 // CLEAN_REGEX (bare-tag matching is simpler post-regex); only CleanText /
-// CleanLength reflect it — HtmlLength stays the original body length (Make
+// CleanLength reflect it — HtmlLength stays the original body length (Make-port
 // parity). Semantics ported from the retired v3 Python design §3.5
 // (BeautifulSoup collapse_table_wrappers) as a pure string/stack function — no
 // DOM library, per the no-library policy (docs/TECH_DESIGN.md §4).
@@ -1122,7 +1122,7 @@ function collapseTableWrappers_(html) {
 // reads at all; token saving is secondary but real. Runs in processMessage_ AFTER
 // collapseTableWrappers_, so the marker is matched against the fully-cleaned text
 // (links → CLEAN_REGEX → unwrap → THIS). Only CleanText/CleanLength reflect the cut;
-// HtmlLength stays the original body length (Make parity), as with the earlier stages.
+// HtmlLength stays the original body length (Make-port parity), as with the earlier stages.
 //
 // OPT-IN by registered domain. FOOTER_MARKERS maps a registered domain → the literal
 // marker string that begins that sender's footer in the STORED CleanText byte-form
@@ -1220,7 +1220,7 @@ function parseFrom_(from) {
   return { name: from.trim(), email: from.trim() };
 }
 
-// Walk MIME tree, return first text/html part decoded (matches Make's htmlBody).
+// Walk MIME tree, return first text/html part decoded (matches the original Make scenario's htmlBody).
 function extractHtmlBody_(payload) {
   if (!payload) return '';
   if (payload.mimeType === 'text/html' && payload.body && payload.body.data) {

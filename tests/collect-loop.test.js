@@ -464,7 +464,7 @@ test('offline link cleanup is wired into processMessage_: HtmlLength stays origi
   // One message whose body carries a cv-library refer tracker (?url= holding a relative
   // path that itself carries utm). Pins the wiring the pure-function units cannot: that
   // cleanLinksInHtml_ actually runs BEFORE CLEAN_REGEX, that HtmlLength is the ORIGINAL
-  // length (Make parity) and only CleanText reflects the cleanup, and that the per-run
+  // length (Make-port parity) and only CleanText reflects the cleanup, and that the per-run
   // "Links:" metric is logged. Mutation-checked: setting HtmlLength to the cleaned length,
   // dropping the cleanLinksInHtml_ call, or removing the log each flips an assertion.
   // NOTE: this does NOT mutation-check that cleanup runs BEFORE CLEAN_REGEX — for every input
@@ -498,7 +498,7 @@ test('table-wrapper unwrap is wired in AFTER CLEAN_REGEX: wrappers collapse out 
   const r = runCollector({ n: 1, budgetMs: 1e9, getDelta: 1, bodyHtml: () => html });
 
   const fields = r.upserts[0].records[0].fields;
-  assert.equal(fields.HtmlLength, html.length, 'HtmlLength is the ORIGINAL html length (Make parity)');
+  assert.equal(fields.HtmlLength, html.length, 'HtmlLength is the ORIGINAL html length (Make-port parity)');
   assert.equal(fields.CleanText, '<p>DevOps role</p>', 'both wrapper tables collapsed out of CleanText');
   assert.equal(fields.CleanLength, fields.CleanText.length, 'CleanLength matches the unwrapped text');
   // Per-email line and per-run rollup, bytes pinned exactly: the skeleton is 84 chars, the
@@ -526,7 +526,7 @@ test('footer cutoff is wired in AFTER the unwrap: a mapped sender\'s footer is c
   const r = runCollector(opts);
 
   const fields = r.upserts[0].records[0].fields;
-  assert.equal(fields.HtmlLength, fixture.length, 'HtmlLength stays the ORIGINAL body length (Make parity)');
+  assert.equal(fields.HtmlLength, fixture.length, 'HtmlLength stays the ORIGINAL body length (Make-port parity)');
   assert.ok(!fields.CleanText.includes('Overall, how relevant are these jobs'), 'the footer marker (and its tail) is cut from CleanText');
   assert.equal(fields.CleanLength, fields.CleanText.length, 'CleanLength matches the footer-cut text');
   const perEmail = r.logs.find(l => /^Footer: msg=m0 /.test(l));
