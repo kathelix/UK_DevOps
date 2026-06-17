@@ -12,7 +12,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.1`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -49,6 +49,8 @@ on stale or absent instructions.
 
 ### Owner-activation checklist (one-time — ordered to never break a scheduled run)
 
+_(Completed — M6.1 shipped 2026-06-16; retained as a record. The loading **contract** above stays in force every run; the steps below are the one-time setup, not a recurring procedure.)_
+
 The order matters: activating the stub **before** the scheduled run is guaranteed to
 mount the folder would make the next scheduled screening **halt**. So:
 
@@ -74,6 +76,8 @@ mount the folder would make the next scheduled screening **halt**. So:
    the GAS collector is now the sole pipeline (see *Intake cutover (M6.2)* below).
 
 ## Intake cutover (M6.2) — one-time activation
+
+_(Completed — the M6.2 cutover shipped 2026-06-16, parity confirmed 2026-06-15; retained as a record of the one-time activation. The current screening source of truth is described under [Daily schedule](#daily-schedule) above.)_
 
 The M6.2 cutover flips the screening run's source of truth from Gmail to the collector's
 RawEmails queue (instructions §1/§9, `VERSION: 2.0`). Ordered so a first 2.0 run never
@@ -128,6 +132,8 @@ git-revert rollback (Make ran in parallel as an extra safety net through the cut
 - **Upsert failures end the run Failed (fail-loudly).** When a sub-batch's all-or-nothing PATCH fails — a deterministic `4xx` **or** a transient `429`/`5xx`/network throw that persisted past the retries — the records are re-sent **record-by-record** so the healthy ones still commit and only the bad records stay uncollected. Per-record outcomes: `200` → written + labelled; a persistent **transient** → left uncollected, retried next run, **never** `failed` (not poison) **until `MAX_TRANSIENT_WRITE_RETRIES` consecutive record-specific strikes**, at which point it is quarantined to `failed` (see *Failed message* above; the first strike needs a healthy sibling, then the counter is sticky, and a fresh message in an outage never strikes); a deterministic **`4xx`** with ≥1 healthy sibling → `failed` (see *Failed message* above). If any record is left uncollected the execution ends **Failed** (`N sub-batch upsert(s) failed; first: …`, counted **once per sub-batch**, not per record) so the GAS failure email fires — previously a hard write-block (e.g. at the record cap) stalled RawEmails silently while every run showed "Completed". A red collector run with this message means *some* messages weren't written; they are not lost (and the healthy records in the same sub-batch usually **were** written). **Systemic guard:** if **every** record in a sub-batch fails with **no healthy sibling** — all `4xx` (bad auth, wrong endpoint, or schema drift) **or** an all-records transient outage — the run quarantines **nothing for a fresh (never-struck) record** and fails loud, so a deploy mistake or an outage can't *mass*-`failed` the queue; fix the systemic cause and the next run clears it. **One carve-out — the struck-then-outage residual:** a *transient* record that already earned strikes from earlier record-specific runs can finish capping to `failed` even in a no-healthy-sibling run, so a single failure email can legitimately carry **both** `… sub-batch upsert(s) failed` (the fresh siblings, stuck) **and** `… write(s) quarantined after repeated transient failures` (the already-struck one) — see the quarantine row in *When things break*. An all-`4xx` systemic reject still quarantines nothing (poison needs a healthy sibling).
 
 ## Label rename migration (`make-*` → tool-neutral) — one-time
+
+_(Completed — the rename shipped 2026-06-17; retained as a record of the one-time migration. The `make-collected`/`make-failed` references below are the migration's historical record, not current label names.)_
 
 The collector deploys on **merge to `main`** (CI `clasp push` on `apps-script/**`) and runs on the trigger cadence ([TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci)). The code's new label names and the live Gmail labels must be consistent the moment the collector next runs — otherwise it either **crashes** (`getCollectedLabelId_` throws "Label not found" when the `collected` label is absent) or **re-collects every already-collected message** (the renamed `CONFIG.QUERY` no longer excludes the old labels). So the rename is a coordinated code + live-label migration, **with the collector paused** — the order below is load-bearing:
 
