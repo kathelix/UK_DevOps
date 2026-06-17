@@ -13,8 +13,9 @@ const assert = require('node:assert/strict');
 const { mergeLiveIntoSchema, MANAGED_TABLES } = require('../airtable/import-schema.js');
 
 // A name-only managed schema (no ids yet) plus the live base that carries them.
-// Mirrors the real first-run shape: RawEmails is name-only in schema.json; the
-// live base has ids; Vacancies is live but not yet in schema.
+// Mirrors the original first-run shape (RawEmails was name-only in schema.json
+// before its ids were backfilled 2026-06-17); the live base has ids; Vacancies
+// is live but not yet in schema.
 function fixtures() {
   const schema = {
     baseId: 'appX',
