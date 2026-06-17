@@ -133,3 +133,54 @@ test('mergeLiveIntoSchema warns, never auto-edits, on type drift', () => {
 test('MANAGED_TABLES is the documented two-table allowlist', () => {
   assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies']);
 });
+
+// Fixed-point guard on the *real* committed schema. The live field ids were captured
+// from the production base (appV9puNHinuRKTk9) via the Airtable MCP on 2026-06-17 and
+// backfilled into airtable/schema.json token-free, by feeding this same literal to
+// mergeLiveIntoSchema. Re-running the merge against the committed schema must therefore
+// be a no-op with zero warnings — pinning schema.json as a fixed point so a future
+// hand-edit that drops an id or drifts a type fails loudly here. Only id/name/type are
+// needed: the merge backfills id and checks type, preserving each field's own prose.
+const committedSchema = require('../airtable/schema.json');
+const LIVE_TABLES = [
+  {
+    id: 'tblm8d89dUVG16Bk0',
+    name: 'RawEmails',
+    fields: [
+      { id: 'fldZ8YqUloxk4ASTT', name: 'MessageId', type: 'singleLineText' },
+      { id: 'fldozyipyl25yPacJ', name: 'ExecutionId', type: 'singleLineText' },
+      { id: 'fldD9AJWyzghCetED', name: 'CollectedAt', type: 'dateTime' },
+      { id: 'fldJyZVs6sqzJxe2K', name: 'ThreadId', type: 'singleLineText' },
+      { id: 'fldvSWEKHFYjXXFq7', name: 'EmailDate', type: 'dateTime' },
+      { id: 'fld8WHi0qNfqyq3kE', name: 'FromName', type: 'singleLineText' },
+      { id: 'fldYpA9VwsmBgBdHh', name: 'FromEmail', type: 'singleLineText' },
+      { id: 'fldJL9Ef4Ix5yq45a', name: 'Subject', type: 'singleLineText' },
+      { id: 'fld1dU9mUnQcaoEhA', name: 'Snippet', type: 'multilineText' },
+      { id: 'flddjvljetvX5noLB', name: 'UserLabels', type: 'singleLineText' },
+      { id: 'fldairypVjtaqv2Ng', name: 'HtmlLength', type: 'number' },
+      { id: 'fldo7yWY11FI1noZ5', name: 'CleanLength', type: 'number' },
+      { id: 'fldjVAoDoLlAofeTT', name: 'CleanText', type: 'multilineText' },
+      { id: 'fld4l6CSqEqHMgRWi', name: 'Status', type: 'singleSelect' },
+    ],
+  },
+  {
+    id: 'tbl3abC60VRQWb21w',
+    name: 'Vacancies',
+    fields: [
+      { id: 'fldPxVR6FTbdV4nEn', name: 'Role', type: 'singleLineText' },
+      { id: 'fldv5NoMPKxDbuvmc', name: 'Recruiter', type: 'singleLineText' },
+      { id: 'fldyxDS4z1rn9N6fm', name: 'Type', type: 'singleSelect' },
+      { id: 'fldtMUI44BWtBvpGs', name: 'Rate/Salary', type: 'singleLineText' },
+      { id: 'fldx0JREP7vvYiHjW', name: 'Status', type: 'singleSelect' },
+      { id: 'fldOCTCdsyPtuJuA5', name: 'Date', type: 'date' },
+      { id: 'fldbnGIrNk8e1dmvK', name: 'Notes', type: 'multilineText' },
+      { id: 'fldz2C7r1hSNrET4i', name: 'Link', type: 'url' },
+    ],
+  },
+];
+
+test('committed schema.json is a fixed point of the merge against the captured live ids (no drift, no-op)', () => {
+  const { schema: merged, warnings } = mergeLiveIntoSchema(committedSchema, LIVE_TABLES);
+  assert.deepEqual(warnings, [], 'no type-drift warnings — every committed type matches live');
+  assert.deepStrictEqual(merged, committedSchema, 'merge is a no-op: every managed table/field already carries its live id');
+});

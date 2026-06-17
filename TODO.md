@@ -19,7 +19,7 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 
 ## Airtable
 
-- [ ] **Backfill RawEmails field ids in `schema.json`** — run `airtable/import-schema.js` once with a token so RawEmails gains rename-safe id matching (Vacancies already carries ids). Open owner-action; the residual footgun until then is documented in `docs/KNOWN_ISSUES.md` §3.
+- [x] **Backfill RawEmails field ids in `schema.json`** — done token-free 2026-06-17 (PR #36): the live ids were fed to the exported `mergeLiveIntoSchema`, reproducing a tokened `import-schema.js` run (no token, no network). Both managed tables now carry ids, so the `docs/KNOWN_ISSUES.md` §3 residual is closed for every current managed field.
 
 ## Developer experience
 
