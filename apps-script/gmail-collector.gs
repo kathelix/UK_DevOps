@@ -2,7 +2,7 @@
  * UK DevOps - Gmail Collector (Google Apps Script port of the retired Make.com scenario)
  *
  * Faithful reproduction of the retired Make scenario "UK DevOps - Gmail Collector":
- *   Gmail search -> Text parser (regex replace) -> store row -> add 'make-collected' label
+ *   Gmail search -> Text parser (regex replace) -> store row -> add 'collected' label
  * Destination changed from Google Sheets to Airtable (table: RawEmails).
  * No other behavior changes. Improvements come later, iteratively.
  *
@@ -24,13 +24,14 @@
  */
 
 const CONFIG = {
-  // Module 1 (google-email:executeEmailSearchQuery), parameter "q" - verbatim:
-  QUERY: 'label:job-vacancies -label:job-vacancies/make-collected -label:job-vacancies/make-processing -label:job-vacancies/make-failed',
+  // Module 1 (google-email:executeEmailSearchQuery), parameter "q" — state-label names since
+  // renamed tool-neutral (collected/failed) and the never-set processing token dropped:
+  QUERY: 'label:job-vacancies -label:job-vacancies/collected -label:job-vacancies/failed',
   // Module 3 (updateEmailLabels) adds this label after a successful write:
-  COLLECTED_LABEL_NAME: 'job-vacancies/make-collected',
+  COLLECTED_LABEL_NAME: 'job-vacancies/collected',
   // Applied to messages that fail processing (decode errors etc.) so they
   // don't head-of-line block the queue; excluded by QUERY. Created on demand.
-  FAILED_LABEL_NAME: 'job-vacancies/make-failed',
+  FAILED_LABEL_NAME: 'job-vacancies/failed',
   // Per-run fetch cap (the default). Overridable at runtime via the MAX_MESSAGES Script
   // Property — integer 0–500, where 0 = processing disabled — without a code change or
   // redeploy (resolved by getIntProp_; see docs/OPERATIONS.md). One run handles a full
@@ -57,7 +58,7 @@ const CONFIG = {
   RETRY_BACKOFF_MS: [1000, 2000, 4000],
   // Cross-run cap on a RECORD-SPECIFIC repeatedly-transient write. A record whose own PATCH trips a
   // transient (429/5xx/transport) on every run — while a healthy sibling that run proves the system
-  // is up — is make-failed (quarantined) after this many CONSECUTIVE such strikes, so a payload
+  // is up — is failed (quarantined) after this many CONSECUTIVE such strikes, so a payload
   // Airtable chokes on every time stops re-presenting and failing the run forever (the unbounded
   // upsertFailures alarm storm the TODO flagged). Strikes live in Script Properties, one integer per
   // message keyed wretry:<messageId> (the write fails so the message has no Airtable row to hold a
@@ -66,7 +67,7 @@ const CONFIG = {
   // quarantine). Runtime-tunable via the MAX_TRANSIENT_WRITE_RETRIES Script Property (getIntProp_,
   // bounds [1, 100]) without a redeploy, like MAX_MESSAGES. Record-specificity is proven by a same-run
   // healthy sibling for the FIRST strike, then carried (sticky): once a message has a strike, its solo
-  // failures keep counting to the cap (else the cap is unreachable, since #26 make-collects the
+  // failures keep counting to the cap (else the cap is unreachable, since #26 collects the
   // siblings out of the queue — Codex F1). A FRESH (never-struck) message in a SYSTEMIC outage never
   // strikes — the mass-quarantine guard, holding for the bulk of the queue.
   MAX_TRANSIENT_WRITE_RETRIES: 5,
@@ -110,7 +111,7 @@ function collectJobEmails() {
   // Single-flight guard: overlapping scheduled runs cause duplicate writes and
   // label races. tryLock(0) returns immediately; if another run holds the lock,
   // exit cleanly and let it finish — this run's messages stay uncollected (no
-  // make-collected label) and are picked up on the next run.
+  // collected label) and are picked up on the next run.
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(0)) {
     Logger.log('Another collector run holds the lock; exiting to avoid overlap.');
@@ -205,11 +206,11 @@ function collectJobEmailsLocked_() {
   const footerStats = { hits: 0, misses: 0, bytesCut: 0, firstMissDomain: '', firstMissMsgId: '' };
   // Fail-loudly accumulator for un-quarantined transient Gmail-READ failures: a per-message get
   // that still throws after gmailReadWithRetry_'s retries. The message is left UNCOLLECTED (stays
-  // unlabelled → re-presents next run, made a no-dup by the MessageId upsert) and NEVER make-failed
+  // unlabelled → re-presents next run, made a no-dup by the MessageId upsert) and NEVER failed
   // — a transient read is not poison. Counted per message; the first error seeds the end-of-run
   // alarm. Like upsertFailures, a run with any read failure must END Failed (GAS failure emails fire
   // only on Failed executions) so a persistent Gmail-read outage can't silently stall the queue
-  // while every run shows "Completed". A deterministic PARSE failure is the other branch (make-failed,
+  // while every run shows "Completed". A deterministic PARSE failure is the other branch (failed,
   // below) and does NOT count here — that is handled/quarantined, not an un-collected read.
   const readFailures = { count: 0, first: '' };
   // Fail-loudly accumulator, incremented ONCE per sub-batch that leaves any record stuck after
@@ -217,7 +218,7 @@ function collectJobEmailsLocked_() {
   // transient — with no healthy sibling). Every non-ok sub-batch now flows through the SAME
   // isolation block (there is no longer a transient early-continue), so the count is sourced in
   // one place. Counting per sub-batch (not per record) keeps the "N sub-batch upsert(s) failed"
-  // message honest. A make-failed record is handled, NOT counted — both a poison record (isolated,
+  // message honest. A failed record is handled, NOT counted — both a poison record (isolated,
   // with a healthy sibling) and a repeatedly-transient write quarantined at the strike cap (which
   // carries its OWN quarantine fail-loud signal instead).
   // Mid-run behaviour is unchanged (skip labelling, continue — the data-integrity contract:
@@ -232,12 +233,12 @@ function collectJobEmailsLocked_() {
   // block where strikes/quarantines happen is short-circuited by the `if (dryRun) … continue` below.
   const scriptProperties = PropertiesService.getScriptProperties();
   const transientStrikes = loadTransientStrikes_(scriptProperties);
-  // N: make-failed a record-specific transient write after this many CONSECUTIVE strikes. Runtime-
+  // N: mark a record-specific transient write failed after this many CONSECUTIVE strikes. Runtime-
   // tunable like MAX_MESSAGES (getIntProp_, bounds [1,100]); CONFIG default. An out-of-range value
   // falls back + logs (getIntProp_), so a misconfig can't disable or unbound the cap silently.
   const maxTransientRetries = getIntProp_('MAX_TRANSIENT_WRITE_RETRIES', CONFIG.MAX_TRANSIENT_WRITE_RETRIES, 1, 100);
   // Fail-loud accumulator for quarantine events — its OWN end-of-run signal (precedence: reads →
-  // upserts → quarantines → footer). A quarantined record is HANDLED (make-failed), like a poison
+  // upserts → quarantines → footer). A quarantined record is HANDLED (failed), like a poison
   // quarantine, so it does NOT count toward upsertFailures; but the event is still surfaced loud so a
   // repeatedly-failing record can't be capped silently. `first` names the first message + its strike.
   const quarantine = { count: 0, first: '' };
@@ -262,9 +263,9 @@ function collectJobEmailsLocked_() {
 
     // Fetch + parse this sub-batch in two narrow stages with separate failure handling:
     //   1. gmailReadWithRetry_ around the per-message get — a transient blip is retried, and a read
-    //      that still fails leaves the message UNCOLLECTED (retried next run, never make-failed).
+    //      that still fails leaves the message UNCOLLECTED (retried next run, never failed).
     //   2. headerMap_/processMessage_ — a deterministic parse failure isolates the message as
-    //      make-failed (real runs) so one bad message does not block its neighbours or the queue.
+    //      failed (real runs) so one bad message does not block its neighbours or the queue.
     // Catching the two at the NARROWEST scope keeps a transient read from being mis-quarantined as
     // poison and a parse poison from being mistaken for a transient (CLAUDE.md narrow-catch lesson).
     const records = []; // {fields:..., messageId:...}
@@ -276,7 +277,7 @@ function collectJobEmailsLocked_() {
         if (e && e.isGmailReadFailure) {
           // Transient read failure surviving all retries: leave the message uncollected (stays
           // unlabelled → re-presents next run, made a no-dup by the MessageId upsert), count toward
-          // the fail-loud canary, and NEVER make-failed — a transient read is not poison.
+          // the fail-loud canary, and NEVER failed — a transient read is not poison.
           readFailures.count++;
           if (!readFailures.first) readFailures.first = ref.id + ': ' + (e.message ? e.message : String(e));
           Logger.log('Gmail get FAILED (transient) for %s — stays uncollected, retries next run.', ref.id);
@@ -343,7 +344,7 @@ function collectJobEmailsLocked_() {
     // uncollected on every run is gone, so a record-specific 5xx no longer holds its healthy
     // siblings hostage until the sub-batch composition happens to change. A SYSTEMIC failure (every
     // record fails, no healthy sibling — a transient outage or a systemic 4xx) still leaves the whole
-    // sub-batch uncollected and make-failed nothing for a FRESH message, reached now via isolation
+    // sub-batch uncollected and marks nothing failed for a FRESH message, reached now via isolation
     // rather than a short-circuit (the anyHealthy guard below). The per-record 'transient' outcome this
     // exposes is where the repeatedly-transient write cap below hangs its strike counter: a transient
     // that recurs record-specifically across runs IS capped there (an already-struck record can even
@@ -352,16 +353,16 @@ function collectJobEmailsLocked_() {
     Logger.log('Airtable upsert returned %s for sub-batch starting at %s — re-sending its %s record(s) individually to isolate the failure.',
       String(batch.code), String(start), String(records.length));
     const isolated = records.map(function (r) { return { r: r, res: attemptUpsert_([{ fields: r.fields }], upsertRetryOpts) }; });
-    // Quarantine guard (prevents mass-quarantine on a systemic error): only make-failed a
-    // poison record if >=1 sibling upserted 200 — proof the endpoint/auth/schema is healthy
+    // Quarantine guard (prevents mass-quarantine on a systemic error): only marks a
+    // poison record failed if >=1 sibling upserted 200 — proof the endpoint/auth/schema is healthy
     // and the 4xx is record-specific. Zero successes => systemic (bad auth, wrong endpoint,
-    // schema drift): make-failed NONE so a deploy mistake can't quarantine the whole queue;
+    // schema drift): marks NONE failed so a deploy mistake can't quarantine the whole queue;
     // leave it all uncollected for a human and fail loud.
     const anyHealthy = isolated.some(function (o) { return o.res.kind === 'ok'; });
     // Count this isolated sub-batch as ONE failure if it leaves ANY record stuck (a transient
     // individual retry below the strike cap, or a systemic poison/transient with no healthy sibling)
     // — NOT once per record, so a 5-record systemic outage reports "1 sub-batch upsert(s) failed",
-    // not "5" (Codex F-P3). A make-failed record is handled, not stuck, so it doesn't count: a poison
+    // not "5" (Codex F-P3). A failed record is handled, not stuck, so it doesn't count: a poison
     // record (with a healthy sibling) OR a repeatedly-transient write quarantined at the strike cap.
     let stuck = false;
     let stuckFirst = '';
@@ -375,7 +376,7 @@ function collectJobEmailsLocked_() {
         // PATCHes in quick succession) — retry next run, not poison. Strike when record-specificity is
         // proven: a same-run healthy sibling (anyHealthy) OR a STICKY prior strike — this message
         // already earned one with a sibling on an earlier run. Stickiness is load-bearing because #26
-        // make-collects the healthy siblings, so they leave CONFIG.QUERY and a genuinely-stuck record
+        // collects the healthy siblings, so they leave CONFIG.QUERY and a genuinely-stuck record
         // is SOLO on every later run; without it the counter freezes at its run-1 value and the cap is
         // never reached (Codex F1, PR #27). priorStrikes is read BEFORE this run's bump (each message
         // is processed once per run, so transientStrikes[id] still holds the prior-run count here).
@@ -387,7 +388,7 @@ function collectJobEmailsLocked_() {
           if (shouldQuarantineTransient_(n, maxTransientRetries)) {
             // Repeatedly transient on its own PATCH across runs (a payload Airtable chokes on every
             // time): quarantine it so it stops re-presenting and failing the run forever. Reuse
-            // make-failed (excludes it from CONFIG.QUERY); clear its counter. A quarantined record is
+            // failed (excludes it from CONFIG.QUERY); clear its counter. A quarantined record is
             // HANDLED, like the poison quarantine — it is NOT `stuck`, so it does not count toward
             // upsertFailures; the quarantine accumulator carries its own fail-loud signal instead.
             const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
@@ -416,7 +417,7 @@ function collectJobEmailsLocked_() {
         }
       } else if (anyHealthy) {
         // Record-specific poison with a proven-healthy sibling: quarantine it so its good
-        // siblings stop being re-fetched (and the run stops failing) every run. make-failed
+        // siblings stop being re-fetched (and the run stops failing) every run. failed
         // excludes it from CONFIG.QUERY; deterministic, so a retry would only reject again.
         const failedLabelId = getOrCreateLabelId_(CONFIG.FAILED_LABEL_NAME, labelsById);
         Gmail.Users.Messages.modify({ addLabelIds: [failedLabelId] }, 'me', o.r.messageId);
@@ -458,7 +459,7 @@ function collectJobEmailsLocked_() {
   // End-of-run fail-loud canary, evaluated in BOTH real and DRY_RUN modes. Up to four independent
   // signals can co-occur — an un-quarantined transient READ failure, a transient/systemic UPSERT
   // failure, a repeatedly-transient write QUARANTINE, and a footer-marker MISS — and none may be
-  // swallowed (F1, PR #17): a signal riding on already-committed-and-labelled (or make-failed) work
+  // swallowed (F1, PR #17): a signal riding on already-committed-and-labelled (or failed) work
   // never re-presents, so a co-occurring throw that suppressed it would lose it forever. We collect
   // EVERY present signal and throw ONE error naming all of them, in precedence order — data-integrity
   // first (reads, then writes — the order they hit the pipeline), then the quarantine (a write-side
@@ -468,7 +469,7 @@ function collectJobEmailsLocked_() {
   //   side effect — DRY_RUN does real reads, so it must fail loud on a read outage too, or dry-run
   //   validation silently misses the exact failure this slice exists to surface. The write-path
   //   signals do NOT fire in DRY_RUN: an upsert never runs (so a write failure can't occur), a
-  //   quarantine never happens (it make-fails a message + writes Script Properties, both
+  //   quarantine never happens (it fails a message + writes Script Properties, both
   //   side effects the short-circuited isolation block can't reach in a dry run), and a footer miss is
   //   a side-effect-only template alarm deliberately suppressed in DRY_RUN (it still logs, but never
   //   throws — owner-accepted; a changed template would otherwise fail every manual dry run). The
@@ -481,7 +482,7 @@ function collectJobEmailsLocked_() {
   const alarms = [];
   if (readFailures.count > 0) alarms.push(readFailures.count + ' Gmail read(s) failed; first: ' + readFailures.first);
   if (!dryRun && upsertFailures.count > 0) alarms.push(upsertFailures.count + ' sub-batch upsert(s) failed; first: ' + upsertFailures.first);
-  // Quarantine is a side-effect signal (make-failed + a Script Properties write) that cannot occur in
+  // Quarantine is a side-effect signal (failed + a Script Properties write) that cannot occur in
   // DRY_RUN — the isolation block is short-circuited above — so quarantine.count is structurally 0 in
   // a dry run; the !dryRun guard states that classification explicitly (Codex F1[P2], PR #25).
   if (!dryRun && quarantine.count > 0) alarms.push(quarantine.count + ' write(s) quarantined after repeated transient failures; first: ' + quarantine.first);
@@ -554,7 +555,7 @@ function gmailReadWithRetry_(readFn, opts) {
 // Classify an Airtable write HTTP status (pure, unit-tested): true for a transient,
 // retry-worthy failure — 429 (rate limit) or any 5xx (Airtable-side outage) — false for
 // everything else, including the deterministic 4xx rejects (400/401/404/422) that the
-// sub-batch loop isolates per-record and may make-failed. Split out of the loop so the
+// sub-batch loop isolates per-record and may mark failed. Split out of the loop so the
 // poison-vs-transient boundary is testable in isolation, mirroring isOverRuntimeBudget_.
 function isTransientWriteFailure_(code) {
   return code === 429 || (code >= 500 && code <= 599);
@@ -593,7 +594,7 @@ function getIntProp_(name, fallback, min, max) {
 
 // ---------- repeatedly-transient write strike counter (Script Properties) ----------
 // Caps the "retries forever, fails the run every run" behaviour of a RECORD-SPECIFIC transient
-// write: a record whose own PATCH trips a 429/5xx/transport blip on every run is make-failed after
+// write: a record whose own PATCH trips a 429/5xx/transport blip on every run is failed after
 // MAX_TRANSIENT_WRITE_RETRIES CONSECUTIVE strikes. Record-specificity is proven by a same-run healthy
 // sibling for the first strike, then carried by the counter itself (sticky) for subsequent solo
 // failures — the collect loop owns that gating (anyHealthy || priorStrikes > 0); these helpers just
@@ -1273,7 +1274,7 @@ function getCollectedLabelId_(labelsById) {
   throw new Error('Label not found: ' + CONFIG.COLLECTED_LABEL_NAME);
 }
 
-// Find a label by name; create it if missing (e.g. make-failed may not exist yet).
+// Find a label by name; create it if missing (e.g. failed may not exist yet).
 function getOrCreateLabelId_(name, labelsById) {
   for (const id in labelsById) {
     if (labelsById[id].name === name) return id;
@@ -1400,7 +1401,7 @@ function airtableFetchWithRetry_(url, params, opts) {
 // Upsert requires PATCH + performUpsert (the POST create endpoint has no upsert).
 // Returns the numeric HTTP response code (200 = success), or **0** when the fetch threw — a
 // transport-level failure (DNS/timeout/connection), which the caller treats as transient. The
-// caller branches on the code: 200 → label make-collected, 0 or 429/5xx (isTransientWriteFailure_)
+// caller branches on the code: 200 → label collected, 0 or 429/5xx (isTransientWriteFailure_)
 // → transient retry next run, any other 4xx → deterministic reject the sub-batch loop isolates
 // per-record. On a non-200/transport failure the error is logged and `failures` (optional, the
 // run's fail-loudly accumulator) has its count incremented and first error captured. The token is
@@ -1451,9 +1452,9 @@ function airtableUpsert_(records, failures, opts) {
 // and classify the outcome for the per-record isolation logic (any non-ok batch, poison or
 // transient, is re-sent record-by-record through here). Returns
 // { kind: 'ok' | 'transient' | 'poison', code, first }:
-//   - 'ok'        HTTP 200: the record(s) are written; safe to label make-collected.
+//   - 'ok'        HTTP 200: the record(s) are written; safe to label collected.
 //   - 'transient' code 0 (UrlFetchApp transport failure) OR HTTP 429/5xx: a rate-limit/outage,
-//                 NOT a record problem — leave uncollected and retry next run, never make-failed.
+//                 NOT a record problem — leave uncollected and retry next run, never failed.
 //   - 'poison'    any other 4xx: a deterministic, likely record-specific reject.
 // `first` is the '<code>: <body>' (or 'network error: …') text for the fail-loud summary
 // ('' on success), captured by airtableUpsert_ into a throwaway probe (its error log still
