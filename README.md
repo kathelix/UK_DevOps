@@ -35,10 +35,10 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 - `docs/` — technical design & decisions (`TECH_DESIGN.md`), project brief, daily workflow, design notes, known issues, operations runbook + slice prompt template (`SLICE_PROMPT_TEMPLATE.md`)
 - `tests/` — `node:test` harness + fixtures (collector: cleaning regex, offline link cleanup, parsers, reliability helpers; Airtable: schema diff/merge)
 - `scripts/slice-passing-parked/` — the **parked** Cowork→Code slice-dispatch tooling (`dispatch-slice.sh` et al.); the kept flow is manual `/run-slice`. See `scripts/slice-passing-parked/README.md`
-- `TODO.md` — improvement backlog + open milestone
+- `TODO.md` — forward-looking improvement backlog (open work only; shipped milestones live in `docs/`)
 
 ## Status
 
 **Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a discrepancy canary only (an Airtable outage alerts and stops — there's no Gmail-direct screening fallback). The Make.com scenario ran in parallel as the safety net during the cutover and was decommissioned 2026-06-17; the GAS collector is now the sole pipeline.
 
-**Screening enhancement shipped (M6.3, `VERSION: 2.1`):** an **interactive-only** Claude-in-Chrome pass now re-verifies the day's Recommend/Flag links on the live page — upgrading or dropping roles and drilling aggregator cards through to the real source posting — while the unattended scheduled run is unchanged (it writes a `<date>_recommend-flag.md` handoff file the pass consumes). Roadmap: `TODO.md`, milestone M6; runbook: `docs/OPERATIONS.md`.
+**Screening enhancement shipped (M6.3, `VERSION: 2.1`):** an **interactive-only** Claude-in-Chrome pass now re-verifies the day's Recommend/Flag links on the live page — upgrading or dropping roles and drilling aggregator cards through to the real source posting — while the unattended scheduled run is unchanged (it writes a `<date>_recommend-flag.md` handoff file the pass consumes). Design: `docs/TECH_DESIGN.md` §6; runbook: `docs/OPERATIONS.md`.
