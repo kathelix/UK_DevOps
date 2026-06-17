@@ -102,8 +102,9 @@ in `CLAUDE.md` / `AGENTS.md`:
 - **Branch = work type**, declared by the Architect in the slice spec:
   `<!-- branch: chore/x -->` (full name) or `<!-- type: fix -->` (→ `fix/<slice>`),
   defaulting to `feature/<slice>`.
-- **Spec path:** `issue-drafts/<slice>/slice-prompt-<slice>.md` — the name
-  `/run-slice` auto-discovers (newest `slice-prompt-*.md`).
+- **Spec path:** `issue-drafts/<slice>/slice-prompt-<slice>.md` — run bare,
+  `/run-slice` lists the staged `slice-prompt-*.md` files and asks which to run
+  (auto-running only when a single one is staged).
 
 ## To revive
 
