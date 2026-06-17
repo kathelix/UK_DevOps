@@ -5,6 +5,7 @@ on:
     paths:
       - 'apps-script/**'
       - 'airtable/**'
+      - 'instructions/**'
       - 'tests/**'
       - 'package.json'
       - '.nvmrc'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'apps-script/**'
       - 'airtable/**'
+      - 'instructions/**'
       - 'tests/**'
       - 'package.json'
       - '.nvmrc'
