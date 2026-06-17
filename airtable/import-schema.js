@@ -4,9 +4,10 @@
  *
  * GETs the live base structure and merges it into airtable/schema.json so the
  * version-controlled schema carries the live field **ids** — which is what makes
- * apply-schema.js rename-safe (it matches by id when present). Run this once to
- * backfill ids onto the name-only managed tables, and thereafter whenever you
- * want a fresh, diffable snapshot of live structure before editing the schema.
+ * apply-schema.js rename-safe (it matches by id when present). Run it to keep the
+ * managed tables carrying their live ids — backfilling any table or field still
+ * committed name-only — and whenever you want a fresh, diffable snapshot of live
+ * structure before editing the schema.
  *
  * Philosophy (mirrors apply-schema.js — additive, never destructive):
  *   - Backfills `id` on every managed table + field (matched by id-or-name).

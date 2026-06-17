@@ -3,23 +3,123 @@
   "comment": "Desired Airtable schema, applied additively by apply-schema.js (Meta API cannot delete tables/fields or change field types — removals are manual). Tables and fields are matched by id when present, so a UI rename surfaces as a drift warning instead of a duplicate field; run airtable/import-schema.js to backfill ids and snapshot drift.",
   "tables": [
     {
+      "id": "tblm8d89dUVG16Bk0",
       "name": "RawEmails",
       "description": "Queue of regex-cleaned job-alert emails, populated by apps-script/gmail-collector.gs. Claude's screening pipeline reads Status=New rows and flips them to Processed. Ported from the retired Make.com scenario's Sheets columns A-M.",
       "fields": [
-        { "name": "MessageId", "type": "singleLineText", "description": "Gmail message ID (dedupe key)" },
-        { "name": "ExecutionId", "type": "singleLineText", "description": "Collector run ID" },
-        { "name": "CollectedAt", "type": "dateTime", "options": { "timeZone": "Europe/London", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
-        { "name": "ThreadId", "type": "singleLineText" },
-        { "name": "EmailDate", "type": "dateTime", "options": { "timeZone": "Europe/London", "dateFormat": { "name": "iso" }, "timeFormat": { "name": "24hour" } } },
-        { "name": "FromName", "type": "singleLineText" },
-        { "name": "FromEmail", "type": "singleLineText" },
-        { "name": "Subject", "type": "singleLineText" },
-        { "name": "Snippet", "type": "multilineText" },
-        { "name": "UserLabels", "type": "singleLineText" },
-        { "name": "HtmlLength", "type": "number", "options": { "precision": 0 } },
-        { "name": "CleanLength", "type": "number", "options": { "precision": 0 } },
-        { "name": "CleanText", "type": "multilineText", "description": "Regex-cleaned body; truncated only at Airtable's 100k long-text limit" },
-        { "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "New", "color": "yellowBright" }, { "name": "Processed", "color": "greenBright" }, { "name": "Error", "color": "redBright" } ] } }
+        {
+          "id": "fldZ8YqUloxk4ASTT",
+          "name": "MessageId",
+          "type": "singleLineText",
+          "description": "Gmail message ID (dedupe key)"
+        },
+        {
+          "id": "fldozyipyl25yPacJ",
+          "name": "ExecutionId",
+          "type": "singleLineText",
+          "description": "Collector run ID"
+        },
+        {
+          "id": "fldD9AJWyzghCetED",
+          "name": "CollectedAt",
+          "type": "dateTime",
+          "options": {
+            "timeZone": "Europe/London",
+            "dateFormat": {
+              "name": "iso"
+            },
+            "timeFormat": {
+              "name": "24hour"
+            }
+          }
+        },
+        {
+          "id": "fldJyZVs6sqzJxe2K",
+          "name": "ThreadId",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fldvSWEKHFYjXXFq7",
+          "name": "EmailDate",
+          "type": "dateTime",
+          "options": {
+            "timeZone": "Europe/London",
+            "dateFormat": {
+              "name": "iso"
+            },
+            "timeFormat": {
+              "name": "24hour"
+            }
+          }
+        },
+        {
+          "id": "fld8WHi0qNfqyq3kE",
+          "name": "FromName",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fldYpA9VwsmBgBdHh",
+          "name": "FromEmail",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fldJL9Ef4Ix5yq45a",
+          "name": "Subject",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fld1dU9mUnQcaoEhA",
+          "name": "Snippet",
+          "type": "multilineText"
+        },
+        {
+          "id": "flddjvljetvX5noLB",
+          "name": "UserLabels",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fldairypVjtaqv2Ng",
+          "name": "HtmlLength",
+          "type": "number",
+          "options": {
+            "precision": 0
+          }
+        },
+        {
+          "id": "fldo7yWY11FI1noZ5",
+          "name": "CleanLength",
+          "type": "number",
+          "options": {
+            "precision": 0
+          }
+        },
+        {
+          "id": "fldjVAoDoLlAofeTT",
+          "name": "CleanText",
+          "type": "multilineText",
+          "description": "Regex-cleaned body; truncated only at Airtable's 100k long-text limit"
+        },
+        {
+          "id": "fld4l6CSqEqHMgRWi",
+          "name": "Status",
+          "type": "singleSelect",
+          "options": {
+            "choices": [
+              {
+                "name": "New",
+                "color": "yellowBright"
+              },
+              {
+                "name": "Processed",
+                "color": "greenBright"
+              },
+              {
+                "name": "Error",
+                "color": "redBright"
+              }
+            ]
+          }
+        }
       ]
     },
     {
@@ -27,14 +127,78 @@
       "name": "Vacancies",
       "description": "Tracked DevOps/Platform job vacancies (Status=Applied or Skipped). The screening pipeline's decisions store — read at run start as the §0 skip-list, written at run end. Skipped rows within 30 days of Date are skipped from re-screening; older Skipped rows are re-evaluated.",
       "fields": [
-        { "id": "fldPxVR6FTbdV4nEn", "name": "Role", "type": "singleLineText", "description": "Job title" },
-        { "id": "fldv5NoMPKxDbuvmc", "name": "Recruiter", "type": "singleLineText", "description": "Recruiter / company / source" },
-        { "id": "fldyxDS4z1rn9N6fm", "name": "Type", "type": "singleSelect", "options": { "choices": [ { "name": "Contract" }, { "name": "Permanent" } ] } },
-        { "id": "fldtMUI44BWtBvpGs", "name": "Rate/Salary", "type": "singleLineText" },
-        { "id": "fldx0JREP7vvYiHjW", "name": "Status", "type": "singleSelect", "options": { "choices": [ { "name": "Applied", "color": "greenBright" }, { "name": "Skipped", "color": "grayBright" } ] } },
-        { "id": "fldOCTCdsyPtuJuA5", "name": "Date", "type": "date", "options": { "dateFormat": { "name": "iso" } }, "description": "Date applied (Applied) or date reviewed (Skipped). Drives the 30-day skip window." },
-        { "id": "fldbnGIrNk8e1dmvK", "name": "Notes", "type": "multilineText", "description": "Reason not applied, applied status, or match notes" },
-        { "id": "fldz2C7r1hSNrET4i", "name": "Link", "type": "url", "description": "Best available direct link to the listing" }
+        {
+          "id": "fldPxVR6FTbdV4nEn",
+          "name": "Role",
+          "type": "singleLineText",
+          "description": "Job title"
+        },
+        {
+          "id": "fldv5NoMPKxDbuvmc",
+          "name": "Recruiter",
+          "type": "singleLineText",
+          "description": "Recruiter / company / source"
+        },
+        {
+          "id": "fldyxDS4z1rn9N6fm",
+          "name": "Type",
+          "type": "singleSelect",
+          "options": {
+            "choices": [
+              {
+                "name": "Contract"
+              },
+              {
+                "name": "Permanent"
+              }
+            ]
+          }
+        },
+        {
+          "id": "fldtMUI44BWtBvpGs",
+          "name": "Rate/Salary",
+          "type": "singleLineText"
+        },
+        {
+          "id": "fldx0JREP7vvYiHjW",
+          "name": "Status",
+          "type": "singleSelect",
+          "options": {
+            "choices": [
+              {
+                "name": "Applied",
+                "color": "greenBright"
+              },
+              {
+                "name": "Skipped",
+                "color": "grayBright"
+              }
+            ]
+          }
+        },
+        {
+          "id": "fldOCTCdsyPtuJuA5",
+          "name": "Date",
+          "type": "date",
+          "options": {
+            "dateFormat": {
+              "name": "iso"
+            }
+          },
+          "description": "Date applied (Applied) or date reviewed (Skipped). Drives the 30-day skip window."
+        },
+        {
+          "id": "fldbnGIrNk8e1dmvK",
+          "name": "Notes",
+          "type": "multilineText",
+          "description": "Reason not applied, applied status, or match notes"
+        },
+        {
+          "id": "fldz2C7r1hSNrET4i",
+          "name": "Link",
+          "type": "url",
+          "description": "Best available direct link to the listing"
+        }
       ]
     }
   ]

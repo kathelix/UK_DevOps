@@ -17,10 +17,6 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 - [ ] **Second cleaning pass.** The regex strips attributes/comments/images but leaves bare tag skeletons (`<td>`, `<tr>`, `<a href>`) and undecoded entities (`&amp;`, `&pound;`). Add a tag-to-text pass (newlines at block boundaries, entity decode) — meaningful token saving for the screening step. Measured 2026-06-07 (NIJobs single-rec, 47.2KB html → 19.4KB clean): ~3.5KB is invisible-entity preheader padding (`&#847;&zwnj;&shy;` walls) the regex doesn't target; real content is only ~5KB. _The single-child table-wrapper unwrap (#13) already landed as the safe incremental step; tag→text would subsume its saving, at which point the unwrap retires or becomes its pre-stage — see `docs/TECH_DESIGN.md` §4._
 - [ ] **Modularize for testability** — split into `config / gmail / parser / airtable / main`; keep cleaning, link-extraction and dedupe as pure functions (no Gmail/Airtable side effects) so they run against `tests/fixtures/` locally. _(Remaining: the full module split — `buildUpsertPayload_` and `isOverRuntimeBudget_` are already extracted as pure, unit-tested helpers.)_
 
-## Airtable
-
-- [ ] **Backfill RawEmails field ids in `schema.json`** — run `airtable/import-schema.js` once with a token so RawEmails gains rename-safe id matching (Vacancies already carries ids). Open owner-action; the residual footgun until then is documented in `docs/KNOWN_ISSUES.md` §3.
-
 ## Developer experience
 
 - [ ] **Fix Code session renaming**: fix the `scripts/pr-session-name.sh`, currently symlink-ed `~/.claude/hooks/pr-session-name.sh` that should rename a Claude Code sesion to "PR#nn" once session opens a new PR. Debug in the existing session that already created a PR, because it has all the logs from this hook and script.
