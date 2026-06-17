@@ -1,6 +1,6 @@
 # UK DevOps — Job Search Automation
 
-A daily, mostly hands-off pipeline that collects UK DevOps job-alert emails, screens every vacancy against personal criteria (rate, remote, IR35, clearance, tech stack), tracks applications, and produces a daily report with a side of sarcasm. Human attention is required only for flagged roles — everything else is rejected, deduplicated, or logged automatically.
+A daily, mostly hands-off pipeline that collects UK DevOps job-alert emails, screens every vacancy against personal criteria (rate, remote, IR35, clearance, tech stack), tracks applications, and produces a daily report with a side of sarcasm. The scheduled run is unattended — everything is rejected, deduplicated, or logged automatically; what's left for a human is the **recommended and flagged** roles Ivan reviews and applies to, optionally via an interactive live-link verification pass over both lists.
 
 ## How it works
 
@@ -10,11 +10,11 @@ flowchart LR
     B --> C[(Airtable\nRawEmails queue +\nVacancies decisions)]
     C --> D[Claude · Cowork\nscheduled 06:00 screening]
     D -->|writes decisions,\ndaily report| C
-    D -->|flags worth applying| E[Ivan]
+    D -->|recommends + flags| E[Ivan]
     E -->|applies, replies| D
 ```
 
-Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails on a frequent time trigger (cadence recorded once, in `docs/TECH_DESIGN.md` §7), cleans the links offline (decodes trackers that embed their destination in a `?url=`-style param and strips `utm_*` analytics params — no network calls, no clicking), strips the remaining HTML noise with a regex, and stores clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan applies to the flagged few and tells Claude, which logs the outcome.
+Job boards and recruiters email constantly; Gmail filters label everything into one place. A small Google Apps Script picks up new emails on a frequent time trigger (cadence recorded once, in `docs/TECH_DESIGN.md` §7), cleans the links offline (decodes trackers that embed their destination in a `?url=`-style param and strips `utm_*` analytics params — no network calls, no clicking), strips the remaining HTML noise with a regex, and stores clean text in Airtable. Claude (running scheduled in Claude Cowork) reads the queue, splits digests into individual vacancies, screens them against versioned criteria, verifies ambiguous roles on the web, writes Applied/Skipped decisions to Airtable, and posts a daily report. Ivan reviews the recommended and flagged roles — optionally via an interactive Claude-in-Chrome pass that re-verifies each link on the live page first, upgrading or dropping roles — applies to the keepers, and tells Claude, which logs the outcome.
 
 ## Components
 
