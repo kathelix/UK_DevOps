@@ -425,7 +425,7 @@ test('gmailReadWithRetry_ default backoff comes from CONFIG.RETRY_BACKOFF_MS (sh
 
 // ---------- repeatedly-transient write strike counter (Script Properties, wretry:<messageId>) ----------
 // The cross-run cap: a record-specific transient write (a healthy sibling proved the system is up)
-// is make-failed after MAX_TRANSIENT_WRITE_RETRIES consecutive strikes. These pin the pure cap
+// is failed after MAX_TRANSIENT_WRITE_RETRIES consecutive strikes. These pin the pure cap
 // predicate, the prefix-filtered load, and the bump/clear persistence. A mutable in-memory Script
 // Properties stub backs getProperties/setProperty/deleteProperty and records every call.
 function fakeProps(seed) {

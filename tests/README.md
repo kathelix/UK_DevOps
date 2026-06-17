@@ -98,12 +98,12 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`collect-loop.test.js`** — integration: drives `collectJobEmailsLocked_` with
   stubbed Apps Script globals and an injected clock. Pins the pipeline's load-bearing
   invariants — forward progress (an over-budget run still commits the first sub-batch),
-  incremental commit, **read-side poison isolation** (a parse-error message is make-failed
+  incremental commit, **read-side poison isolation** (a parse-error message is failed
   while siblings are collected; an all-poison sub-batch sends no empty upsert), **write-side
   per-record isolation of any non-`ok` sub-batch** (poison or transient): a record-specific
   **transient** (`429`/`5xx`/transport) is isolated too, so its healthy siblings are
-  make-collected while only the bad record is left to retry — never make-failed; a
-  deterministic-`4xx` record is make-failed only when ≥1 sibling upserted `200`; a systemic
+  collected while only the bad record is left to retry — never failed; a
+  deterministic-`4xx` record is failed only when ≥1 sibling upserted `200`; a systemic
   sub-batch (all-`4xx`, **or** an all-transient outage with no healthy sibling) quarantines
   nothing and fails loud — counted once per sub-batch, not per record — and the run then ends
   by **throwing** after the summary logs (Failed execution → GAS failure email, with the
@@ -120,7 +120,7 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   **miss** ends a real run by throwing after the summary but a `DRY_RUN` run never throws; and
   when an upsert failure co-occurs with a **committed** miss, one thrown error carries both —
   the upsert failure named first, the footer-miss summary folded in, so the alarm is never lost
-  (**F1**)). Each guard is mutation-checked — removing the budget break, the make-collected
+  (**F1**)). Each guard is mutation-checked — removing the budget break, the collected
   branch, the individual-retry isolation branch, the `≥1 healthy sibling` quarantine guard,
   the `isTransientWriteFailure_` `5xx` arm, the per-sub-batch (vs per-record) failure count,
   the narrowed token-error catch, either fail-loudly throw, the `. Also …` miss fold, the
@@ -129,7 +129,7 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   `setProperty`/`deleteProperty`, seedable + inspectable post-run) so it also pins the
   **repeatedly-transient write cap** with **sticky record-specificity** (Codex F1): a record-specific
   transient strikes its `wretry:<id>` counter (below the cap → stuck + counted; at
-  `MAX_TRANSIENT_WRITE_RETRIES` → `make-failed`/quarantined, counter deleted, its own fail-loud alarm).
+  `MAX_TRANSIENT_WRITE_RETRIES` → `failed`/quarantined, counter deleted, its own fail-loud alarm).
   A **multi-run** regression threads the store across `runCollector` calls — a stuck record proven with
   a sibling on run 1 keeps striking **solo** on later runs until it caps (the F1 mutation check: frozen
   at 1 on the pre-fix head). The **mass-quarantine guard** is pinned for *fresh* never-struck messages
