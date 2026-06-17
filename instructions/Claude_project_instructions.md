@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.0
+VERSION: 2.1
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -11,6 +11,14 @@ VERSION: 2.0
 ---
 
 ## BLOCK 1: Pipeline Instructions
+
+> **Run modes.** Almost the entire pipeline runs **unattended** on the scheduled daily run
+> (no Chrome, no VPN): intake → screen → band → output → done-marker (§1–§9). **One pass is
+> interactive-only:** the §6a *live link resolution (Claude-in-Chrome)* verifier, which runs
+> only in an attended session with Chrome available and is **never** invoked by the unattended
+> scheduled run (no Chrome/VPN there, so geo-rejects would be misread). Instead, the scheduled
+> run persists the day's Recommend/Flag list to a handoff file (§8) so a *separate* interactive
+> session can run the Chrome pass.
 
 ### 0. State store (Airtable)
 
@@ -233,6 +241,59 @@ Resolution order — use the highest that resolves:
 - **In chat:** show the link inline next to every Recommend and Flag.
 - **In Airtable:** write it to the `Link` field (`fldz2C7r1hSNrET4i`) on every created/updated row — not just in `Notes`. If a later run finds a better link for an existing role, `update_records_for_table` to improve it.
 
+#### Live link resolution (Claude-in-Chrome) — interactive only
+
+An **additional** verification pass over the two final lists, layered on top of (not
+replacing) the offline resolution order above. The offline order (steps 1–5) and the
+"never store a tracking URL" rule stay the **default — and the only** resolution the
+unattended scheduled run performs. This pass runs **only** in an interactive session.
+
+- **When.** An interactive session only, on request, with Chrome available — **never** the
+  unattended scheduled run (no Chrome/VPN at the scheduled hour, so geo-rejects would be
+  misread). Input = the latest `<date>_recommend-flag.md` handoff (§8); note its date, and if
+  it is stale (not today's), say so.
+- **VPN first.** Before starting, remind Ivan to connect **Total VPN 2** to a **UK** server. If
+  a page returns a geo-reject ("candidates from your area are not accepted", or a region
+  block), treat it as **VPN-not-connected** — pause and re-remind; do **not** record the role
+  as dead.
+- **Order: Recommends first, then Flags.** Recommends are the strongest matches and the ones
+  Ivan actually applies to, so an aggregator-fiction or dead-scrape that slipped in as a
+  Recommend is the costliest miss.
+- **Scope discipline — the two final lists only.** Verify only the day's Recommend + Flag
+  roles. Do **not** browser-resolve every email link: too slow / token-heavy, and the email
+  text already rejected most. This pass is the final-list verifier, not a bulk crawler.
+- **Per role.** Navigate the role's **resolved canonical link** (the §6a offline-resolution
+  output — employer/ATS/recruiter/aggregator job page, **never** a raw email tracker) in Chrome
+  (`navigate` → `get_page_text`); **accept cookie banners** (pre-authorised by Ivan for this
+  pass, 2026-06-11, on these job-board/employer pages only); read the rendered page and
+  re-verify the **non-negotiable gates** — work model (fully remote/WFH, or remote within the
+  EU); no SC/DV/eDV; not Azure-only / Microsoft-heavy — plus rate/IR35 where shown.
+- **Drill to the REAL source posting — do NOT trust an aggregator's own role page.** Boards
+  like outsideir35.org.uk lie about **work model, rate-unit (£/hour vs £/day), and open-status**
+  on their own listing page (2026-06-17: 4 architecture roles off that board, all 4 wrong on the
+  real LinkedIn source — on-site shown as Remote, hybrid shown as Remote, an expired/redirected
+  slug, and a "no longer accepting applications"). When the canonical link is an aggregator
+  listing, follow its **Source / Apply / company link through to the LinkedIn/ATS/employer
+  posting** and verify live + fully-remote + rate/IR35 **there** — the board's own page is not
+  sufficient.
+- **Auto-skip closed listings.** Before surfacing any role, confirm the live posting is still
+  **open**. If it shows "no longer accepting applications" / "this job has expired" / "position
+  filled" / 404, **auto-skip** it: write a `Skipped` row (today's `Date`, `Notes` = "listing
+  closed at review", keep the link in the `Link` field) and report it as auto-skipped rather
+  than presenting it as an open Recommend/Flag.
+- **Act on what the live (source) page shows:**
+  - Live + open + gates hold → **confirm**; a **Flag** that now clears > 75% **upgrades** to
+    Recommend (note why).
+  - Aggregator-fiction, dead/expired scrape, closed listing, or a gate now fails →
+    **drop / downgrade / auto-skip** with the reason (e.g. "outsideir35 card said Remote
+    £700/day; LinkedIn source says hybrid, £/hour").
+  - Capture the **live source URL** (the real posting you verified, not the aggregator card) as
+    the best-known link and store it in the Airtable `Link` field (`fldz2C7r1hSNrET4i`) on any
+    row written or updated.
+- **Output.** An updated Recommend/Flag table reflecting the upgrades/drops with the verified
+  links; then continue the existing §8 Reviewed-not-applied flow (log Ivan's apply/skip
+  decisions to Airtable per §0/§8, with the verified link).
+
 ---
 
 ### 7. Match Bands & Actions
@@ -314,6 +375,27 @@ Bundle the **Post** and the **3 image concepts** into a single dated markdown fi
 the Job Search project folder, named `<YYYY-MM-DD>_linkedin-post-and-image-ideas.md`,
 and present it — so Ivan can paste the whole thing straight into ChatGPT. The chat
 output still shows them inline; the file is the portable copy.
+
+##### Recommend/Flag handoff file (for the interactive §6a Chrome pass)
+
+Also write the day's **Recommend + Flag** roles to a second dated markdown file in the Job
+Search project folder, named `<YYYY-MM-DD>_recommend-flag.md` — a **sibling** to the post/image
+deliverable above, not a replacement. This is the **stateless handoff** that lets a *separate*
+interactive session run the §6a *live link resolution (Claude-in-Chrome)* pass without resuming
+this run's thread. The unattended scheduled run **writes** this file but does **not** perform the
+Chrome pass itself (§6a; run-mode framing at the top of Block 1).
+
+One entry per role, with:
+
+- the continuous **batch number** (§8) and the **band** (**Recommend** / **Flag**);
+- job **title**, **recruiter**, **contract type**, **rate/salary**;
+- the **offline-resolved link** (§6a steps 1–5 — never a tracking URL);
+- the **per-non-negotiable-criterion confirmation status** (work model, clearance, cloud);
+- for **Flags**, the **reason** it didn't auto-recommend.
+
+Write it whenever the batch produced any Recommend or Flag; if there were none, say so (no file
+needed). Keep each row concrete enough that a later session can parse it back into a role to
+verify.
 
 ##### Reviewed-not-applied prompt
 

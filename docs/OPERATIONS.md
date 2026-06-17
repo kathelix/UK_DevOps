@@ -6,7 +6,8 @@
 |---|---|---|
 | Frequent — cadence in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | Collector run: Gmail → clean → RawEmails, label `make-collected` | GAS time trigger |
 | Nightly — time in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | RawEmails purge: delete oldest `Processed` rows when over high-water | GAS time trigger |
-| 06:00 | Screening run: read RawEmails `New` rows, screen, flip them to `Processed`, write Vacancies, daily report | Claude Cowork scheduled task |
+| 06:00 | Screening run: read RawEmails `New` rows, screen, flip them to `Processed`, write Vacancies, daily report + `<date>_recommend-flag.md` handoff | Claude Cowork scheduled task |
+| Ad hoc (interactive, on request) | Live link-resolution pass: open the day's Recommend/Flag links in Chrome, re-verify gates on the live source, upgrade/drop, store the verified link | Interactive Cowork session + Claude-in-Chrome (VPN → UK) |
 | Ad hoc | Ivan reviews flags, applies, reports back; Claude logs Applied/Skipped | Chat |
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
@@ -221,6 +222,52 @@ Manual cross-check (unchanged): the pipeline still marks processed mail read and
 collector labels collected mail, so in the Gmail UI `label:job-vacancies label:unread` —
 anything old sitting there beyond post-run arrivals is a search-index orphan; same logic
 for uncollected mail without `make-collected`.
+
+## Live link resolution (Chrome pass)
+
+An **interactive-only** verification pass over the day's two final lists (Recommend + Flag),
+run on request in an attended Cowork session with Chrome — **never** the unattended 06:00
+scheduled run (no Chrome/VPN there, so geo-rejects would be misread). It opens each role's
+resolved canonical link in Chrome, confirms the posting is live + open, re-verifies the
+non-negotiable gates on the rendered page, and **upgrades** a Flag that proves genuine /
+**drops** a Recommend/Flag exposed as aggregator-fiction or a dead/closed scrape. Design:
+[TECH_DESIGN §6](TECH_DESIGN.md#6-screening-layer); the screening rule is instructions §6a
+("Live link resolution (Claude-in-Chrome) — interactive only").
+
+**Prerequisites.**
+
+1. **VPN → UK.** Connect **Total VPN 2** (macOS app) to a **United Kingdom** server before
+   starting. Some boards geo-reject a non-UK IP ("candidates from your area are not accepted",
+   or a region block); treat any geo-reject as **VPN-not-connected**, pause, and re-connect —
+   **never** record the role as a dead listing on a geo-reject. (Driving Total VPN 2
+   automatically via computer use is a deferred stretch — `TODO.md`; remind-only for now.)
+2. **Chrome + the Claude-in-Chrome extension** available and connected in the session.
+3. **The handoff file.** Point Claude at the latest `<date>_recommend-flag.md` the scheduled
+   run wrote in the Job Search project folder (instructions §8). Note its date; if it isn't
+   today's, say so — a stale handoff verifies a stale list.
+
+**Procedure.**
+
+1. **Recommends first, then Flags** (Recommends are the costliest to get wrong — the ones Ivan
+   applies to). Verify only these two lists — **not** every email link.
+2. For each role, navigate its resolved canonical link (`navigate` → `get_page_text`) and
+   **accept the cookie banner** (owner-pre-authorised for these job-board/employer pages only).
+3. **Drill to the real source.** If the canonical link is an aggregator card, follow its
+   Source/Apply/company link through to the LinkedIn/ATS/employer posting and verify **there** —
+   aggregator cards lie about work model, rate-unit, and open-status (outsideir35.org.uk,
+   2026-06-17). Re-verify work model (fully remote / remote-EU), clearance (no SC/DV/eDV), cloud
+   (not Azure-only), and rate/IR35.
+4. **Act:** live + open + gates hold → confirm (a Flag now > 75% **upgrades** to Recommend);
+   aggregator-fiction / dead / closed / a gate now fails → **drop / downgrade / auto-skip** with
+   the reason.
+5. **Closed listings auto-skip:** "no longer accepting applications" / "expired" / "position
+   filled" / 404 → write a `Skipped` Vacancies row (today's `Date`, `Notes` "listing closed at
+   review", keep the link) and report it as auto-skipped.
+
+**What gets updated in Airtable.** On every row written/updated, store the **verified
+live-source URL** (the real posting, not the aggregator card) in the `Link` field
+(`fldz2C7r1hSNrET4i`), per §6a. Confirmed / upgraded / dropped decisions and any auto-skips flow
+through the normal §0/§8 Vacancies writes.
 
 ## Parity check (complete — gated the M6.2 cutover)
 

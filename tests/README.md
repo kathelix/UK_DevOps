@@ -156,7 +156,8 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   Pure `fs` reads (no `vm` harness): the stub references the exact canonical path **and
   that file exists** (no dangling pointer), the stub carries the fail-loud /
   no-network-fallback / version-echo trio, and the canonical file has a `VERSION:` line
-  (presence only — bumped to 2.0 at the M6.2 cutover). Rationale: `docs/OPERATIONS.md` →
+  (presence only — 2.0 at the M6.2 cutover, 2.1 at the M6.3 link-resolution slice).
+  Rationale: `docs/OPERATIONS.md` →
   "Instructions loading".
 
 ## Not covered (deliberately)
