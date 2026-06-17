@@ -4,7 +4,7 @@
   "tables": [
     {
       "name": "RawEmails",
-      "description": "Queue of regex-cleaned job-alert emails, populated by apps-script/gmail-collector.gs. Claude's screening pipeline reads Status=New rows and flips them to Processed. Mirrors the Make.com Sheets columns A-M.",
+      "description": "Queue of regex-cleaned job-alert emails, populated by apps-script/gmail-collector.gs. Claude's screening pipeline reads Status=New rows and flips them to Processed. Ported from the retired Make.com scenario's Sheets columns A-M.",
       "fields": [
         { "name": "MessageId", "type": "singleLineText", "description": "Gmail message ID (dedupe key)" },
         { "name": "ExecutionId", "type": "singleLineText", "description": "Collector run ID" },

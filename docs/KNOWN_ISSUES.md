@@ -6,7 +6,7 @@
 
 **Cause:** Gmail keeps two read paths. The **label store** (label → thread mapping, written transactionally at delivery) serves the UI's label views. The **full-text search index** is built asynchronously after delivery — and indexing is not guaranteed. Messages with MIME the indexer dislikes never enter the index. Every API search (`q=` parameter) goes through the index; the UI's label browsing does not. Result: delivered, labeled, visible — and unsearchable.
 
-**Who inherits it:** anything using `q=`-based listing — the Claude Gmail connector, Make.com's "Search emails" module, and the current Apps Script collector (`Gmail.Users.Messages.list({q})`). The structural fix (label-store listing via `getUserLabelByName()` / `labelIds`) is in `TODO.md` → Collector.
+**Who inherits it:** anything using `q=`-based listing — the Claude Gmail connector, the retired Make.com "Search emails" module, and the current Apps Script collector (`Gmail.Users.Messages.list({q})`). The structural fix (label-store listing via `getUserLabelByName()` / `labelIds`) is in `TODO.md` → Collector.
 
 **Detection (canary):** the screening pipeline marks everything it processes as read; the collector labels everything it stores. Anything left unread/uncollected in the label after the daily runs — beyond post-run arrivals — is an index orphan. Check occasionally in the Gmail UI.
 

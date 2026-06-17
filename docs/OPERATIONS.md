@@ -12,7 +12,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario and the GAS collector both stay live **in parallel as the safety net** for the first few 2.0 runs — Make is **not** decommissioned yet (a later slice, once 2.0 is proven). One-time activation steps: *Intake cutover (M6.2)* below.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.0`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -69,17 +69,17 @@ mount the folder would make the next scheduled screening **halt**. So:
    screening behaves exactly as before (parity — nothing about triage/output changed).
 5. **Verify fail-loud.** Run once with the folder detached; confirm it **halts** with
    the "folder must be attached" message and does **not** screen.
-6. **Leave Make running.** Do **not** pause the Make scenario — it stays live as the
-   parallel safety net through the M6.2 cutover and is retired only in a later slice once
-   2.0 is proven (see *Intake cutover (M6.2)* below).
+6. **Make ran as the safety net (now decommissioned).** The Make scenario stayed live as the
+   parallel safety net through the M6.1/M6.2 cutovers and was **decommissioned 2026-06-17** —
+   the GAS collector is now the sole pipeline (see *Intake cutover (M6.2)* below).
 
 ## Intake cutover (M6.2) — one-time activation
 
 The M6.2 cutover flips the screening run's source of truth from Gmail to the collector's
 RawEmails queue (instructions §1/§9, `VERSION: 2.0`). Ordered so a first 2.0 run never
 re-screens the backlog or darks the pipeline. **The live run is the test** — no automated
-test guards the instructions body, so this leans on an owner live-run validation, a
-git-revert rollback, and keeping Make running as the safety net.
+test guards the instructions body, so this leaned on an owner live-run validation and a
+git-revert rollback (Make ran in parallel as an extra safety net through the cutover; decommissioned 2026-06-17).
 
 1. **Pre-cutover backlog migration (REQUIRED — do before activating 2.0).** Nothing has
    ever been `Processed`, so RawEmails holds the **entire parallel-run backlog as `New`**;
@@ -97,16 +97,16 @@ git-revert rollback, and keeping Make running as the safety net.
    produces normal output. Spot-check that the §1 canary does **not** fire on a normal day,
    and that no row is left `New` unintentionally (a left-`New` row = a failed Status flip,
    re-screened next run — see *When things break*).
-4. **Keep Make running.** Leave the Make.com scenario and the GAS collector both live for a
-   few 2.0 runs as the parallel safety net. **Do not** decommission Make yet — that's a
-   later slice once 2.0 is proven (`TODO.md`).
+4. **Make ran as the safety net, now decommissioned.** The Make.com scenario stayed live
+   alongside the GAS collector through the first few 2.0 runs as the parallel safety net, then
+   was **decommissioned 2026-06-17** (`TODO.md`) — the GAS collector is now the sole pipeline.
 5. **Update the scheduled task's reminders (owner action, outside the PR).** The prompt at
    `~/Claude/Scheduled/daily-job-vacancy-screen/SKILL.md` (not in this repo) still reminds
    the run about the Gmail query / pagination / `get_thread`. The project instructions win,
    so it's not fatal, but update those reminders to the RawEmails intake to avoid confusion.
 6. **Rollback.** If a 2.0 run misbehaves, `git revert` the PR (or re-point the field to an
-   inline 1.2 copy) — that restores the pre-2.0 Gmail-direct screening. Make + the
-   collector are still live too, so no day is lost; re-run the parity check (below) before
+   inline 1.2 copy) — that restores the pre-2.0 Gmail-direct screening, which reads Gmail
+   directly, so no day is lost; re-run the parity check (below) before
    reverting.
 
 ## Collector: routine procedures
@@ -146,7 +146,7 @@ Before the `CLEAN_REGEX` pass, the collector cleans URLs in the HTML body **offl
 1. **Decode embedded destinations.** When a tracker carries its real destination inside a query param (e.g. `…/refer/100145?url=%2Fjob%2F…`), the collector takes that decoded destination in place. It uses no host/param allow-list: it decodes the **first** query param (in document order) whose URL-decoded value is itself an absolute `http(s)` URL or an absolute path (`/…`) — the "value must be a URL/path" guard is the whole filter. Opaque tracker tokens (a `?data=<JWT>` with no embedded URL) are left untouched — those are server-expandable only and are resolved at the screening layer by click-free content-search.
 2. **Strip `utm_*` analytics params** (any param whose name starts with `utm_`, case-insensitive), preserving every other param, their order, and any `#fragment`.
 
-With neither present, the transform is a byte-identical no-op, so `CleanText` is exactly what the regex alone would have produced. `HtmlLength` always stays the **original** body length (parity with Make's `length(1.htmlBody)`); only `CleanText` / `CleanLength` reflect the cleanup.
+With neither present, the transform is a byte-identical no-op, so `CleanText` is exactly what the regex alone would have produced. `HtmlLength` always stays the **original** body length (parity with the original Make scenario's `length(1.htmlBody)`); only `CleanText` / `CleanLength` reflect the cleanup.
 
 **Why no fetching:** probing arbitrary tracker links can trigger side-effect endpoints (one-click unsubscribe, 1-click-apply), and opaque tokens can't be expanded offline anyway. See `docs/TECH_DESIGN.md` §3 (Collector — offline link cleanup).
 

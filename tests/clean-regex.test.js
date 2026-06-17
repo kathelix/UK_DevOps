@@ -1,7 +1,7 @@
 'use strict';
 
 // Regression coverage for CONFIG.CLEAN_REGEX — the single regex that turns a raw
-// HTML email body into the stored CleanText (a 1:1 port of the Make.com "Text
+// HTML email body into the stored CleanText (a 1:1 port of the retired Make.com "Text
 // parser" module). The big win: pin its behavior on a CORPUS of real captured
 // emails (a spread of senders/HTML styles) so a future "second cleaning pass"
 // can't silently change what gets stored. This file tests the regex ONLY — the
@@ -16,8 +16,8 @@ const { loadCollector } = require('./helpers/load-collector');
 const gas = loadCollector();
 const clean = gas.clean;
 
-test('CLEAN_REGEX carries the flags Make exported (/gis)', () => {
-  // Make flags: global=true, sensitive=false, singleline=true -> g, i, s.
+test('CLEAN_REGEX carries the flags the original Make scenario exported (/gis)', () => {
+  // Make-exported flags: global=true, sensitive=false, singleline=true -> g, i, s.
   // (Asserted via .flags, not `instanceof RegExp` — the regex is created in the
   // VM realm, so cross-realm instanceof is false.)
   assert.equal(gas.CLEAN_REGEX.flags, 'gis');

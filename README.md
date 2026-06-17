@@ -25,7 +25,7 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 | Airtable base "Job Search" | State store: email queue + vacancy decisions | `airtable/` (schema-as-code) |
 | Claude (Cowork) | The screening brain: split, dedupe, score, verify, report | `instructions/` (versioned rules) |
 | GitHub Actions | Deploys the script (clasp) and Airtable schema on merge to main | `.github/workflows/` |
-| Make.com | Legacy collector — runs in parallel as the safety net until decommission, then retired | `UK_DevOps_Gmail_Collector.blueprint.json` |
+| Make.com (retired) | Original collector — decommissioned 2026-06-17; the GAS collector is now the sole pipeline | — (git history) |
 
 ## Repo map
 
@@ -39,6 +39,6 @@ Job boards and recruiters email constantly; Gmail filters label everything into 
 
 ## Status
 
-**Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a discrepancy canary only (an Airtable outage alerts and stops — there's no Gmail-direct screening fallback). The Make.com scenario and the GAS collector still run in parallel as the safety net until Make is decommissioned (a later slice).
+**Intake cutover shipped (M6.2):** the screening run now reads the collector's Airtable **RawEmails** queue as its source of truth (`Status=New` → screen → flip to `Processed`), with Gmail demoted to a discrepancy canary only (an Airtable outage alerts and stops — there's no Gmail-direct screening fallback). The Make.com scenario ran in parallel as the safety net during the cutover and was decommissioned 2026-06-17; the GAS collector is now the sole pipeline.
 
 **Screening enhancement shipped (M6.3, `VERSION: 2.1`):** an **interactive-only** Claude-in-Chrome pass now re-verifies the day's Recommend/Flag links on the live page — upgrading or dropping roles and drilling aggregator cards through to the real source posting — while the unattended scheduled run is unchanged (it writes a `<date>_recommend-flag.md` handoff file the pass consumes). Roadmap: `TODO.md`, milestone M6; runbook: `docs/OPERATIONS.md`.
