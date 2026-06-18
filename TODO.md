@@ -19,5 +19,4 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 
 ## Developer experience
 
-- [ ] **Fix Code session renaming**: fix the `scripts/pr-session-name.sh`, currently symlink-ed `~/.claude/hooks/pr-session-name.sh` that should rename a Claude Code sesion to "PR#nn" once session opens a new PR. Debug in the existing session that already created a PR, because it has all the logs from this hook and script.
 - [ ] **Revisit Cowork-Code handover approach** — currently parked under `scripts/slice-passing-parked/` (`docs/TECH_DESIGN.md` §8).
