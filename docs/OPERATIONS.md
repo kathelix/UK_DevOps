@@ -12,7 +12,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.1`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9; the run echoes its loaded `VERSION:` in each batch report — canonical value lives in the instructions file, not pinned here); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -244,9 +244,11 @@ proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
    trailing ≥50% so a `lastIndexOf` match clears the 0.5 floor — otherwise it would `miss` when
    pasted.
 2. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
-   (`apps-script/gmail-collector.gs`). For a **new** sender, also capture a redacted fixture and
-   pin its cut bytes per the *Collector: per-sender footer cutoff* marker-miss runbook (steps
-   2–3), so the suite covers it.
+   (`apps-script/gmail-collector.gs`). For a **drift**, correct the **existing** key's phrase
+   (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
+   one in insertion order and won't take effect. For a **new** sender, add a **registered-domain**
+   (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
+   per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it.
 3. `node --test` green → merge → redeploy GAS. The collector then cuts that footer and the alert
    **auto-stops** at the next run.
 

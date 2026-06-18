@@ -191,17 +191,19 @@ scan each one's tail for left-behind footer boilerplate and classify it; output 
   design: better to miss a borderline case than to alert daily on a job description that merely
   mentions "unsubscribe".
 - **Classify new vs drift via `FOOTER_MARKERS`.** Read the marker map from
-  `apps-script/gmail-collector.gs` (`FOOTER_MARKERS` — a `registered-domain → marker phrase`
-  map, the mounted repo is present during a run) and derive the sender's registered domain from
-  `FromEmail`: the part after the **last `@`**, lowercased (`footerDomainOf_`). Match a key by
-  **exact equality or dot-boundary suffix** — `domain === key` or `domain` ends with `.` + `key`
-  (`footerMarkerFor_`): `mail.uk.whatjobs.com` matches `whatjobs.com`, the look-alike
-  `notwhatjobs.com` does **not**. Then:
-  - domain **not** in `FOOTER_MARKERS` → **new** footer (an unmapped sender the collector never
-    touches and never alarms on — the gap only this scan covers),
-  - domain **in** `FOOTER_MARKERS` but a footer still remains → **changed / drifted** footer
-    (the mapped marker no longer matches; the collector also run-alarms on this, but surface it
-    inline with the proposed fix).
+  `apps-script/gmail-collector.gs` (`FOOTER_MARKERS` — a **registered-domain** → marker-phrase
+  map, ~9 entries like `whatjobs.com`, `reed.co.uk`; the mounted repo is present during a run).
+  Take the sender's **From host** — the part of `FromEmail` after the **last `@`**, lowercased
+  (this is what `footerDomainOf_` returns: the *full* host, e.g. `mail.uk.whatjobs.com`, **not**
+  necessarily the registered domain / a map key). Look it up the way the collector does
+  (`footerMarkerFor_`): a key matches when `host === key` **or** `host` ends with `.` + `key`, so
+  `mail.uk.whatjobs.com` matches the `whatjobs.com` key, the look-alike `notwhatjobs.com` does
+  **not**, and the **first** matching key in insertion order wins. Then:
+  - **no key matches** the host → **new** footer (an unmapped sender the collector never touches
+    and never alarms on — the gap only this scan covers),
+  - **a key matches** but a footer still remains → **changed / drifted** footer (the mapped
+    marker no longer matches; the collector also run-alarms on this, but surface it inline with
+    the proposed fix). **Note which key matched** — §8 outputs *that* key, not the From host.
 
 ---
 
@@ -371,8 +373,18 @@ or reorders anything. When fired, add one terse line per flagged sender:
   '<domain>': '<marker phrase>'
   ```
 
-  - `<domain>` — the registered domain (`footerDomainOf_` semantics: `FromEmail` after the last
-    `@`, lowercased), the key the collector looks it up by.
+  - `<domain>` — the `FOOTER_MARKERS` **key** (a registered domain), chosen so the pasted entry
+    actually takes effect:
+    - **drift** → the **existing matched key** from §3 verbatim (e.g. `whatjobs.com`), so
+      *correcting that key's phrase* fixes the cut. Do **not** emit the full From host
+      (`mail.uk.whatjobs.com`): a new, narrower key is appended **after** the existing one and
+      still loses in insertion order, so the collector keeps missing and the alert never
+      self-resolves.
+    - **new** → the sender's **registered domain** (eTLD+1 — e.g. `somejobs.com` or
+      `somejobs.co.uk`; collapse mail subdomains and honour multi-part suffixes like `.co.uk`),
+      matching the granularity of the existing keys — **not** the full From host, which is too
+      narrow and would miss the sender's other subdomains (the map convention,
+      `docs/TECH_DESIGN.md` §4: markers outlive sender addresses).
   - `<marker phrase>` — taken from the stored `CleanText` **byte-form** (not rendered text —
     HTML entities survive cleaning), **entity-free**, and **terminal**: a stable, sender-specific
     line that *begins* the footer and sits in the trailing portion, so a future `lastIndexOf`
