@@ -4,11 +4,6 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 
 ## Screening pipeline
 
-- [ ] **Footer-freshness analysis — Cowork-side daily scan (idea raised by Ivan 2026-06-14)**, fold into Block 1 as a screening-side step now that intake reads RawEmails (**M6.2 shipped → unblocked**):
-  - **What.** During daily screening, after reading the day's cleaned emails from Airtable `RawEmails`, scan their footers and surface any *new* footer (sender not yet in the collector's `FOOTER_MARKERS`) or *changed* footer (text drifted from the known marker). Fuzzy pattern-spotting, so it lives with Claude/Ivan — explicitly not GAS.
-  - **Why it's additive, not duplicate.** The GAS-side `truncateAtFooter_` template-change alarm (Issue #14, done; TECH_DESIGN §4) only fires for *mapped* senders whose marker goes missing, and only as a run-failure email — "unmapped senders never alarm." This Cowork pass covers the gap: footers on not-yet-mapped senders, plus marker drift, surfaced inline so Ivan sees it the same day without digging into Airtable/Gmail.
-  - **Surface only when detected.** Add an inline alert to the batch report only when a new/changed footer is spotted; stay silent on clean days (mirrors the §8 "don't prompt if every role was a clean accept/reject" pattern).
-  - **Output → action.** When flagged, propose a candidate marker string — entity-free, taken from stored `CleanText` byte-form (per the footer-fixture-capture recipe) — so `FOOTER_MARKERS` / the `.gs` can be updated. This is the human-in-the-loop feeder that keeps the collector's marker map current.
 - [ ] **VPN automation for the live link-resolution pass (stretch).** Drive **Total VPN 2** (macOS app) via computer use: connect to a UK server at the start of the §6a Chrome pass, disconnect at the end — replacing the current remind-only step (`docs/OPERATIONS.md` → "Live link resolution (Chrome pass)"). Deferred from M6.3 (owner decision 2026-06-17).
 
 ## Collector (`apps-script/gmail-collector.gs`)
