@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.1
+VERSION: 2.2
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -173,6 +173,38 @@ visible in the Gmail UI only), so they **don't reach RawEmails** and won't appea
 primary path. No instant-reject step is needed for them — they simply aren't there.
 - They matter only for the **§1 canary**: a count mismatch between RawEmails `New` rows and Gmail UI unread driven by *these* senders is **expected**, not a collector failure. Details: `docs/KNOWN_ISSUES.md` in the UK_DevOps repo.
 
+#### Footer-freshness check
+
+The collector cuts each **mapped** sender's footer **before** the row reaches RawEmails
+(`truncateAtFooter_` in `apps-script/gmail-collector.gs`), so a footer block still sitting at
+the **tail** of a row's `CleanText` is, by construction, one the collector did **not** cut —
+a data-quality signal worth surfacing, never screening input. After reading the day's rows,
+scan each one's tail for left-behind footer boilerplate and classify it; output per §8
+*Footer-freshness alert*. On a clean day (every footer was cut) this scan is **silent**.
+
+- **What counts as footer boilerplate.** Unsubscribe links, "manage your … preferences", "you
+  received this email because", "do not reply", and postal-address blocks — the legal/endpoint
+  tail an aggregator appends below the job content.
+- **Trailing-portion only — mirror the collector's 0.5 floor.** Treat such a phrase as a footer
+  **only** when it sits in the **last ~50%** of `CleanText` (the collector's
+  `FOOTER_POSITION_FLOOR`, 0.5). The same phrase mid-body is **not** a footer. Conservative by
+  design: better to miss a borderline case than to alert daily on a job description that merely
+  mentions "unsubscribe".
+- **Classify new vs drift via `FOOTER_MARKERS`.** Read the marker map from
+  `apps-script/gmail-collector.gs` (`FOOTER_MARKERS` — a **registered-domain** → marker-phrase
+  map, ~9 entries like `whatjobs.com`, `reed.co.uk`; the mounted repo is present during a run).
+  Take the sender's **From host** — the part of `FromEmail` after the **last `@`**, lowercased
+  (this is what `footerDomainOf_` returns: the *full* host, e.g. `mail.uk.whatjobs.com`, **not**
+  necessarily the registered domain / a map key). Look it up the way the collector does
+  (`footerMarkerFor_`): a key matches when `host === key` **or** `host` ends with `.` + `key`, so
+  `mail.uk.whatjobs.com` matches the `whatjobs.com` key, the look-alike `notwhatjobs.com` does
+  **not**, and the **first** matching key in insertion order wins. Then:
+  - **no key matches** the host → **new** footer (an unmapped sender the collector never touches
+    and never alarms on — the gap only this scan covers),
+  - **a key matches** but a footer still remains → **changed / drifted** footer (the mapped
+    marker no longer matches; the collector also run-alarms on this, but surface it inline with
+    the proposed fix). **Note which key matched** — §8 outputs *that* key, not the From host.
+
 ---
 
 ### 4. Screening Logic
@@ -325,6 +357,46 @@ Apply the band:
 
 - Total emails processed in this batch
 - Running total of confirmed matches across all batches (numbered list, each with its best-known link)
+
+##### Footer-freshness alert (only when detected)
+
+**Conditional — emit this block only when the §3 footer-freshness check found an un-cut footer;
+stay silent on clean days** (mirror the "don't prompt if every role was a clean accept/reject"
+pattern below). It is a data-quality feeder, not a screening result, so it never gates, rejects,
+or reorders anything. When fired, add one terse line per flagged sender:
+
+- whether it's a **new** (unmapped) or **changed** (drifted) footer, and the sender's registered
+  domain;
+- a **ready-to-paste candidate marker** in the collector's map form:
+
+  ```
+  '<domain>': '<marker phrase>'
+  ```
+
+  - `<domain>` — the `FOOTER_MARKERS` **key** (a registered domain), chosen so the pasted entry
+    actually takes effect:
+    - **drift** → the **existing matched key** from §3 verbatim (e.g. `whatjobs.com`), so
+      *correcting that key's phrase* fixes the cut. Do **not** emit the full From host
+      (`mail.uk.whatjobs.com`): a new, narrower key is appended **after** the existing one and
+      still loses in insertion order, so the collector keeps missing and the alert never
+      self-resolves.
+    - **new** → the sender's **registered domain** (eTLD+1 — e.g. `somejobs.com` or
+      `somejobs.co.uk`; collapse mail subdomains and honour multi-part suffixes like `.co.uk`),
+      matching the granularity of the existing keys — **not** the full From host, which is too
+      narrow and would miss the sender's other subdomains (the map convention,
+      `docs/TECH_DESIGN.md` §4: markers outlive sender addresses).
+  - `<marker phrase>` — taken from the stored `CleanText` **byte-form** (not rendered text —
+    HTML entities survive cleaning), **entity-free**, and **terminal**: a stable, sender-specific
+    line that *begins* the footer and sits in the trailing portion, so a future `lastIndexOf`
+    will match it **past the 0.5 floor**. A phrase that wouldn't clear the floor (too early, or
+    not actually present byte-for-byte) would `miss` when pasted — don't propose it.
+  - Note the candidate's approximate **position (% through the text)** so it's visibly past the
+    floor.
+
+Keep it brief; it self-resolves once the marker is added and the collector redeployed
+(`docs/OPERATIONS.md` → *Screening: footer-freshness alert*). Until then it **re-fires on new
+arrivals** from that sender (it never re-screens `Processed` rows) — recurrence is by design and
+bounded; do **not** build a persistent "already-flagged" store.
 
 ##### Post
 

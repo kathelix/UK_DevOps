@@ -12,7 +12,7 @@
 
 GAS trigger cadences are still being tuned, so the numbers are deliberately recorded **once** — in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (the GAS console is the live authority); this table and every other doc reference that bullet instead of repeating them.
 
-Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9, `VERSION: 2.1`); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
+Since the **M6.2 intake cutover** the screening run reads **RawEmails** (`Status=New`) as its source of truth and flips screened rows to `Processed` (instructions §1/§9; the run echoes its loaded `VERSION:` in each batch report — canonical value lives in the instructions file, not pinned here); Gmail is demoted to a **discrepancy canary only** (§1). There is **no Gmail-direct screening fallback** — if Airtable is unreachable the run **alerts and stops** (nothing screened/marked/persisted; recovery is automatic, see *When things break*). The Make.com scenario ran **in parallel as the safety net** through the first 2.0 runs and was **decommissioned 2026-06-17**; the GAS collector is now the sole pipeline. One-time activation steps: *Intake cutover (M6.2)* below.
 
 ## Secrets inventory (names and locations — never values)
 
@@ -222,6 +222,40 @@ Footer: hits=<H> misses=<M> bytes_cut=<B>
 
 While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost is by design (a silent parser break is worse); fix promptly.
 
+## Screening: footer-freshness alert
+
+The daily **screening** run surfaces a **footer-freshness alert** in its batch report when it
+finds a footer the collector did **not** cut still sitting at the tail of a row's `CleanText`
+(`instructions/Claude_project_instructions.md` §3 detection / §8 output; design:
+`docs/TECH_DESIGN.md` §4). It **complements** the collector's marker-miss alarm above: that alarm
+fires only for **mapped** senders whose marker drifted; this screening-side scan also catches
+**unmapped** senders the collector never flags, and surfaces both **same-day, inline**. On a
+clean day (every footer cut) the run is silent — no alert.
+
+**What it means.** Either a **new** footer (sender not in `FOOTER_MARKERS`) or a **changed**
+footer (a mapped sender whose marker drifted). The alert names the sender's registered domain and
+proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
+
+**Action** — add/correct the marker so the collector cuts that footer:
+
+1. **Confirm-before-pin** (PR #14 discipline). The run proposes the `<phrase>` from stored
+   `CleanText`, but verify it before trusting it: the phrase must appear in that sender's stored
+   `CleanText` **byte-form** (entities survive cleaning), be **terminal**, and sit in the
+   trailing ≥50% so a `lastIndexOf` match clears the 0.5 floor — otherwise it would `miss` when
+   pasted.
+2. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
+   (`apps-script/gmail-collector.gs`). For a **drift**, correct the **existing** key's phrase
+   (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
+   one in insertion order and won't take effect. For a **new** sender, add a **registered-domain**
+   (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
+   per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it.
+3. `node --test` green → merge → redeploy GAS. The collector then cuts that footer and the alert
+   **auto-stops** at the next run.
+
+Until the marker lands, the alert **re-fires on new arrivals** from that sender (it never
+re-screens `Processed` rows) — recurrence is by design and bounded; there is no persistent
+flagged-footer store.
+
 ## Canary: missing-email check
 
 The screening run's **§1 discrepancy canary** is the primary check post-cutover. On a run
@@ -346,5 +380,6 @@ between.
 | A RawEmails row is still `New` after a screening run | Its §9 Status flip failed (reported in the run's done-marker tally) | Fail-safe by design — the row is re-screened next run. If rows pile up `New`, check the Claude→Airtable connector / write permissions; a row stuck `New` across runs but never re-reported means the run isn't reaching §9 |
 | RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then the §1 canary distinguishes them (orphans don't trigger it) |
 | Screening run reports fewer emails than UI shows unread | Index orphans (KNOWN_ISSUES §1) | Expected for securityclearedjobs.com; investigate only for senders that matter |
+| Screening batch shows a **Footer-freshness alert** (`'<domain>': '<phrase>'` candidate) | A footer reached `CleanText` un-cut — a **new** (unmapped) or **changed** (drifted) sender footer; informational, by design, not a failure | Not a break. Follow *Screening: footer-freshness alert* above: confirm-before-pin the candidate, add/correct the `FOOTER_MARKERS` entry, redeploy; the alert auto-stops once the collector cuts that footer |
 | Screening run halts: "The UK_DevOps folder must be attached to run the screening pipeline" | The field is now a bootstrap stub; the mounted folder is missing, so it fails loud with no fallback (by design) | Attach the UK_DevOps folder to the session and re-run. If scheduled runs can't mount it, see *Instructions loading* — the no-fallback contract may need revisiting (flag the Architect) |
 | Batch report echoes the wrong `VERSION:` or none | The field still holds an old inline copy, or the stub points at a moved/renamed path | Re-paste `instructions/PROJECT_FIELD_STUB.md` into the field; confirm `instructions/Claude_project_instructions.md` exists at that path and carries a `VERSION:` line |
