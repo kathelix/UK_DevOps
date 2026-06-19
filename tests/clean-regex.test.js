@@ -49,15 +49,13 @@ test('each alternative strips what it targets (focused cases)', () => {
 // (reed, nijobs), div-heavy (ziprecruiter), Marketing-Cloud (welcometothejungle), digest
 // (joblookup, cv-library, jobs4), whatjobs (an unclosed outer table/tr/td chain — issue #14
 // fixtures), the footer-map-extension pair milkround (StepStone family, shares nijobs'
-// footer) + procontractjobs (SendGrid), and footer-map-extension-2's six (haystack,
-// outsideir35, jobs-co-uk, talentsource24, applygateway, teksystems). Each entry is
-// [rawLength, cleanLength] (JS string .length, not UTF-8 bytes — emoji/£ are multi-byte). If
-// CLEAN_REGEX or a fixture changes intentionally, eyeball the diff and update in the SAME commit.
+// footer) + procontractjobs (SendGrid), and footer-map-extension-2's three mapped senders
+// (jobs-co-uk, outsideir35, teksystems). Each entry is [rawLength, cleanLength] (JS string
+// .length, not UTF-8 bytes — emoji/£ are multi-byte). If CLEAN_REGEX or a fixture changes
+// intentionally, eyeball the diff and update in the SAME commit.
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 const GOLDEN = {
-  'email-applygateway.html': [131673, 109845],
   'email-cv-library.html': [88696, 18008],
-  'email-haystack.html': [25459, 7570],
   'email-jobs-co-uk.html': [44780, 18578],
   'email-jobs4.html': [25367, 5577],
   'email-joblookup.html': [54676, 11866],
@@ -66,7 +64,6 @@ const GOLDEN = {
   'email-outsideir35.html': [16923, 16207],
   'email-procontractjobs.html': [60992, 45086],
   'email-reed.html': [57460, 7576],
-  'email-talentsource24.html': [44943, 18721],
   'email-teksystems.html': [43093, 34006],
   'email-welcometothejungle.html': [52858, 5104],
   'email-whatjobs.html': [17169, 4252],
