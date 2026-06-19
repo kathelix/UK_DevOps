@@ -216,7 +216,7 @@ Footer: hits=<H> misses=<M> bytes_cut=<B>
 **Marker-miss runbook** (the failure email arrived with `… footer marker miss(es); first: <domain> msg=<id>`):
 
 1. Open the named `msg=<id>` in Gmail (sender = the named `<domain>`). The sender almost certainly changed its footer template.
-2. Capture the new template as a **redacted** fixture in `tests/fixtures/email-<sender>.html` — redact every per-recipient token (unsubscribe hashes, `subscriptionCode=`, `jbeID=`, opaque path ids) including **encoded forms** (base64 of the address), per CLAUDE.md "Test fixtures from real captures". Wire it into the `clean-regex` + `table-unwrap` golden maps (the manifest check requires it).
+2. Capture the new template as a **redacted** fixture in `tests/fixtures/email-<sender>.html` — redact every per-recipient token (unsubscribe hashes, `subscriptionCode=`, `jbeID=`, opaque path ids) including **encoded forms** (base64 of the address), per CLAUDE.md "Test fixtures from real captures". Keep it **LF-only** and the redaction **length-neutral**; validate it as a faithful capture by **byte-identity** to the stored `CleanText` (CR-strip the stored value + mask the per-recipient tokens on both sides) — **not** length-equality vs the stored `CleanLength`, which CRLF-era / QP-decoded senders break — and **re-measure** the goldens from the fixture — see `docs/TECH_DESIGN.md` §4 (*Fixture-capture fidelity*). Wire it into the `clean-regex` + `table-unwrap` golden maps (the manifest check requires it).
 3. Update the domain's string in `FOOTER_MARKERS` to a stable, entity-free phrase from the new footer, and the fixture's pinned cut bytes in `tests/footer-cutoff.test.js`.
 4. `node --test` green → merge. The deploy stops the alarm at the next collector run.
 
@@ -243,13 +243,19 @@ proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
    `CleanText` **byte-form** (entities survive cleaning), be **terminal**, and sit in the
    trailing ≥50% so a `lastIndexOf` match clears the 0.5 floor — otherwise it would `miss` when
    pasted.
-2. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
+2. **Confirm the ≥2-sample rule — this is a *history pull*, not just the day's alert.** A single
+   day's alert yields only **that day's** sample. Query RawEmails (`contains(FromEmail, <domain>)`,
+   read `CleanText`) for the sender's history and confirm the candidate marker is **byte-identical**
+   across **≥2** samples; **drop** the domain if it can't be (n=1 → it **stays unmapped** and keeps
+   re-flagging by design until a 2nd sample lands). This is typically a **batch** exercise — several
+   unmapped senders surface together, so pull each one's history in the same pass.
+3. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
    (`apps-script/gmail-collector.gs`). For a **drift**, correct the **existing** key's phrase
    (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
    one in insertion order and won't take effect. For a **new** sender, add a **registered-domain**
    (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
    per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it.
-3. `node --test` green → merge → redeploy GAS. The collector then cuts that footer and the alert
+4. `node --test` green → merge → redeploy GAS. The collector then cuts that footer and the alert
    **auto-stops** at the next run.
 
 Until the marker lands, the alert **re-fires on new arrivals** from that sender (it never

@@ -1154,6 +1154,15 @@ const FOOTER_MARKERS = {
   // its template without the other. Confirmed against 4 stored milkround CleanText samples.
   'milkround.com': 'In order to avoid that third parties',
   'procontractjobs.com': 'Pro Contract Jobs Team',  // confirmed against 10 stored samples
+  // --- footer-map-extension-2 (2026-06-19): 3 senders whose marker BEGINS the footer action block ---
+  // The marker must start the footer block so the cut removes the unsubscribe/manage links + their
+  // per-recipient tokens (sender-specificity is secondary — domain-keyed, so a shared phrase under a
+  // distinct key is fine). haystackapp.io / talentsource24.com / applygateway.com are DEFERRED: no
+  // clean footer-start marker (their address line sits *after* the action links, so cutting there
+  // would leave the unsubscribe/edit endpoints behind). See docs/TECH_DESIGN.md §4 (Codex F1, PR #40).
+  'outsideir35.org.uk':  'Outside IR35 Tech Jobs',
+  'jobs.co.uk':          'Jobs.co.uk',  // footer brand line (case-sensitive; occ=2, lastIndexOf = footer ~95%); cuts Edit this Job Alert / Remove my account / account links + postal
+  'teksystems.com':      'Trading as TEKsystems.',
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
