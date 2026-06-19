@@ -1,5 +1,7 @@
 # UK DevOps / Claude DevOps Market Image Generation Guide
 
+VERSION: 1.1
+
 ## Mandatory source-of-truth rule
 
 This file is the **primary source of truth** for all image generation in the `Claude on DevOps market` / `UK DevOps` social media series.
@@ -104,7 +106,7 @@ Approval gate:
 
 Input:
 
-- User asks for X / Twitter thread.
+- User asks for an X / Twitter thread.
 
 Output:
 
@@ -112,17 +114,22 @@ Output:
 
 Default length:
 
-- Use **2 tweets by default**, unless the user explicitly requests another number.
+- Always use **3 tweets by default**, unless the user explicitly requests another number.
 
-Reason:
+Hard limit:
 
-- Shorter threads may be less likely to be hidden, throttled, or partially shown by X.
+- Each tweet must be **280 characters or fewer**.
+- Count the tweet number marker, spaces, punctuation, emojis, line breaks, URLs, and date as part of the 280-character limit.
+- Before returning the thread, verify that every tweet fits within the 280-character X limit.
+- If a tweet is too long, shorten it before responding.
 
 Hard rules:
 
 - Keep the thread lightweight.
 - Do not repeat the whole LinkedIn post.
-- Preserve the main joke and one supporting absurdity.
+- Preserve the main joke and only one or two supporting absurdities.
+- Prefer punchy wording over completeness.
+- Keep each tweet independently readable.
 - Return only the ready-to-post tweets unless the user asks for commentary.
 
 ---
