@@ -201,17 +201,26 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // whatjobs (its outer table/tr/td chain is never closed, so strict pairing correctly no-ops
   // and the inner tables are all genuine content tables — pinned at exactly 0, byte-identical,
   // like ziprecruiter). The footer-map-extension slice added milkround (3 wrappers, 115 B) and
-  // procontractjobs (25 wrappers, 4805 B), both pinned exact (measured 2026-06-12). If the
-  // fixture or the unwrap changes intentionally, eyeball the diff and update these in the same
-  // commit; a silent drop in the win is the regression this test catches.
+  // procontractjobs (25 wrappers, 4805 B), both pinned exact (measured 2026-06-12).
+  // footer-map-extension-2 (2026-06-19) added six more, re-measured from the shipped LF fixtures:
+  // haystack (12, 516), jobs-co-uk (2, 66), talentsource24 (2, 66), teksystems (8, 2354), and
+  // outsideir35 + applygateway (both 0 — div/no single-child wrappers). If the fixture or the
+  // unwrap changes intentionally, eyeball the diff and update these in the same commit; a silent
+  // drop in the win is the regression this test catches.
   const GOLDEN = {
+    'applygateway': { tables: 0, bytesSaved: 0 },
     'cv-library': { tables: 40, bytesSaved: 1320 },
+    'haystack': { tables: 12, bytesSaved: 516 },
+    'jobs-co-uk': { tables: 2, bytesSaved: 66 },
     'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
     'milkround': { tables: 3, bytesSaved: 115 },
     'nijobs': { tables: 31, bytesSaved: 1183 },
+    'outsideir35': { tables: 0, bytesSaved: 0 },
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },
+    'talentsource24': { tables: 2, bytesSaved: 66 },
+    'teksystems': { tables: 8, bytesSaved: 2354 },
     'welcometothejungle': { tables: 38, bytesSaved: 1254 },
     'whatjobs': { tables: 0, bytesSaved: 0 }, // unclosed outer table/tr/td: strict pairing MUST no-op
     'ziprecruiter': { tables: 0, bytesSaved: 0 }, // div-based layout: MUST stay a no-op

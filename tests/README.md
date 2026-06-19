@@ -35,8 +35,9 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden regression
   over a **corpus** of real captured job-alert emails spanning a spread of senders / HTML
   styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
-  ziprecruiter, jobs4, whatjobs, milkround, procontractjobs — sanitized of PII, LF-only). A
-  manifest check asserts every
+  ziprecruiter, jobs4, whatjobs, milkround, procontractjobs, and footer-map-extension-2's
+  haystack, outsideir35, jobs-co-uk, talentsource24, applygateway, teksystems — sanitized of
+  PII, LF-only). A manifest check asserts every
   `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
   (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
   regex in isolation, not the link-cleanup stage that runs before it.
@@ -73,6 +74,10 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   removal; byte-identical no-op for `none`/`miss`; and the **value-pinning corpus test** — every
   mapped fixture through the full pipeline (link cleanup → `CLEAN_REGEX` → unwrap → footer cutoff)
   with per-fixture cut bytes pinned above their corridor floors (cv-library, unmapped, byte-identical).
+  footer-map-extension-2 added six mapped fixtures here (haystack, outsideir35, jobs-co-uk,
+  talentsource24, applygateway, teksystems); their goldens are re-measured from the shipped LF
+  fixtures — faithfulness was proven by byte-identity to the stored `CleanText` (CR-strip +
+  per-recipient-token mask), not by matching the CRLF-era stored `CleanLength` (see that PR).
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),

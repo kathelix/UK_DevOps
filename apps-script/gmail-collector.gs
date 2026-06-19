@@ -1154,6 +1154,13 @@ const FOOTER_MARKERS = {
   // its template without the other. Confirmed against 4 stored milkround CleanText samples.
   'milkround.com': 'In order to avoid that third parties',
   'procontractjobs.com': 'Pro Contract Jobs Team',  // confirmed against 10 stored samples
+  // --- footer-map-extension-2 (2026-06-19): 6 senders the footer-freshness scan flagged unmapped ---
+  'haystackapp.io':      'Haystack App Ltd, 11 Lansdowne Terrace, Newcastle Upon Tyne, Tyne and Wear NE3 1HN',
+  'outsideir35.org.uk':  'Outside IR35 Tech Jobs',
+  'jobs.co.uk':          '119 Hagley Rd, Birmingham B16 8LB',
+  'talentsource24.com':  'TalentSource24, Ewer St, London, SE1 0NR',
+  'applygateway.com':    'Apply Gateway Ltd Watcombe Priors Lodge, Torquay, TQ1 4SQ, Devon, UK',
+  'teksystems.com':      'Trading as TEKsystems.',
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the

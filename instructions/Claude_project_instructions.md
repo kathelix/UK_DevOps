@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.2
+VERSION: 2.3
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -192,7 +192,7 @@ scan each one's tail for left-behind footer boilerplate and classify it; output 
   mentions "unsubscribe".
 - **Classify new vs drift via `FOOTER_MARKERS`.** Read the marker map from
   `apps-script/gmail-collector.gs` (`FOOTER_MARKERS` — a **registered-domain** → marker-phrase
-  map, ~9 entries like `whatjobs.com`, `reed.co.uk`; the mounted repo is present during a run).
+  map, a dozen-plus entries like `whatjobs.com`, `reed.co.uk`; the mounted repo is present during a run).
   Take the sender's **From host** — the part of `FromEmail` after the **last `@`**, lowercased
   (this is what `footerDomainOf_` returns: the *full* host, e.g. `mail.uk.whatjobs.com`, **not**
   necessarily the registered domain / a map key). Look it up the way the collector does

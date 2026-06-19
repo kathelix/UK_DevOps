@@ -128,8 +128,14 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
   // absent from the stored fixture) and cuts 1311 B, matching the issue's research evidence.
   // The footer-map-extension slice added milkround (dot-boundary key jobs.milkround.com ->
   // milkround.com, reusing nijobs' GDPR marker, cuts 2799 B at 82.1%) and procontractjobs
-  // (exact key, cuts 1965 B at 95.1%). The lowest hit position is still whatjobs at 67.7%, so the
-  // 0.5 floor holds with headroom.
+  // (exact key, cuts 1965 B at 95.1%). footer-map-extension-2 (2026-06-19) added six more
+  // (haystack, outsideir35, jobs-co-uk, talentsource24, applygateway, teksystems). Their goldens
+  // are RE-MEASURED from the shipped LF fixtures, NOT derived from the CRLF-era stored CleanLength:
+  // the Gmail MCP returns QP-decoded bodies and the corpus is LF-only, so the fixture's cleaned
+  // length can't equal the stored value — faithfulness was proven by byte-identity to the stored
+  // CleanText after CR-strip + per-recipient-token masking (see PR body). The corpus-wide lowest
+  // hit position is now haystackapp.io at ~65.7% (the min across its 23 stored samples; this
+  // fixture hits at 76.5%), still clearing the 0.5 floor with headroom.
   const FOOTER_GOLDEN = {
     'reed':               { from: 'noreply@reed.co.uk',             outcome: 'hit',  bytesCut: 1311, floor: 1000 },
     'whatjobs':           { from: 'jobalerts@mail.uk.whatjobs.com', outcome: 'hit',  bytesCut: 1196, floor: 1000 }, // dot-boundary key
@@ -140,6 +146,13 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'welcometothejungle': { from: 'hello@welcometothejungle.com',   outcome: 'hit',  bytesCut: 1135, floor: 100 },
     'milkround':          { from: 'info@jobs.milkround.com',        outcome: 'hit',  bytesCut: 2799, floor: 2500 }, // dot-boundary key; reuses nijobs' marker
     'procontractjobs':    { from: 'info@procontractjobs.com',       outcome: 'hit',  bytesCut: 1965, floor: 1700 }, // exact key
+    // --- footer-map-extension-2 (2026-06-19): 6 new senders (re-measured LF goldens) ---
+    'haystack':           { from: 'hello@haystackapp.io',                      outcome: 'hit',  bytesCut: 1659, floor: 150 },
+    'outsideir35':        { from: 'alerts@email.outsideir35.org.uk',           outcome: 'hit',  bytesCut: 511,  floor: 80 },  // dot-boundary key
+    'jobs-co-uk':         { from: 'alerts@jobs.co.uk',                         outcome: 'hit',  bytesCut: 286,  floor: 60 },
+    'talentsource24':     { from: 'alerts@talentsource24.com',                 outcome: 'hit',  bytesCut: 293,  floor: 60 },
+    'applygateway':       { from: 'noreply@zip.applygateway.com',              outcome: 'hit',  bytesCut: 100,  floor: 30 },  // dot-boundary key; tail-only cut
+    'teksystems':         { from: 'opportunities@careeralerts.teksystems.com', outcome: 'hit',  bytesCut: 4386, floor: 500 }, // dot-boundary key
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
