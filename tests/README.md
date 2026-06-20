@@ -157,8 +157,9 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   `PURGE_EMERGENCY` throw (949/950 boundary), `DRY_RUN` (full plan logged, nothing
   deleted), runtime-tunable thresholds, and fail-loud non-200 list/delete throws.
 - **`vacancies-backup.test.js`** — the off-platform Vacancies → CSV Drive backup
-  (`apps-script/vacancies-backup.gs`), pure helpers only (Drive/Airtable I/O is manual-verified
-  in the PR): `csvCell_` (RFC 4180 quoting — comma/embedded-quote-doubled/CR/LF quoted, plain
+  (`apps-script/vacancies-backup.gs`): the pure helpers plus the `backupVacancies` entry point
+  through stubbed Apps Script globals (real Drive/Airtable I/O stays manual-verified in the PR).
+  `csvCell_` (RFC 4180 quoting — comma/embedded-quote-doubled/CR/LF quoted, plain
   not), `serializeCell_` (missing→`""`, string/number/boolean, singleSelect-as-object→`.name`,
   array/object→JSON), `vacanciesColumns_` (leading `recordId`/`createdTime` + schema order, an
   unschema'd field id **appended** not dropped), `vacanciesToCsv_` (header + rows, serialization,

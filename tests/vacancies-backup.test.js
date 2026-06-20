@@ -1,9 +1,10 @@
 'use strict';
 
-// Unit coverage for the pure helpers of apps-script/vacancies-backup.gs — the daily
-// off-platform Vacancies -> CSV Drive backup. The side-effectful entry point
-// (backupVacancies / Drive + Airtable I/O) is covered by the manual verification in the
-// PR body; here we pin the pure CSV/column/guard logic and the schema-drift guard.
+// Coverage for apps-script/vacancies-backup.gs — the daily off-platform Vacancies -> CSV Drive
+// backup. Pins the pure CSV/column/guard logic and the schema-drift guard, plus the backupVacancies
+// entry point driven through injected Apps Script stubs (the empty-result guard wiring and a
+// one-write success path). Real Drive/Airtable I/O — actual DriveApp writes, OAuth, the live
+// trigger — stays in the manual verification documented in the PR body.
 //
 // Realm caveat (same as the collector suites): values built in the VM realm have the VM's
 // prototypes, so we assert on primitive leaves / serialized strings, never object identity.
