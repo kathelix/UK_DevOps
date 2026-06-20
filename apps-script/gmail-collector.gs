@@ -1252,8 +1252,9 @@ function lastMatchingAnchorIndex_(text, hrefRe, from) {
 // (marker/pattern absent or too early). Pure; exported for unit tests.
 //   - string             → 'text' mode: cut at the LAST occurrence of the string.
 //   - {text, mode:'link'}→ after lastIndexOf(text) (≥ floor), snap back to the nearest preceding
-//                          <a> open tag (search bounded below by the floor — a sane window);
-//                          fall back to the text index if there is no <a> in that window.
+//                          <a> open tag (search bounded below by the floor — a sane window). No
+//                          safe anchor in that window → MISS (-1), never a text-index cut that
+//                          would leave the leading per-recipient token (F1, PR #42).
 //   - {urlPattern, mode:'urlcut'} → cut at the LAST <a href> matching urlPattern, at/after floor.
 function footerCutIndex_(text, marker) {
   const floorIdx = FOOTER_POSITION_FLOOR * text.length;
@@ -1264,9 +1265,11 @@ function footerCutIndex_(text, marker) {
   if (marker && marker.mode === 'link') {
     const i = text.lastIndexOf(marker.text);
     if (i === -1 || i < floorIdx) return -1;
-    const snapped = lastAnchorOpenIndex_(text, Math.ceil(floorIdx), i);
-    const cut = snapped === -1 ? i : snapped;       // no <a> in window → cut at the text index
-    return cut < floorIdx ? -1 : cut;
+    // link MUST snap to a leading <a> so the per-recipient token BEFORE the marker text goes too.
+    // If there is no safe anchor at/after the floor (template lost/moved the <a>), this is a MISS —
+    // fail loud (the marker-miss alarm + the screening tail-scan flag it for a marker update), NOT a
+    // text-index cut that would report 'hit' while silently leaving the token in CleanText (F1, PR #42).
+    return lastAnchorOpenIndex_(text, Math.ceil(floorIdx), i); // -1 (miss) when no safe anchor — never a text fallback
   }
   if (marker && marker.mode === 'urlcut') {
     const cut = lastMatchingAnchorIndex_(text, new RegExp(marker.urlPattern), Math.ceil(floorIdx));

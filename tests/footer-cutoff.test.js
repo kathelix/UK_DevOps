@@ -154,6 +154,31 @@ test('link mode: a marker before the 0.5 floor is a miss (floor applies to the r
   assert.equal(gas.footerCutIndex_(text, { text: 'early', mode: 'link' }), -1);
 });
 
+test('link mode FAILS CLOSED: marker present but NO safe anchor is a miss, not a token-leaking text cut (F1)', () => {
+  // The per-recipient token sits before the marker but is NOT inside an <a> (the template lost/moved
+  // the anchor). A text-index fallback would report `hit`, strip the visible text, and silently LEAVE
+  // the token — link mode must fail loud (miss) so the marker-miss alarm + screening tail scan flag it.
+  const token = 'LEAKtok_perRecipient_aB12xyz';
+  const text = HEAD + `token=${token} Manage all your subscriptions trailing`;
+  assert.equal(gas.footerCutIndex_(text, { text: 'Manage all your subscriptions', mode: 'link' }), -1);
+  // and end-to-end: a mapped sender in this shape is a `miss` (byte-identical no-op), not a leaking hit
+  const r = gas.truncateAtFooter_(text, 'update@cord.co'); // cord is a link-mode sender; force this shape
+  // (cord's real marker differs, so this synthetic text is a `none`/`miss` for cord — assert the token
+  //  is never silently dropped-with-a-hit; the point is footerCutIndex_ above returns -1 for link.)
+  assert.ok(r.outcome !== 'hit' || r.html.includes(token) === false);
+});
+
+test('link mode FAILS CLOSED: an anchor BELOW the floor with the marker above it is a miss (F1)', () => {
+  // The only anchor (carrying a token) sits early/below the floor; the marker sits past the floor with
+  // no anchor after it. The snap is floor-bounded, so it finds nothing -> miss (never a cut that keeps
+  // the early token).
+  const token = 'EARLYtok_belowFloor_Q9';
+  const text = `<a href="https://t.test/${token}">x</a>` + 'Z'.repeat(400) + ' Customer Support trailing';
+  assert.ok(text.lastIndexOf('Customer Support') / text.length >= 0.5, 'precondition: marker past the floor');
+  assert.ok(text.indexOf('<a') / text.length < 0.5, 'precondition: the only anchor is below the floor');
+  assert.equal(gas.footerCutIndex_(text, { text: 'Customer Support', mode: 'link' }), -1);
+});
+
 test('urlcut mode: cuts at the <a> whose href matches, removing a footer link that has no anchor text', () => {
   const pat = 'x\\.test/job_alerts/[^"/]+/unsubscribe\\?token=';
   const text = HEAD + `<a href="https://x.test/job_alerts/abc-123/unsubscribe?token=SECRETJWE_perRecip">`;
