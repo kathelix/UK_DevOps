@@ -6,6 +6,7 @@
 |---|---|---|
 | Frequent — cadence in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | Collector run: Gmail → clean → RawEmails, label `collected` | GAS time trigger |
 | Nightly — time in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | RawEmails purge: delete oldest `Processed` rows when over high-water | GAS time trigger |
+| Late — time in [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) | Vacancies backup: write the dated off-platform CSV snapshot to Drive (DR copy) | GAS time trigger |
 | 06:00 | Screening run: read RawEmails `New` rows, screen, flip them to `Processed`, write Vacancies, daily report + `<date>_recommend-flag.md` handoff | Claude Cowork scheduled task |
 | Ad hoc (interactive, on request) | Live link-resolution pass: open the day's Recommend/Flag links in Chrome, re-verify gates on the live source, upgrade/drop, store the verified link | Interactive Cowork session + Claude-in-Chrome (VPN → UK) |
 | Ad hoc | Ivan reviews flags, applies, reports back; Claude logs Applied/Skipped | Chat |
@@ -156,6 +157,25 @@ The Airtable free plan caps a **base** at 1,000 records across **all** tables (`
 - **DRY_RUN:** the shared `DRY_RUN=true` Script Property makes the purge log the full plan (count, eligible, the exact ids it would delete) and delete nothing.
 - **Failures:** any non-200 from Airtable (list or delete) throws → Failed execution → failure email. List and delete now retry a **transient** blip (`429`/`5xx`) with `[1s, 2s, 4s]` backoff first, so a final non-200 in the log is genuinely persistent. **Deletes never retry a transport throw** (`retryOnThrow:false`): a re-delete of an already-gone id returns `404 MODEL_ID_NOT_FOUND`, so after a connection blip mid-delete the run fails loud rather than risk 404-ing a delete that actually landed — safe, since a purge is non-critical and the next night re-counts. Deletes are still paced (~4 req/s) under Airtable's 5 req/s/base rate limit.
 - **Concurrency:** the purge shares the collector's script lock and never runs concurrently with a collector run — whichever starts second skips cleanly (a skipped night catches up the next one).
+
+## Vacancies backup (off-platform DR)
+
+`backupVacancies` (`apps-script/vacancies-backup.gs`, a **separate** file in the same GAS project) writes a daily off-platform CSV of the **Vacancies** table — Ivan's irreplaceable Applied/Skipped decision history — into a fixed Google Drive folder. Airtable has no API-schedulable/off-site backup and native snapshots are in-platform + plan-bound, so this is the disaster-recovery copy (rationale + rejected alternatives: [TECH_DESIGN §5](TECH_DESIGN.md#5-data-model-airtable)). RawEmails is **not** backed up (regenerable from Gmail). The file is `Vacancies_YYYY-MM-DD.csv` (London date) in the folder `1sJYnFr5lusPM0VhfLqp6mBOYHwWfDq5w` (`https://drive.google.com/drive/u/0/folders/1sJYnFr5lusPM0VhfLqp6mBOYHwWfDq5w`); a same-day re-run **replaces** that file's contents (idempotent, no duplicate).
+
+- **One-time re-authorization (REQUIRED — new Drive scope):** this slice adds `https://www.googleapis.com/auth/drive` to `appsscript.json` (needed to open the **pre-existing** Drive folder by id — `drive.file` only reaches app-created files). Adding a scope **invalidates the project's existing authorization**: after the deploy, open the GAS editor and **run `backupVacancies` once manually** to re-consent the scopes for the whole project. Do this promptly — until the project is re-authorized, the scheduled `collectJobEmails`/`purgeRawEmails` runs can fail on the un-consented scope set. Confirm with a green manual run + a CSV in the folder.
+- **Trigger setup (one-time, manual — runtime state, never deployed by CI):** either GAS editor → Triggers → Add trigger → function `backupVacancies`, time-driven, day timer, in the late window per [TECH_DESIGN §7](TECH_DESIGN.md#7-deployment--ci) (same pattern as the collector/purge triggers); **or** run `ensureDailyBackupTrigger_()` once from the editor to install exactly one daily trigger programmatically (it deletes any existing `backupVacancies` trigger first, so it is safe to re-run). **Prereq:** `AIRTABLE_TOKEN` is already set (shared with the collector); the backup only **reads** it, so `data.records:read` suffices.
+- **Script Properties (optional):** `BACKUP_FOLDER_ID` overrides the destination folder (any non-blank value wins; unset/blank → the built-in id above). No other tuning.
+- **Log line** (Executions panel), once per run: `Vacancies backup written: Vacancies_<date>.csv (N records, C columns).`
+- **Fail-loud (never corrupts a good backup):** the entire CSV is built in memory **before** any write. An Airtable read failure after the light transient retry (`429`/`5xx`/transport, `[1s,2s,4s]` backoff), or a **0-record fetch** (the empty-result guard — a suspicious empty read must not overwrite a good prior CSV), **throws** → Failed execution → GAS failure email, and **no file is written**. A genuinely empty table therefore also fails loud by design — investigate the log rather than trusting an empty backup.
+- **Verify:** after a run, open the Drive folder → the dated CSV exists, opens with all Vacancies rows, header row of column names, and correct RFC 4180 quoting (commas/quotes/newlines inside cells are quoted). Re-run the same day → the **same** file is updated, no duplicate.
+
+### Restore (manual — DR ≠ "just restore")
+
+There is **no** import/restore tool yet; recovery is manual and **changes the `baseId`**:
+
+1. Download the latest `Vacancies_<date>.csv` from the Drive folder.
+2. Create a new Airtable base (or table) and import the CSV (`recordId`/`createdTime` are the leading columns for a clean dedupe/restore).
+3. **Repoint the new `baseId`** everywhere the old one is pinned — `git grep appV9puNHinuRKTk9` to enumerate, currently `instructions/Claude_project_instructions.md` (§0/§1, the §9 done-marker flip, and the *Applied & Skipped roles* section), the collector `CONFIG.AIRTABLE_BASE_ID` **and** `BACKUP.AIRTABLE_BASE_ID` in `apps-script/vacancies-backup.gs`, and `airtable/schema.json` — then redeploy. A restore is not complete until every `baseId` reference is updated.
 
 ## Collector: offline link cleanup
 

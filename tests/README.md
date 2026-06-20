@@ -1,9 +1,11 @@
 # Tests
 
 Node-only tests run with the built-in test runner — no framework, no dependencies.
-Most cover the Gmail collector (`apps-script/gmail-collector.gs`); one
-(`instructions-stub.test.js`) is a contract test for the externalized project
-instructions and uses no collector harness.
+Most cover the Gmail collector (`apps-script/gmail-collector.gs`); two stand apart —
+`instructions-stub.test.js` is a contract test for the externalized project
+instructions (no harness), and `vacancies-backup.test.js` covers the separate
+`apps-script/vacancies-backup.gs` via its own sibling VM loader
+(`helpers/load-vacancies-backup.js`).
 
 ```sh
 node --test        # from the repo root  (or: npm test)
@@ -154,6 +156,17 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   (mutation-checked with eligible rows present), the starvation warning vs the
   `PURGE_EMERGENCY` throw (949/950 boundary), `DRY_RUN` (full plan logged, nothing
   deleted), runtime-tunable thresholds, and fail-loud non-200 list/delete throws.
+- **`vacancies-backup.test.js`** — the off-platform Vacancies → CSV Drive backup
+  (`apps-script/vacancies-backup.gs`), pure helpers only (Drive/Airtable I/O is manual-verified
+  in the PR): `csvCell_` (RFC 4180 quoting — comma/embedded-quote-doubled/CR/LF quoted, plain
+  not), `serializeCell_` (missing→`""`, string/number/boolean, singleSelect-as-object→`.name`,
+  array/object→JSON), `vacanciesColumns_` (leading `recordId`/`createdTime` + schema order, an
+  unschema'd field id **appended** not dropped), `vacanciesToCsv_` (header + rows, serialization,
+  CRLF separators, 0-records→header-only), `backupFileName_` (`Vacancies_<date>.csv`),
+  `shouldWriteBackup_` (the empty-result guard predicate — `0`→false), and
+  `backupIsTransientStatus_` (429/5xx vs 200/4xx). A **drift guard** pins `BACKUP.VACANCIES_FIELDS`
+  byte-for-byte (id + name + order) against `airtable/schema.json` — the runtime can't read
+  `schema.json` (clasp pushes only `apps-script/**`), so the mirror must not silently diverge.
 - **`instructions-stub.test.js`** — the externalized-instructions loading contract
   (M6.1), **not** a collector test: the claude.ai project field is a thin pointer
   (`instructions/PROJECT_FIELD_STUB.md`) to the canonical, `VERSION`-ed

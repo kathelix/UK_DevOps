@@ -1,4 +1,7 @@
-# Push only the script and its manifest; everything else in rootDir stays local.
+# Push only the scripts and the manifest; everything else in rootDir stays local.
+# NB: this is an allow-list (ignore **/** then un-ignore) — a NEW .gs file is pushed only
+# if it is added here, so every script needs its own `!<file>.gs` line.
 **/**
 !gmail-collector.gs
+!vacancies-backup.gs
 !appsscript.json
