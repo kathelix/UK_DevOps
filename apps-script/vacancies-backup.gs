@@ -23,7 +23,7 @@
  *      BACKUP_FOLDER_ID to override the destination folder below.
  *   2. Run backupVacancies() once -> authorize the new Drive scope (added to appsscript.json).
  *   3. Triggers -> Add trigger -> backupVacancies, time-driven, day timer, late hour
- *      (cadence recorded ONCE in docs/TECH_DESIGN.md §7) — OR call ensureDailyBackupTrigger_()
+ *      (cadence recorded ONCE in docs/TECH_DESIGN.md §7) — OR call ensureDailyBackupTrigger()
  *      once from the editor to install exactly one daily trigger programmatically.
  */
 
@@ -39,7 +39,7 @@ const BACKUP = {
   FILENAME_PREFIX: 'Vacancies_',
   // London for both the filename date and the trigger hour (matches appsscript.json timeZone).
   TIME_ZONE: 'Europe/London',
-  // Daily backup hour for ensureDailyBackupTrigger_ (a manual GAS-console trigger is the other
+  // Daily backup hour for ensureDailyBackupTrigger (a manual GAS-console trigger is the other
   // option). Late so the day's Applied/Skipped writes are captured. Cadence registry (the single
   // prose source for collect/purge/backup times): docs/TECH_DESIGN.md §7.
   TRIGGER_HOUR: 23,
@@ -274,7 +274,10 @@ function backupVacancies() {
 // deleting any existing trigger for the handler first (idempotent — safe to re-run). The hour is
 // interpreted in the script's timezone (Europe/London per appsscript.json). Needs script.scriptapp
 // (already in the manifest). The GAS-console route (Triggers -> Add) is the equivalent manual path.
-function ensureDailyBackupTrigger_() {
+// NB: name is deliberately WITHOUT a trailing underscore — the owner runs it once from the editor's
+// Run dropdown, and Apps Script hides trailing-underscore ("private") functions from that menu and
+// the Triggers UI. Keep it bare; do not "fix" it to match the _-suffixed internal helpers.
+function ensureDailyBackupTrigger() {
   const handler = 'backupVacancies';
   for (const t of ScriptApp.getProjectTriggers()) {
     if (t.getHandlerFunction() === handler) ScriptApp.deleteTrigger(t);

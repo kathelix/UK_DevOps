@@ -66,7 +66,7 @@ A **separate** script in the same GAS project: `backupVacancies()` writes a dail
 
 - **Script Property:** reuses `AIRTABLE_TOKEN` (read-only — `data.records:read` suffices); optional `BACKUP_FOLDER_ID` overrides the destination folder.
 - **Drive scope:** adds `https://www.googleapis.com/auth/drive` to `appsscript.json` (needed to open the **pre-existing** folder by id — `drive.file` only reaches app-created files). **Adding a scope forces a one-time re-authorization of the whole project:** run `backupVacancies` once in the editor after deploy to re-consent. See the runbook.
-- **Trigger:** daily, late hour (cadence in [`docs/TECH_DESIGN.md`](../docs/TECH_DESIGN.md) §7) — added manually in the GAS console, or via the optional idempotent `ensureDailyBackupTrigger_()`.
+- **Trigger:** daily, late hour (cadence in [`docs/TECH_DESIGN.md`](../docs/TECH_DESIGN.md) §7) — added manually in the GAS console, or via the optional idempotent `ensureDailyBackupTrigger()`.
 
 ## 5. Costs
 

@@ -8,7 +8,7 @@
  * caveats (assert on primitive leaves / serialized forms, never object identity).
  *
  * Only the PURE helpers are exported. The side-effectful entry points (backupVacancies,
- * fetchAllVacancies_, writeCsvToDrive_, ensureDailyBackupTrigger_) reference Drive /
+ * fetchAllVacancies_, writeCsvToDrive_, ensureDailyBackupTrigger) reference Drive /
  * UrlFetchApp / ScriptApp and the collector's airtableToken_ (a different .gs file in the
  * same GAS namespace) — none defined in this single-file VM context. That's fine: those
  * references resolve at CALL time, and the tests never call them. Drive/Airtable I/O is
