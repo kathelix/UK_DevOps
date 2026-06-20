@@ -164,7 +164,12 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   unschema'd field id **appended** not dropped), `vacanciesToCsv_` (header + rows, serialization,
   CRLF separators, 0-records→header-only), `backupFileName_` (`Vacancies_<date>.csv`),
   `shouldWriteBackup_` (the empty-result guard predicate — `0`→false), and
-  `backupIsTransientStatus_` (429/5xx vs 200/4xx). A **drift guard** pins `BACKUP.VACANCIES_FIELDS`
+  `backupIsTransientStatus_` (429/5xx vs 200/4xx). The **entry point** `backupVacancies` is driven
+  through injected Apps Script stubs (a `setGlobals` loader seeds `airtableToken_`/`UrlFetchApp`/
+  `DriveApp`/`Utilities`/`PropertiesService`): a 0-record fetch **throws before any Drive write**
+  (mutation-checked — deleting the guard `if` flips it) and a non-empty fetch writes exactly one
+  dated `Vacancies_<date>.csv` — so the guard *wiring*, not just `shouldWriteBackup_`, is pinned.
+  A **drift guard** pins `BACKUP.VACANCIES_FIELDS`
   byte-for-byte (id + name + order) against `airtable/schema.json` — the runtime can't read
   `schema.json` (clasp pushes only `apps-script/**`), so the mirror must not silently diverge.
 - **`instructions-stub.test.js`** — the externalized-instructions loading contract

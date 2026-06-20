@@ -14,7 +14,7 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 
 ## Vacancies backup / DR (`apps-script/vacancies-backup.gs`)
 
-- [ ] **CSV import/restore tool.** Recovery from a `Vacancies_<date>.csv` is a **manual** procedure today (download → import to a new base → repoint `baseId` in instructions §0/§1 + both `CONFIG`/`BACKUP` + `schema.json` + redeploy — `docs/OPERATIONS.md` → "Vacancies backup (off-platform DR)"). A scripted restore (re-import + the `baseId` sweep) would cut RTO. Deferred — DR is rare and the steps are documented.
+- [ ] **CSV import/restore tool.** Recovery from a `Vacancies_<date>.csv` is a **manual, multi-step identity rebuild** today (recreate the typed schema → import the data → capture the new IDs → repoint **base + table + field** ids across instructions, `BACKUP`, `CONFIG`, `schema.json` → redeploy — `docs/OPERATIONS.md` → "Vacancies backup (off-platform DR)", case B). A CSV import assigns new server IDs, so this is more than a `baseId` swap. A scripted restore (typed re-import + the full id sweep) would cut RTO and the error surface. Deferred — DR is rare and the steps are documented.
 - [ ] **Old-CSV retention/pruning.** Daily ~133-row CSVs are tiny, so unbounded accumulation is harmless for now; add a keep-last-N sweep of the Drive folder only if it gets unwieldy.
 
 ## Developer experience

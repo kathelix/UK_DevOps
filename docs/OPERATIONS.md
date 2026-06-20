@@ -171,11 +171,17 @@ The Airtable free plan caps a **base** at 1,000 records across **all** tables (`
 
 ### Restore (manual — DR ≠ "just restore")
 
-There is **no** import/restore tool yet; recovery is manual and **changes the `baseId`**:
+There is **no** import/restore tool yet; recovery is manual. **The two recovery sources differ in how much identity changes** — get this wrong and the imported history is unreachable from screening/backup, or a schema apply spawns a *duplicate* empty Vacancies table:
+
+**A. Airtable native snapshot (in-platform, same account).** A snapshot **preserves the table and field IDs**, so only the **`baseId`** changes. Restore the snapshot to a new base, then repoint the base id only: `git grep appV9puNHinuRKTk9` and update every hit — `instructions/Claude_project_instructions.md` (§0/§1, the §9 done-marker flip, the *Applied & Skipped roles* section), the collector `CONFIG.AIRTABLE_BASE_ID` **and** `BACKUP.AIRTABLE_BASE_ID` in `apps-script/vacancies-backup.gs`, and `airtable/schema.json` — then redeploy. (Use this when available — it is the simple case.)
+
+**B. CSV re-import (this off-platform backup → a new base).** A CSV import assigns **new** base, table **and** field IDs and infers column types — so a `baseId`-only repoint is **not** enough. Every old identifier this project pins by ID goes stale: the Vacancies `tableId` `tbl3abC60VRQWb21w` and the eight Vacancies field IDs (`BACKUP.VACANCIES_FIELDS`, instructions §0/§1/§6a's `Link` `fldz2C7r1hSNrET4i`), the RawEmails `tableId`/field IDs the screening §9 flip uses, and the IDs in `schema.json` (where `apply-schema.js` matches by ID and would otherwise **create a second empty table / duplicate fields**, and `import-schema.js` will **not** overwrite a present stale ID just because the name matches). Full rebuild:
 
 1. Download the latest `Vacancies_<date>.csv` from the Drive folder.
-2. Create a new Airtable base (or table) and import the CSV (`recordId`/`createdTime` are the leading columns for a clean dedupe/restore).
-3. **Repoint the new `baseId`** everywhere the old one is pinned — `git grep appV9puNHinuRKTk9` to enumerate, currently `instructions/Claude_project_instructions.md` (§0/§1, the §9 done-marker flip, and the *Applied & Skipped roles* section), the collector `CONFIG.AIRTABLE_BASE_ID` **and** `BACKUP.AIRTABLE_BASE_ID` in `apps-script/vacancies-backup.gs`, and `airtable/schema.json` — then redeploy. A restore is not complete until every `baseId` reference is updated.
+2. **Recreate the typed schema first** on the new base: create the empty base, set `schema.json`'s `baseId` to it (both `apply-schema.js` and `import-schema.js` target `schema.baseId`), then run `airtable/apply-schema.js` so dates/singleSelects get their real types (a raw CSV import infers everything as text) and **RawEmails is recreated too** (the CSV is Vacancies-only). This assigns fresh server table/field IDs. *(Clear the stale `tbl…`/`fld…` ids from `schema.json` first, or apply-schema matches the old ids, finds nothing on the new base, and creates **duplicate** tables/fields.)*
+3. **Import the CSV *data*** into that now-typed **Vacancies** table, mapping each column to its field (`recordId`/`createdTime` are leading reference columns for dedupe, not re-imported as the new record id).
+4. **Capture the new IDs:** strip the stale ids from `airtable/schema.json` (or start from a name-only copy) so `airtable/import-schema.js` backfills the **new** base/table/field ids rather than keeping stale name-matches; run it.
+5. **Repoint every stale identifier, not just the base id** — `git grep` the **old base id**, the **old Vacancies/RawEmails table ids**, and the **old field ids**, and update each hit across `instructions/Claude_project_instructions.md`, `apps-script/vacancies-backup.gs` (`BACKUP.AIRTABLE_BASE_ID` + `BACKUP.VACANCIES_TABLE` + `BACKUP.VACANCIES_FIELDS`), the collector `CONFIG.AIRTABLE_BASE_ID`, and `airtable/schema.json` — then redeploy. The restore is complete only when no old id remains.
 
 ## Collector: offline link cleanup
 

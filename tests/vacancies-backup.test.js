@@ -14,6 +14,33 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { loadVacanciesBackup } = require('./helpers/load-vacancies-backup');
 
+// Build injectable Apps Script stubs for an end-to-end backupVacancies() run: a UrlFetchApp that
+// returns `records` as a single 200 page (no offset), a Drive recorder counting writes, a fixed
+// formatDate, and the collector's airtableToken_ (a different .gs file at runtime). `drive.writes`
+// records every createFile/setContent so a test can assert "zero Drive writes" on the guard path.
+function makeEnv(records) {
+  const drive = { writes: [] };
+  const folder = {
+    getFilesByName: () => ({ hasNext: () => false, next: () => { throw new Error('no existing file'); } }),
+    createFile: (name, content, mime) => {
+      drive.writes.push({ op: 'create', name, content, mime });
+      return { getId: () => 'file_' + drive.writes.length };
+    },
+  };
+  return {
+    drive,
+    globals: {
+      airtableToken_: () => 'tok',
+      UrlFetchApp: {
+        fetch: () => ({ getResponseCode: () => 200, getContentText: () => JSON.stringify({ records }) }),
+      },
+      Utilities: { formatDate: () => '2026-06-20' },
+      PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) },
+      DriveApp: { getFolderById: () => folder },
+    },
+  };
+}
+
 const {
   BACKUP,
   csvCell_,
@@ -159,6 +186,34 @@ test('BACKUP.VACANCIES_FIELDS stays in lockstep with airtable/schema.json (id + 
   // realm so deepStrictEqual compares the primitive-string leaves, not the (differing) prototype.
   const embedded = Array.from(BACKUP.VACANCIES_FIELDS.map(f => `${f.id}|${f.name}`));
   assert.deepEqual(embedded, schemaFields);
+});
+
+test('backupVacancies throws on a 0-record fetch and makes ZERO Drive writes (guard wiring)', () => {
+  // F2: unit-testing shouldWriteBackup_(0) does NOT test the branch in backupVacancies that calls
+  // it. Drive the entry point with an empty fetch and assert it throws BEFORE any write. Mutation
+  // check: deleting the `if (!shouldWriteBackup_(...))` block makes this write a header-only CSV
+  // (drive.writes.length === 1) and NOT throw — flipping both assertions below.
+  const gas = loadVacanciesBackup();
+  const env = makeEnv([]); // 0 records
+  gas.setGlobals(env.globals);
+  assert.throws(() => gas.backupVacancies(), /empty-result guard/);
+  assert.equal(env.drive.writes.length, 0, 'no Drive write on the empty-result guard path');
+});
+
+test('backupVacancies writes exactly one dated CSV on a non-empty fetch (orchestration)', () => {
+  const gas = loadVacanciesBackup();
+  const env = makeEnv([
+    { id: 'rec1', createdTime: '2026-06-20T10:00:00.000Z', fields: { fldPxVR6FTbdV4nEn: 'SRE' } },
+  ]);
+  gas.setGlobals(env.globals);
+  assert.doesNotThrow(() => gas.backupVacancies());
+  assert.equal(env.drive.writes.length, 1, 'exactly one Drive write');
+  const w = env.drive.writes[0];
+  assert.equal(w.name, 'Vacancies_2026-06-20.csv');
+  assert.equal(w.mime, 'text/csv');
+  // Header row + the one record's Role cell (proves serialization ran through the entry point).
+  assert.ok(w.content.startsWith('recordId,createdTime,Role,'), 'header row present');
+  assert.ok(w.content.includes('rec1,2026-06-20T10:00:00.000Z,SRE,'), 'record row present');
 });
 
 test('BACKUP source ids match airtable/schema.json base + Vacancies table', () => {
