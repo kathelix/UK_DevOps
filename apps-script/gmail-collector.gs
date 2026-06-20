@@ -1125,10 +1125,22 @@ function collapseTableWrappers_(html) {
 // (links → CLEAN_REGEX → unwrap → THIS). Only CleanText/CleanLength reflect the cut;
 // HtmlLength stays the original body length (Make-port parity), as with the earlier stages.
 //
-// OPT-IN by registered domain. FOOTER_MARKERS maps a registered domain → the literal
-// marker string that begins that sender's footer in the STORED CleanText byte-form
-// (entities survive CLEAN_REGEX, so markers are chosen entity-free from the corpus, not
-// from rendered email text). An unmapped sender is untouched and never alarms.
+// OPT-IN by registered domain. FOOTER_MARKERS maps a registered domain → a marker that
+// begins that sender's footer in the STORED CleanText byte-form (entities survive
+// CLEAN_REGEX, so markers are chosen entity-free from the corpus, not from rendered email
+// text). An unmapped sender is untouched and never alarms.
+//
+// A marker value is EITHER (string-or-object, backward-compatible — see truncateAtFooter_):
+//   - a string        → 'text' mode (default, unchanged): cut at the LAST occurrence of the
+//                        string; the marker and the tail are discarded.
+//   - { text, mode:'link' }   → token-LEAD footer: after lastIndexOf(text), snap the cut
+//                        back to the nearest preceding <a> open tag (the enclosing/leading
+//                        anchor), so the per-recipient token that sits BEFORE the marker text
+//                        goes too (a plain text cut would leave the <a href="…token…"> open tag).
+//   - { urlPattern, mode:'urlcut' } → footer whose only element is a per-recipient link with no
+//                        anchor text (text would have nothing to match): cut at the LAST
+//                        <a …href="…"> whose href matches urlPattern, at/after the floor.
+// The floor check applies to the RESOLVED cut index in every mode.
 //
 // Markers outlive sender addresses (whatjobs moved mail.whatjobs.co.uk → mail.uk.whatjobs.com
 // in 2026 but kept its footer), so the map is keyed by registered domain, matched by exact
@@ -1146,13 +1158,19 @@ const FOOTER_MARKERS = {
   'whatjobs.com': 'Overall, how relevant are these jobs',
   'jobmails.io': 'Please do not reply to this email',
   'joblookup.com': 'Pause Your Job Alerts',
-  'nijobs.com': 'In order to avoid that third parties',
-  'ziprecruiter.co.uk': 'Unsubscribe from this email',
+  // nijobs drifted (2026-06-20): the old GDPR sentence is gone; the StepStone footer now leads
+  // with 'Manage all your subscriptions' INSIDE the per-recipient unsubscribe <a>. mode:'link'
+  // snaps the cut to that <a> so its token goes too (text mode would leave the <a href> open tag).
+  'nijobs.com': { text: 'Manage all your subscriptions', mode: 'link' },  // replaces 'In order to avoid that third parties'
+  // ziprecruiter drifted (2026-06-20): the cleaned footer now ENDS mid-<a href> (no anchor text to
+  // match) — the lone footer element is the per-recipient unsubscribe link, so cut at the <a> whose
+  // href is the unsubscribe URL. urlcut, replaces 'Unsubscribe from this email'.
+  'ziprecruiter.co.uk': { urlPattern: 'ziprecruiter\\.co\\.uk/job_alerts/[^"/]+/unsubscribe\\?token=', mode: 'urlcut' },
   'welcometothejungle.com': 'Receive these notifications:',
-  // milkround is StepStone family and ships the same GDPR footer sentence as nijobs — keep this
-  // as an independent entry (duplicate string, NOT a shared constant): either sender can change
-  // its template without the other. Confirmed against 4 stored milkround CleanText samples.
-  'milkround.com': 'In order to avoid that third parties',
+  // milkround is StepStone family and ships the same drifted footer as nijobs — keep this as an
+  // independent entry (duplicate marker, NOT a shared constant): either sender can change its
+  // template without the other. Confirmed against ≥2 stored milkround CleanText samples (2026-06-20).
+  'milkround.com': { text: 'Manage all your subscriptions', mode: 'link' },  // replaces 'In order to avoid that third parties'
   'procontractjobs.com': 'Pro Contract Jobs Team',  // confirmed against 10 stored samples
   // --- footer-map-extension-2 (2026-06-19): 3 senders whose marker BEGINS the footer action block ---
   // The marker must start the footer block so the cut removes the unsubscribe/manage links + their
@@ -1163,6 +1181,14 @@ const FOOTER_MARKERS = {
   'outsideir35.org.uk':  'Outside IR35 Tech Jobs',
   'jobs.co.uk':          'Jobs.co.uk',  // footer brand line (case-sensitive; occ=2, lastIndexOf = footer ~95%); cuts Edit this Job Alert / Remove my account / account links + postal
   'teksystems.com':      'Trading as TEKsystems.',
+  // --- footer-cut-token-lead (2026-06-20): TOKEN-LEAD footers — the per-recipient tracking token
+  // sits BEFORE the marker text, so a plain text cut would leave it. link = snap to the
+  // enclosing/preceding <a>. Byte-confirmed ≥2 samples. (nexxt.com DEFERRED — see docs/TECH_DESIGN §4 /
+  // TODO.md: PII bar holds, but a faithful raw-capture fixture is not producible — the Gmail-MCP capture
+  // QP-decodes its tracking-URL bytes to control chars that diverge from the live collector's literal-QP path.)
+  'cord.co':               { text: 'Update your email preferences', mode: 'link' }, // NEW. marker is inside the per-recipient <a>; snap drops its JWT token. (A preceding empty tracked <a> may survive — its send-id also rides the kept job links, so the cut targets the action endpoints, not that residue.)
+  'jooble.org':            { text: 'Customer Support', mode: 'link' },               // NEW. footer-nav lead; its own href is generic (help.jooble.org) — the snap removes the whole nav incl. the per-recipient Unsubscribe JWT that follows it
+  'efinancialcareers.com': { text: 'You received this email because you', mode: 'link' }, // NEW. broadened from '…subscribed' to the shared prefix so it ALSO catches the job-alert variant ('…have an account…') — a domain-keyed marker that missed one variant would fail-loud (miss) on every such email. Marker is a <span> preceded by an empty tracked <a>; snap drops that token.
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
@@ -1193,22 +1219,81 @@ function footerMarkerFor_(domain) {
   return null;
 }
 
+// Index of the LAST anchor OPEN tag ('<a' followed by whitespace, '>' or '/') that begins in
+// the half-open range [from, before). Returns -1 when none. Used by 'link' mode to snap a cut
+// back to the per-recipient <a> that LEADS the footer (token-lead footers). '<a' inside a base64
+// token can't false-match (the base64url/JWT alphabet has no '<'); '</a' close tags don't match
+// (the char after '<' is '/', not 'a').
+function lastAnchorOpenIndex_(text, from, before) {
+  const re = /<a(?=[\s>/])/gi;
+  re.lastIndex = Math.max(0, from);
+  let last = -1, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index >= before) break;
+    last = m.index;
+  }
+  return last;
+}
+
+// Index of the LAST anchor OPEN tag whose href matches hrefRe and that begins at/after `from`.
+// Returns -1 when none. Used by 'urlcut' mode for footers whose only element is a per-recipient
+// link with no anchor text.
+function lastMatchingAnchorIndex_(text, hrefRe, from) {
+  const tagRe = /<a\b[^>]*\bhref="([^"]*)"[^>]*>/gi;
+  let last = -1, m;
+  while ((m = tagRe.exec(text)) !== null) {
+    if (m.index >= from && hrefRe.test(m[1])) last = m.index;
+  }
+  return last;
+}
+
+// Resolve the cut index for a marker against the (already fully-cleaned) text, honouring the
+// position floor on the RESOLVED index in every mode. Returns the cut index, or -1 for a miss
+// (marker/pattern absent or too early). Pure; exported for unit tests.
+//   - string             → 'text' mode: cut at the LAST occurrence of the string.
+//   - {text, mode:'link'}→ after lastIndexOf(text) (≥ floor), snap back to the nearest preceding
+//                          <a> open tag (search bounded below by the floor — a sane window). No
+//                          safe anchor in that window → MISS (-1), never a text-index cut that
+//                          would leave the leading per-recipient token (F1, PR #42).
+//   - {urlPattern, mode:'urlcut'} → cut at the LAST <a href> matching urlPattern, at/after floor.
+function footerCutIndex_(text, marker) {
+  const floorIdx = FOOTER_POSITION_FLOOR * text.length;
+  if (typeof marker === 'string') {
+    const i = text.lastIndexOf(marker);
+    return (i === -1 || i < floorIdx) ? -1 : i;
+  }
+  if (marker && marker.mode === 'link') {
+    const i = text.lastIndexOf(marker.text);
+    if (i === -1 || i < floorIdx) return -1;
+    // link MUST snap to a leading <a> so the per-recipient token BEFORE the marker text goes too.
+    // If there is no safe anchor at/after the floor (template lost/moved the <a>), this is a MISS —
+    // fail loud (the marker-miss alarm + the screening tail-scan flag it for a marker update), NOT a
+    // text-index cut that would report 'hit' while silently leaving the token in CleanText (F1, PR #42).
+    return lastAnchorOpenIndex_(text, Math.ceil(floorIdx), i); // -1 (miss) when no safe anchor — never a text fallback
+  }
+  if (marker && marker.mode === 'urlcut') {
+    const cut = lastMatchingAnchorIndex_(text, new RegExp(marker.urlPattern), Math.ceil(floorIdx));
+    return cut;                                     // already constrained to ≥ floor; -1 == miss
+  }
+  return -1;                                        // unknown shape → miss (defensive)
+}
+
 // Cut a mapped sender's footer off the (already fully-cleaned) text, marker included
-// (v3 semantics: the marker phrase goes with the discarded tail). Pure; returns
+// (v3 semantics: the marker/leading <a> goes with the discarded tail). Pure; returns
 // { html, outcome, bytesCut, domain }:
 //   - 'none'  unmapped sender — text returned byte-identical, domain '' (no log, no alarm)
 //   - 'miss'  mapped sender whose marker is absent OR fails the position floor — text
 //             returned byte-identical, domain = matched key (per-email warn + run alarm)
-//   - 'hit'   marker found in the trailing portion — text sliced at the LAST occurrence
-//             (footers are terminal; the last occurrence is the real one even if the phrase
+//   - 'hit'   marker found in the trailing portion — text sliced at the resolved cut index
+//             (footers are terminal; the LAST occurrence is the real one even if the phrase
 //             also appears in a job description above). domain = matched key.
 function truncateAtFooter_(html, fromEmail) {
   const text = String(html);
   const domain = footerDomainOf_(fromEmail);
   const entry = domain ? footerMarkerFor_(domain) : null;
   if (!entry) return { html: text, outcome: 'none', bytesCut: 0, domain: '' };
-  const idx = text.lastIndexOf(entry.marker);
-  if (idx === -1 || idx < FOOTER_POSITION_FLOOR * text.length) {
+  const idx = footerCutIndex_(text, entry.marker);
+  if (idx === -1) {
     return { html: text, outcome: 'miss', bytesCut: 0, domain: entry.key };
   }
   const cut = text.slice(0, idx);
