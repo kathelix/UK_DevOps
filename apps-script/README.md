@@ -29,6 +29,8 @@ Table name: **RawEmails**
 
 Continuous: merge to `main` touching `apps-script/**` → GitHub Action runs `clasp push` (see `.github/workflows/deploy-gas.yml`). The `appsscript.json` manifest declares the Gmail Advanced Service, OAuth scopes and timezone — no manual "Services" clicking.
 
+> **`.claspignore` is an allow-list.** It ignores `**/**` and then un-ignores each script by name (`!gmail-collector.gs`, `!vacancies-backup.gs`, `!appsscript.json`). A **new** `.gs` file is therefore **not** pushed unless you add its own `!<file>.gs` line — adding the file alone deploys nothing.
+
 One-time bootstrap (local):
 
 1. `npm i -g @google/clasp && clasp login`
@@ -58,6 +60,14 @@ Runtime state — stays manual, not deployable:
 
 Known drawbacks inherited from the 1:1 port, and planned improvements, are tracked in [`TODO.md`](../TODO.md) at the repo root.
 
-## 4. Costs
+## 4. Vacancies backup (`vacancies-backup.gs`)
 
-£0. Apps Script consumer quotas: 90 min/day trigger runtime, 20,000 UrlFetch calls/day — this uses ~30 seconds and ~3 calls.
+A **separate** script in the same GAS project: `backupVacancies()` writes a daily off-platform CSV of the **Vacancies** decisions table (Ivan's irreplaceable Applied/Skipped history) into a fixed Google Drive folder — the disaster-recovery copy, since Airtable has no API-schedulable/off-site backup. RawEmails is **not** backed up (regenerable from Gmail). Additive and self-contained: it shares the one global namespace but redeclares nothing, reusing only the generic `airtableToken_` helper. Design + restore caveat: [`docs/TECH_DESIGN.md`](../docs/TECH_DESIGN.md) §5; runbook: [`docs/OPERATIONS.md`](../docs/OPERATIONS.md) → *Vacancies backup (off-platform DR)*.
+
+- **Script Property:** reuses `AIRTABLE_TOKEN` (read-only — `data.records:read` suffices); optional `BACKUP_FOLDER_ID` overrides the destination folder.
+- **Drive scope:** adds `https://www.googleapis.com/auth/drive` to `appsscript.json` (needed to open the **pre-existing** folder by id — `drive.file` only reaches app-created files). **Adding a scope forces a one-time re-authorization of the whole project:** run `backupVacancies` once in the editor after deploy to re-consent. See the runbook.
+- **Trigger:** daily, late hour (cadence in [`docs/TECH_DESIGN.md`](../docs/TECH_DESIGN.md) §7) — added manually in the GAS console, or via the optional idempotent `ensureDailyBackupTrigger()`.
+
+## 5. Costs
+
+£0. Apps Script consumer quotas: 90 min/day trigger runtime, 20,000 UrlFetch calls/day — the collector uses ~30 seconds and ~3 calls; the daily backup adds ~2–3 UrlFetch calls and a single small Drive write.
