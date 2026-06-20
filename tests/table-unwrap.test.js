@@ -206,13 +206,21 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // fixtures: jobs-co-uk (2, 66), teksystems (8, 2354), and outsideir35 (0 — div layout, no
   // single-child wrappers). If the fixture or the unwrap changes intentionally, eyeball the diff and
   // update these in the same commit; a silent drop in the win is the regression this test catches.
+  // footer-cut-token-lead (2026-06-20) re-measured from the shipped LF fixtures: nijobs/milkround
+  // re-captured at their drifted current templates (nijobs 3/115, milkround 12/460), and the four new
+  // token-lead senders cord (15/514), jooble (57/1881), efinancialcareers ×2 variants (jobs 34/1122,
+  // newsletter 76/2508). ziprecruiter stays a no-op (div layout) even at its new template.
   const GOLDEN = {
+    'cord': { tables: 15, bytesSaved: 514 },
     'cv-library': { tables: 40, bytesSaved: 1320 },
+    'efinancialcareers-jobs': { tables: 34, bytesSaved: 1122 },
+    'efinancialcareers-newsletter': { tables: 76, bytesSaved: 2508 },
     'jobs-co-uk': { tables: 2, bytesSaved: 66 },
     'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
-    'milkround': { tables: 3, bytesSaved: 115 },
-    'nijobs': { tables: 31, bytesSaved: 1183 },
+    'jooble': { tables: 57, bytesSaved: 1881 },
+    'milkround': { tables: 12, bytesSaved: 460 },
+    'nijobs': { tables: 3, bytesSaved: 115 },
     'outsideir35': { tables: 0, bytesSaved: 0 },
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },

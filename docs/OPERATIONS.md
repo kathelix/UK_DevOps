@@ -228,7 +228,7 @@ Both zero is the expected case for senders with div-based layouts (ziprecruiter 
 
 ## Collector: per-sender footer cutoff
 
-After the table-wrapper unwrap, the collector cuts the **footer** off `CleanText` for senders listed in `FOOTER_MARKERS` (opt-in, keyed by registered domain). It finds the **last** occurrence of the domain's marker string, provided that match sits in the trailing portion of the text (`FOOTER_POSITION_FLOOR`, 0.5), and slices there — the marker and everything after it (one-click unsubscribe / pause / feedback endpoints, legal boilerplate) are removed. Unmapped senders are untouched. Only `CleanText`/`CleanLength` reflect the cut; `HtmlLength` stays the original body length. Design and the template-change alarm: `docs/TECH_DESIGN.md` §4 (per-sender footer cutoff).
+After the table-wrapper unwrap, the collector cuts the **footer** off `CleanText` for senders listed in `FOOTER_MARKERS` (opt-in, keyed by registered domain). It finds the **last** occurrence of the domain's marker, provided that match sits in the trailing portion of the text (`FOOTER_POSITION_FLOOR`, 0.5), and slices there — the marker and everything after it (one-click unsubscribe / pause / feedback endpoints, legal boilerplate) are removed. A marker value is one of three **modes**: a plain string = `text` (cut at the marker text); `{text, mode:'link'}` = snap the cut back to the per-recipient `<a>` that *leads* the marker (token-lead footers, where the tracking token sits before the marker text); `{urlPattern, mode:'urlcut'}` = cut at the last `<a href>` matching a regex (a footer that is only a bare unsubscribe link, no anchor text). Unmapped senders are untouched. Only `CleanText`/`CleanLength` reflect the cut; `HtmlLength` stays the original body length. Design and the template-change alarm: `docs/TECH_DESIGN.md` §4 (per-sender footer cutoff).
 
 **Observability — log lines** (Executions panel), in real and DRY_RUN runs alike, no Airtable field. Once per **mapped** email (unmapped senders log no line):
 
@@ -249,7 +249,7 @@ Footer: hits=<H> misses=<M> bytes_cut=<B>
 
 1. Open the named `msg=<id>` in Gmail (sender = the named `<domain>`). The sender almost certainly changed its footer template.
 2. Capture the new template as a **redacted** fixture in `tests/fixtures/email-<sender>.html` — redact every per-recipient token (unsubscribe hashes, `subscriptionCode=`, `jbeID=`, opaque path ids) including **encoded forms** (base64 of the address), per CLAUDE.md "Test fixtures from real captures". Keep it **LF-only** and the redaction **length-neutral**; validate it as a faithful capture by **byte-identity** to the stored `CleanText` (CR-strip the stored value + mask the per-recipient tokens on both sides) — **not** length-equality vs the stored `CleanLength`, which CRLF-era / QP-decoded senders break — and **re-measure** the goldens from the fixture — see `docs/TECH_DESIGN.md` §4 (*Fixture-capture fidelity*). Wire it into the `clean-regex` + `table-unwrap` golden maps (the manifest check requires it).
-3. Update the domain's string in `FOOTER_MARKERS` to a stable, entity-free phrase from the new footer, and the fixture's pinned cut bytes in `tests/footer-cutoff.test.js`.
+3. Update the domain's marker in `FOOTER_MARKERS` to a stable, entity-free phrase from the new footer, and the fixture's pinned cut bytes in `tests/footer-cutoff.test.js`. **Pick the mode** (`docs/TECH_DESIGN.md` §4): use the default `text` (plain string) unless the per-recipient tracking token sits *before* the marker phrase (a **token-lead** footer — check the stored `CleanText` byte-form for an `<a href="…token…">` that opens *before* the marker, or a footer that ends mid-`<a href>`). If it does, a `text` cut would leave the token — use `{text, mode:'link'}` to snap the cut to that `<a>`, or `{urlPattern, mode:'urlcut'}` if the footer link has **no** anchor text to match. Assert in the test that the token-bearing endpoint is gone after the cut (the `FOOTER_ACTION_ENDPOINTS` map), not just that `bytesCut` is nonzero.
 4. `node --test` green → merge. The deploy stops the alarm at the next collector run.
 
 While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost is by design (a silent parser break is worse); fix promptly.
@@ -286,7 +286,11 @@ proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
    (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
    one in insertion order and won't take effect. For a **new** sender, add a **registered-domain**
    (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
-   per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it.
+   per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it. The alert
+   proposes a plain `'<domain>': '<phrase>'` candidate (a `text` marker); **you choose the mode** at
+   this step — if the per-recipient token leads the phrase (token-lead footer), switch it to
+   `{text, mode:'link'}` (or `{urlPattern, mode:'urlcut'}` when the footer link has no anchor text)
+   so the cut takes the token too. See the marker-miss runbook step 3 and `docs/TECH_DESIGN.md` §4.
 4. `node --test` green → merge → redeploy GAS. The collector then cuts that footer and the alert
    **auto-stops** at the next run.
 

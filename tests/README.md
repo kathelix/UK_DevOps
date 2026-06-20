@@ -37,8 +37,9 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
 - **`clean-regex.test.js`** — `CLEAN_REGEX`: per-alternative cases plus a golden regression
   over a **corpus** of real captured job-alert emails spanning a spread of senders / HTML
   styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
-  ziprecruiter, jobs4, whatjobs, milkround, procontractjobs, and footer-map-extension-2's
-  jobs-co-uk, outsideir35, teksystems — sanitized of PII, LF-only). A manifest check asserts every
+  ziprecruiter, jobs4, whatjobs, milkround, procontractjobs, footer-map-extension-2's
+  jobs-co-uk, outsideir35, teksystems, and footer-cut-token-lead's cord, jooble,
+  efinancialcareers ×2 variants — sanitized of PII, LF-only). A manifest check asserts every
   `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
   (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
   regex in isolation, not the link-cleanup stage that runs before it.
@@ -72,14 +73,19 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   `notwhatjobs.com` look-alike rejected, last-`@` + lowercase extraction, no-`@` unmapped); the
   position floor (an identical marker planted early is a miss, just past the floor is a hit);
   `lastIndexOf` (a marker in a listing AND the footer cuts only at the footer); marker-with-tail
-  removal; byte-identical no-op for `none`/`miss`; and the **value-pinning corpus test** — every
-  mapped fixture through the full pipeline (link cleanup → `CLEAN_REGEX` → unwrap → footer cutoff)
-  with per-fixture cut bytes pinned above their corridor floors (cv-library, unmapped, byte-identical).
-  footer-map-extension-2 added three mapped fixtures here (jobs-co-uk, outsideir35, teksystems) plus a
+  removal; byte-identical no-op for `none`/`miss`; **synthetic `link`/`urlcut` mode cases** (driving
+  `footerCutIndex_` on tiny token-before-anchor strings — the snap/href-match logic independent of the
+  large fixtures); and the **value-pinning corpus test** — every mapped fixture through the full
+  pipeline (link cleanup → `CLEAN_REGEX` → unwrap → footer cutoff) with per-fixture cut bytes pinned
+  above their corridor floors (cv-library, unmapped, byte-identical).
+  footer-map-extension-2 added three mapped fixtures here (jobs-co-uk, outsideir35, teksystems), and
+  footer-cut-token-lead added the token-lead senders (cord, jooble, efinancialcareers ×2 variants; the
+  drift senders nijobs/milkround/ziprecruiter re-captured at their current templates), all with a
   per-fixture assertion that the cut removes each sender's footer action endpoints (not just that
   `bytesCut` is exact); their goldens are re-measured from the shipped LF fixtures — faithfulness was
-  proven by byte-identity to the stored `CleanText` (CR-strip + per-recipient-token mask), not by
-  matching the CRLF-era stored `CleanLength` (see that PR).
+  proven by byte-identity to the stored `CleanText` (CR-strip + per-recipient-token mask + whitespace-
+  collapse for the MCP transport; accepting a faithful prefix where the live collector already cut),
+  not by matching the CRLF-era stored `CleanLength` (see that PR).
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),
