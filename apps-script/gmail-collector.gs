@@ -1130,7 +1130,8 @@ function collapseTableWrappers_(html) {
 // CLEAN_REGEX, so markers are chosen entity-free from the corpus, not from rendered email
 // text). An unmapped sender is untouched and never alarms.
 //
-// A marker value is EITHER (string-or-object, backward-compatible — see truncateAtFooter_):
+// A marker value is EITHER a single marker OR an array of markers (backward-compatible — see
+// truncateAtFooter_, which normalizes a scalar to a 1-element array). A single marker is one of:
 //   - a string        → 'text' mode (default, unchanged): cut at the LAST occurrence of the
 //                        string; the marker and the tail are discarded.
 //   - { text, mode:'link' }   → token-LEAD footer: after lastIndexOf(text), snap the cut
@@ -1140,7 +1141,9 @@ function collapseTableWrappers_(html) {
 //   - { urlPattern, mode:'urlcut' } → footer whose only element is a per-recipient link with no
 //                        anchor text (text would have nothing to match): cut at the LAST
 //                        <a …href="…"> whose href matches urlPattern, at/after the floor.
-// The floor check applies to the RESOLVED cut index in every mode.
+// An ARRAY value is for a sender that ships MULTIPLE footer templates (one marker per template,
+// each tried; the EARLIEST valid cut wins — see footerCutIndexMulti_). The floor check applies
+// to the RESOLVED cut index in every mode, per marker (never the whole-array scope).
 //
 // Markers outlive sender addresses (whatjobs moved mail.whatjobs.co.uk → mail.uk.whatjobs.com
 // in 2026 but kept its footer), so the map is keyed by registered domain, matched by exact
@@ -1158,10 +1161,23 @@ const FOOTER_MARKERS = {
   'whatjobs.com': 'Overall, how relevant are these jobs',
   'jobmails.io': 'Please do not reply to this email',
   'joblookup.com': 'Pause Your Job Alerts',
-  // nijobs drifted (2026-06-20): the old GDPR sentence is gone; the StepStone footer now leads
-  // with 'Manage all your subscriptions' INSIDE the per-recipient unsubscribe <a>. mode:'link'
-  // snaps the cut to that <a> so its token goes too (text mode would leave the <a href> open tag).
-  'nijobs.com': { text: 'Manage all your subscriptions', mode: 'link' },  // replaces 'In order to avoid that third parties'
+  // nijobs ships ≥2 footer templates, so the key carries an ARRAY (earliest valid cut wins):
+  //  A) recommendation / 'picked for you' layout — drifted 2026-06-20: the old GDPR sentence is
+  //     gone; the StepStone footer leads with 'Manage all your subscriptions' INSIDE the
+  //     per-recipient unsubscribe <a>. mode:'link' snaps to that <a> so its token goes too.
+  //  B) 'N new "X" jobs in United Kingdom' digest — its footer carries the SAME 'Manage all your
+  //     subscriptions' link, but PRECEDED (~511 B earlier) by a 'Change criteria for jobs by
+  //     email' link (a click.nijobs.com per-recipient tracker). Marker A alone already HITS here
+  //     (it's the production cut point) but LEAVES that earlier tracker as a residual; adding
+  //     marker B and taking the earliest valid cut removes it too. link mode snaps to the
+  //     enclosing <a> so the click.nijobs.com per-recipient token goes with it. (A hit-with-
+  //     residual, NOT a miss — stored CleanLength == footerCutIndex_(A) on the sampled rows.)
+  // Both markers confirmed across 3 stored CleanText samples; cross-template + mutation tests pin
+  // that B is earlier than A in the digest and ABSENT from Template A (so the array can't over-cut).
+  'nijobs.com': [
+    { text: 'Manage all your subscriptions', mode: 'link' },    // Template A: recommendation / picked-for-you
+    { text: 'Change criteria for jobs by email', mode: 'link' }, // Template B: "N new \"X\" jobs in UK" digest (earlier click.nijobs.com tracker)
+  ],
   // ziprecruiter drifted (2026-06-20): the cleaned footer now ENDS mid-<a href> (no anchor text to
   // match) — the lone footer element is the per-recipient unsubscribe link, so cut at the <a> whose
   // href is the unsubscribe URL. urlcut, replaces 'Unsubscribe from this email'.
@@ -1278,6 +1294,23 @@ function footerCutIndex_(text, marker) {
   return -1;                                        // unknown shape → miss (defensive)
 }
 
+// Earliest valid cut across an ARRAY of markers. -1 when none resolve. A sender can ship
+// MULTIPLE footer templates (e.g. NIJobs Template A 'recommendation' vs Template B digest),
+// and one marker can only cut its own template; the array lets one domain key carry a marker
+// per template. Footers are terminal, so when two markers resolve (rare) the EARLIER index is
+// the true footer start — we cut MORE, not less. Each marker is still floor-checked inside
+// footerCutIndex_ (the floor is per marker, never the whole-array scope). Pure; exported for
+// unit tests. truncateAtFooter_ normalizes a scalar entry to a 1-element array, so the scalar
+// path stays byte-identical to today (back-compat).
+function footerCutIndexMulti_(text, markers) {
+  let best = -1;
+  for (const m of markers) {
+    const i = footerCutIndex_(text, m);
+    if (i !== -1 && (best === -1 || i < best)) best = i;
+  }
+  return best;
+}
+
 // Cut a mapped sender's footer off the (already fully-cleaned) text, marker included
 // (v3 semantics: the marker/leading <a> goes with the discarded tail). Pure; returns
 // { html, outcome, bytesCut, domain }:
@@ -1292,7 +1325,12 @@ function truncateAtFooter_(html, fromEmail) {
   const domain = footerDomainOf_(fromEmail);
   const entry = domain ? footerMarkerFor_(domain) : null;
   if (!entry) return { html: text, outcome: 'none', bytesCut: 0, domain: '' };
-  const idx = footerCutIndex_(text, entry.marker);
+  // A marker value is EITHER a single marker OR an array of markers (one per template).
+  // Normalize to an array and take the earliest valid cut; a 1-element array is byte-identical
+  // to the old single-marker path (back-compat). outcome semantics unchanged: 'miss' = NO marker
+  // in the array resolved (fail-loud, exactly as today); 'hit' = some marker resolved.
+  const markers = Array.isArray(entry.marker) ? entry.marker : [entry.marker];
+  const idx = footerCutIndexMulti_(text, markers);
   if (idx === -1) {
     return { html: text, outcome: 'miss', bytesCut: 0, domain: entry.key };
   }
