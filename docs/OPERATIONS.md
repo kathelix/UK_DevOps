@@ -266,12 +266,12 @@ clean day (every footer cut) the run is silent — no alert.
 
 **What it means.** Either a **new** footer (sender not in `FOOTER_MARKERS`) or a **changed**
 footer (a mapped sender whose marker drifted). The alert names the sender's registered domain and
-proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(A third, rarer case — a
-mapped sender the collector **did** cut but whose cut left an **earlier** footer element/tracker as
-a **residual** (the mapped marker wasn't the earliest; e.g. an **array** sender) — is **not**
-surfaced by this whole-footer-present alert yet (its screening-side classification ships with the
-`instructions` §3/§8 update); if you spot one by inspecting already-cut `CleanText`, the fix is
-**append**, see step 3 / `docs/TECH_DESIGN.md` §4.)*
+proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(Interim caveat, until the
+`instructions` §3/§8 update ships: a **residual** — a mapped sender the collector **did** cut but
+whose cut left an **earlier** footer element/tracker (the mapped marker wasn't the earliest; e.g.
+an **array** sender) — currently has **no** dedicated classification, so the automated alert may
+label it **drift** and propose a scalar **replace**. That is **wrong for an array sender**: the
+correct fix is **append**, not replace — see step 3 / `docs/TECH_DESIGN.md` §4 / [KNOWN_ISSUES §8].)*
 
 **Action** — add/correct the marker so the collector cuts that footer:
 
@@ -293,7 +293,9 @@ surfaced by this whole-footer-present alert yet (its screening-side classificati
    but an *earlier* footer element/tracker remains — the sender ships a second template, e.g.
    NIJobs digests), make the domain's value an **array** and **append** the earlier marker — do
    **not** replace the working one, which still serves the other template (earliest valid cut wins;
-   `docs/TECH_DESIGN.md` §4). For a **new** sender, add a **registered-domain**
+   `docs/TECH_DESIGN.md` §4). **Until the `instructions` §3/§8 update ships, the automated alert has
+   no "residual" class and may label this case `drift` and propose a scalar replace — apply
+   judgement and append instead** ([KNOWN_ISSUES §8](KNOWN_ISSUES.md)). For a **new** sender, add a **registered-domain**
    (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
    per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it. The alert
    proposes a plain `'<domain>': '<phrase>'` candidate (a `text` marker); **you choose the mode** at
