@@ -310,11 +310,12 @@ tokenizer. Read it day-over-day to see how much email the screening run is chewi
 `CleanText` volume; it cannot say *why* that volume moved, so it neither proves a fault nor proves the
 absence of one. An unexpected jump or drop is a prompt to cross-check, not a verdict: a quiet (or
 busy) day genuinely moves it, but so can a **partial collector / search-index miss** (fewer rows
-reached RawEmails) and **footer or sender-template drift** (an un-cut footer inflates `CleanText`;
-this is exactly the volume/size-drop canary recorded as a future option in `docs/TECH_DESIGN.md` §4).
-On an unexpected movement, correlate it with the batch's **email count** (the "Total emails
-processed" line), the **collector marker-miss / footer-freshness alerts**, and whether the
-**`chars/4` fallback** label is present (below).
+reached RawEmails) and **footer or sender-template drift** — an un-cut footer *inflates* `CleanText`
+(caught today by the collector marker-miss / footer-freshness alerts), while a too-early cut or lost
+content *deflates* it (the anomalous-decrease case the future volume/size-drop canary in
+`docs/TECH_DESIGN.md` §4 would target). On an unexpected movement, correlate it with the batch's
+**email count** (the "Total emails processed" line), those **collector marker-miss / footer-freshness
+alerts**, and whether the **`chars/4` fallback** label is present (below).
 
 **It is not billing.** The number is an OpenAI-tokenizer **proxy**, not Claude's exact tokens and
 **not** the run's metered/billed usage (the run can't read its own usage meter) — never quote it as
