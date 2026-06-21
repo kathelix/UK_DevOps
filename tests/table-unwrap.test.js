@@ -210,6 +210,8 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // re-captured at their drifted current templates (nijobs 3/115, milkround 12/460), and the four new
   // token-lead senders cord (15/514), jooble (57/1881), efinancialcareers ×2 variants (jobs 34/1122,
   // newsletter 76/2508). ziprecruiter stays a no-op (div layout) even at its new template.
+  // footer-multi-marker (2026-06-21) added the NIJobs DIGEST fixture (nijobs-digest 9/345) — pins the
+  // unwrap of the kept digest body, so a regression confined to it can't pass on footer bytesCut alone.
   const GOLDEN = {
     'cord': { tables: 15, bytesSaved: 514 },
     'cv-library': { tables: 40, bytesSaved: 1320 },
@@ -221,6 +223,7 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
     'jooble': { tables: 57, bytesSaved: 1881 },
     'milkround': { tables: 12, bytesSaved: 460 },
     'nijobs': { tables: 3, bytesSaved: 115 },
+    'nijobs-digest': { tables: 9, bytesSaved: 345 },
     'outsideir35': { tables: 0, bytesSaved: 0 },
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },

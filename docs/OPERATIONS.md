@@ -228,7 +228,7 @@ Both zero is the expected case for senders with div-based layouts (ziprecruiter 
 
 ## Collector: per-sender footer cutoff
 
-After the table-wrapper unwrap, the collector cuts the **footer** off `CleanText` for senders listed in `FOOTER_MARKERS` (opt-in, keyed by registered domain). It finds the **last** occurrence of the domain's marker, provided that match sits in the trailing portion of the text (`FOOTER_POSITION_FLOOR`, 0.5), and slices there — the marker and everything after it (one-click unsubscribe / pause / feedback endpoints, legal boilerplate) are removed. A marker value is one of three **modes**: a plain string = `text` (cut at the marker text); `{text, mode:'link'}` = snap the cut back to the per-recipient `<a>` that *leads* the marker (token-lead footers, where the tracking token sits before the marker text); `{urlPattern, mode:'urlcut'}` = cut at the last `<a href>` matching a regex (a footer that is only a bare unsubscribe link, no anchor text). Unmapped senders are untouched. Only `CleanText`/`CleanLength` reflect the cut; `HtmlLength` stays the original body length. Design and the template-change alarm: `docs/TECH_DESIGN.md` §4 (per-sender footer cutoff).
+After the table-wrapper unwrap, the collector cuts the **footer** off `CleanText` for senders listed in `FOOTER_MARKERS` (opt-in, keyed by registered domain). It finds the **last** occurrence of the domain's marker, provided that match sits in the trailing portion of the text (`FOOTER_POSITION_FLOOR`, 0.5), and slices there — the marker and everything after it (one-click unsubscribe / pause / feedback endpoints, legal boilerplate) are removed. A marker value is one of three **modes**: a plain string = `text` (cut at the marker text); `{text, mode:'link'}` = snap the cut back to the per-recipient `<a>` that *leads* the marker (token-lead footers, where the tracking token sits before the marker text); `{urlPattern, mode:'urlcut'}` = cut at the last `<a href>` matching a regex (a footer that is only a bare unsubscribe link, no anchor text). A value may also be an **array** of these markers, for a sender that ships several footer templates (e.g. NIJobs) — each is tried and the **earliest valid cut wins** (floor per marker). Unmapped senders are untouched. Only `CleanText`/`CleanLength` reflect the cut; `HtmlLength` stays the original body length. Design and the template-change alarm: `docs/TECH_DESIGN.md` §4 (per-sender footer cutoff).
 
 **Observability — log lines** (Executions panel), in real and DRY_RUN runs alike, no Airtable field. Once per **mapped** email (unmapped senders log no line):
 
@@ -257,16 +257,21 @@ While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost 
 ## Screening: footer-freshness alert
 
 The daily **screening** run surfaces a **footer-freshness alert** in its batch report when it
-finds a footer the collector did **not** cut still sitting at the tail of a row's `CleanText`
+finds a **footer signal still sitting at the tail** of a row's `CleanText`
 (`instructions/Claude_project_instructions.md` §3 detection / §8 output; design:
 `docs/TECH_DESIGN.md` §4). It **complements** the collector's marker-miss alarm above: that alarm
 fires only for **mapped** senders whose marker drifted; this screening-side scan also catches
 **unmapped** senders the collector never flags, and surfaces both **same-day, inline**. On a
-clean day (every footer cut) the run is silent — no alert.
+clean day (every footer fully cut) the run is silent — no alert.
 
-**What it means.** Either a **new** footer (sender not in `FOOTER_MARKERS`) or a **changed**
-footer (a mapped sender whose marker drifted). The alert names the sender's registered domain and
-proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
+**What it means.** Normally one of two: a **new** footer (sender not in `FOOTER_MARKERS`) or a
+**changed** footer (a mapped sender whose marker drifted). The alert names the sender's registered
+domain and proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(Interim caveat, until the
+`instructions` §3/§8 update ships: a **residual** — a mapped sender the collector **did** cut but
+whose cut left an **earlier** footer element/tracker (the mapped marker wasn't the earliest; e.g.
+an **array** sender) — currently has **no** dedicated classification, so the automated alert may
+label it **drift** and propose a scalar **replace**. That is **wrong for an array sender**: the
+correct fix is **append**, not replace — see step 3 / `docs/TECH_DESIGN.md` §4 / [KNOWN_ISSUES §8].)*
 
 **Action** — add/correct the marker so the collector cuts that footer:
 
@@ -284,7 +289,13 @@ proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`.
 3. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
    (`apps-script/gmail-collector.gs`). For a **drift**, correct the **existing** key's phrase
    (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
-   one in insertion order and won't take effect. For a **new** sender, add a **registered-domain**
+   one in insertion order and won't take effect. For a **residual** (the mapped marker still works
+   but an *earlier* footer element/tracker remains — the sender ships a second template, e.g.
+   NIJobs digests), make the domain's value an **array** and **append** the earlier marker — do
+   **not** replace the working one, which still serves the other template (earliest valid cut wins;
+   `docs/TECH_DESIGN.md` §4). **Until the `instructions` §3/§8 update ships, the automated alert has
+   no "residual" class and may label this case `drift` and propose a scalar replace — apply
+   judgement and append instead** ([KNOWN_ISSUES §8](KNOWN_ISSUES.md)). For a **new** sender, add a **registered-domain**
    (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
    per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it. The alert
    proposes a plain `'<domain>': '<phrase>'` candidate (a `text` marker); **you choose the mode** at

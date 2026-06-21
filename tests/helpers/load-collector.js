@@ -63,6 +63,7 @@ const EXPORTS = [
   'collapseTableWrappers_', // single-child table-wrapper unwrap (pure; applied after CLEAN_REGEX)
   'truncateAtFooter_', // per-sender footer cutoff (pure; applied after the unwrap)
   'footerCutIndex_',   // pure cut-index resolver (text/link/urlcut modes; synthetic unit tests)
+  'footerCutIndexMulti_', // earliest valid cut across an array of markers (multi-template senders)
   'FOOTER_MARKERS',    // domain-keyed footer marker map (read by the corpus test)
   'collectJobEmailsLocked_', // one collector run (no lock); driven by the integration test
   // RawEmails purge job (pure helpers + the lock-free run, driven by tests/purge.test.js)

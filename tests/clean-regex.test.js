@@ -66,6 +66,7 @@ const GOLDEN = {
   'email-joblookup.html': [54676, 11866],
   'email-jooble.html': [59601, 8502],
   'email-milkround.html': [70437, 35758],
+  'email-nijobs-digest.html': [62851, 30206],
   'email-nijobs.html': [42435, 19469],
   'email-outsideir35.html': [16923, 16207],
   'email-procontractjobs.html': [60992, 45086],
