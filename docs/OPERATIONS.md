@@ -257,16 +257,16 @@ While the marker is wrong, every ~30-min run fails (~48/day) — that loud cost 
 ## Screening: footer-freshness alert
 
 The daily **screening** run surfaces a **footer-freshness alert** in its batch report when it
-finds a footer the collector did **not** cut still sitting at the tail of a row's `CleanText`
+finds a **footer signal still sitting at the tail** of a row's `CleanText`
 (`instructions/Claude_project_instructions.md` §3 detection / §8 output; design:
 `docs/TECH_DESIGN.md` §4). It **complements** the collector's marker-miss alarm above: that alarm
 fires only for **mapped** senders whose marker drifted; this screening-side scan also catches
 **unmapped** senders the collector never flags, and surfaces both **same-day, inline**. On a
-clean day (every footer cut) the run is silent — no alert.
+clean day (every footer fully cut) the run is silent — no alert.
 
-**What it means.** Either a **new** footer (sender not in `FOOTER_MARKERS`) or a **changed**
-footer (a mapped sender whose marker drifted). The alert names the sender's registered domain and
-proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(Interim caveat, until the
+**What it means.** Normally one of two: a **new** footer (sender not in `FOOTER_MARKERS`) or a
+**changed** footer (a mapped sender whose marker drifted). The alert names the sender's registered
+domain and proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(Interim caveat, until the
 `instructions` §3/§8 update ships: a **residual** — a mapped sender the collector **did** cut but
 whose cut left an **earlier** footer element/tracker (the mapped marker wasn't the earliest; e.g.
 an **array** sender) — currently has **no** dedicated classification, so the automated alert may
