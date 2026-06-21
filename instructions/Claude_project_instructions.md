@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.4
+VERSION: 2.5
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -176,11 +176,13 @@ primary path. No instant-reject step is needed for them — they simply aren't t
 #### Footer-freshness check
 
 The collector cuts each **mapped** sender's footer **before** the row reaches RawEmails
-(`truncateAtFooter_` in `apps-script/gmail-collector.gs`), so a footer block still sitting at
-the **tail** of a row's `CleanText` is, by construction, one the collector did **not** cut —
-a data-quality signal worth surfacing, never screening input. After reading the day's rows,
-scan each one's tail for left-behind footer boilerplate and classify it; output per §8
-*Footer-freshness alert*. On a clean day (every footer was cut) this scan is **silent**.
+(`truncateAtFooter_` in `apps-script/gmail-collector.gs`), so a footer signal still sitting at
+the **tail** of a row's `CleanText` is a data-quality signal worth surfacing, never screening
+input — either a footer the collector did **not** cut (**new** / **drift**) or an **earlier**
+footer element/tracker left behind *after* a cut (**residual** — the mapped marker isn't the
+*earliest* footer element; see below). After reading the day's rows, scan each one's tail for
+left-behind footer boilerplate and classify it; output per §8 *Footer-freshness alert*. On a
+clean day (every footer fully cut) this scan is **silent**.
 
 - **What counts as footer boilerplate.** Unsubscribe links, "manage your … preferences", "you
   received this email because", "do not reply", and postal-address blocks — the legal/endpoint
@@ -190,7 +192,7 @@ scan each one's tail for left-behind footer boilerplate and classify it; output 
   `FOOTER_POSITION_FLOOR`, 0.5). The same phrase mid-body is **not** a footer. Conservative by
   design: better to miss a borderline case than to alert daily on a job description that merely
   mentions "unsubscribe".
-- **Classify new vs drift via `FOOTER_MARKERS`.** Read the marker map from
+- **Classify new / drift / residual via `FOOTER_MARKERS`.** Read the marker map from
   `apps-script/gmail-collector.gs` (`FOOTER_MARKERS` — a **registered-domain** → marker-phrase
   map, a dozen-plus entries like `whatjobs.com`, `reed.co.uk`; the mounted repo is present during a run).
   Take the sender's **From host** — the part of `FromEmail` after the **last `@`**, lowercased
@@ -201,9 +203,20 @@ scan each one's tail for left-behind footer boilerplate and classify it; output 
   **not**, and the **first** matching key in insertion order wins. Then:
   - **no key matches** the host → **new** footer (an unmapped sender the collector never touches
     and never alarms on — the gap only this scan covers),
-  - **a key matches** but a footer still remains → **changed / drifted** footer (the mapped
-    marker no longer matches; the collector also run-alarms on this, but surface it inline with
-    the proposed fix). **Note which key matched** — §8 outputs *that* key, not the From host.
+  - **a key matches** and a footer signal remains → distinguish **drift** from **residual** by
+    *how much* is left:
+    - the **whole** footer block is present — the action endpoints (unsubscribe / "manage your …
+      preferences") are still there, i.e. the collector cut **nothing** → **changed / drifted**
+      footer (the mapped marker no longer matches; the collector also run-alarms on this, but
+      surface it inline with the proposed fix). §8 fix = **replace** the matched key's marker.
+    - only an **earlier fragment** remains — a single tracker/link or a short line, with the
+      **bulk** of the footer (incl. where the mapped marker cuts) already **gone** → **residual**
+      footer (the sender ships a *second* template whose footer starts *earlier* than the mapped
+      marker, so the collector cut at the marker but left this earlier element). Confirm the mapped
+      marker still cuts the sender's **other** rows (spot-check ≥1) before calling it residual —
+      that is what separates it from a drift. §8 fix = **append** an earlier marker to the key's
+      **array**, never replace (replacing would drop the marker still serving the other template).
+    In both cases **note which key matched** — §8 outputs *that* key, not the From host.
 
 ---
 
@@ -372,17 +385,19 @@ Apply the band:
 
 ##### Footer-freshness alert (only when detected)
 
-**Conditional — emit this block only when the §3 footer-freshness check found an un-cut footer;
-stay silent on clean days** (mirror the "don't prompt if every role was a clean accept/reject"
+**Conditional — emit this block only when the §3 footer-freshness check found a footer signal (an
+un-cut footer or a residual); stay silent on clean days** (mirror the "don't prompt if every role was a clean accept/reject"
 pattern below). It is a data-quality feeder, not a screening result, so it never gates, rejects,
 or reorders anything. When fired, add one terse line per flagged sender:
 
-- whether it's a **new** (unmapped) or **changed** (drifted) footer, and the sender's registered
-  domain;
-- a **ready-to-paste candidate marker** in the collector's map form:
+- whether it's a **new** (unmapped), **changed** (drifted), or **residual** (an earlier element
+  left after a cut) footer, and the sender's registered domain;
+- a **ready-to-paste candidate marker** in the collector's map form — a scalar for **new** / a
+  scalar replacement for **drift**, or the **array (append) form** for **residual**:
 
   ```
-  '<domain>': '<marker phrase>'
+  '<domain>': '<marker phrase>'                              # new / drift
+  '<domain>': [ <existing marker(s)>, '<earlier marker phrase>' ]   # residual — APPEND, don't replace
   ```
 
   - `<domain>` — the `FOOTER_MARKERS` **key** (a registered domain), chosen so the pasted entry
@@ -392,6 +407,10 @@ or reorders anything. When fired, add one terse line per flagged sender:
       (`mail.uk.whatjobs.com`): a new, narrower key is appended **after** the existing one and
       still loses in insertion order, so the collector keeps missing and the alert never
       self-resolves.
+    - **residual** → the **existing matched key** from §3 (same as drift), but **append** the new
+      earlier marker to that key's value (making it an **array** if it is still a scalar) — do
+      **not** replace the existing marker, which still serves the sender's other template. Earliest
+      valid cut wins (`docs/TECH_DESIGN.md` §4).
     - **new** → the sender's **registered domain** (eTLD+1 — e.g. `somejobs.com` or
       `somejobs.co.uk`; collapse mail subdomains and honour multi-part suffixes like `.co.uk`),
       matching the granularity of the existing keys — **not** the full From host, which is too
@@ -399,9 +418,12 @@ or reorders anything. When fired, add one terse line per flagged sender:
       `docs/TECH_DESIGN.md` §4: markers outlive sender addresses).
   - `<marker phrase>` — taken from the stored `CleanText` **byte-form** (not rendered text —
     HTML entities survive cleaning), **entity-free**, and **terminal**: a stable, sender-specific
-    line that *begins* the footer and sits in the trailing portion, so a future `lastIndexOf`
+    line that *begins* the footer block and sits in the trailing portion, so a future `lastIndexOf`
     will match it **past the 0.5 floor**. A phrase that wouldn't clear the floor (too early, or
-    not actually present byte-for-byte) would `miss` when pasted — don't propose it.
+    not actually present byte-for-byte) would `miss` when pasted — don't propose it. For a
+    **residual**, the phrase is the one that *begins the leftover earlier fragment* (it sits
+    *before* the existing marker's cut point), and if the per-recipient token leads it, pick the
+    `mode` per the marker-modes rule (`docs/TECH_DESIGN.md` §4).
   - Note the candidate's approximate **position (% through the text)** so it's visibly past the
     floor.
 
