@@ -298,6 +298,22 @@ Until the marker lands, the alert **re-fires on new arrivals** from that sender 
 re-screens `Processed` rows) — recurrence is by design and bounded; there is no persistent
 flagged-footer store.
 
+## Screening: tokens of email screened (proxy gauge)
+
+The batch Summary carries a line like `📊 ~<N> tokens of email screened (o200k proxy — not run
+billing)` (instructions §8; design: `docs/TECH_DESIGN.md` §6). It is a **comparative volume gauge**
+only — the token count of the email the run screened that batch (the concatenated `CleanText` of the
+RawEmails rows flipped to `Processed`), computed in-run with the OpenAI **tiktoken `o200k_base`**
+tokenizer. Read it day-over-day to see how much email the screening run is chewing through; a sudden
+jump or drop tracks intake volume, not a fault.
+
+**It is not billing.** The number is an OpenAI-tokenizer **proxy**, not Claude's exact tokens and
+**not** the run's metered/billed usage (the run can't read its own usage meter) — never quote it as
+cost. A `📊 ~<N> tokens of email screened (rough chars/4 — tiktoken unavailable; not run billing)`
+line means the run fell back to a coarse `chars ÷ 4` estimate because tiktoken or its vocab didn't
+load that day; the gauge is still usable for trend but cruder — no action needed. As with every
+other report line, the **canonical `VERSION:` value lives in the instructions file, not pinned here**.
+
 ## Canary: missing-email check
 
 The screening run's **§1 discrepancy canary** is the primary check post-cutover. On a run
