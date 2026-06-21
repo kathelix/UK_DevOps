@@ -235,7 +235,14 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'whatjobs':           { from: 'jobalerts@mail.uk.whatjobs.com', outcome: 'hit',  bytesCut: 1196, floor: 1000 }, // dot-boundary key
     'jobs4':              { from: 'mailer@jobmails.io',             outcome: 'hit',  bytesCut: 782,  floor: 600 },
     'joblookup':          { from: 'alerts@joblookup.com',           outcome: 'hit',  bytesCut: 820,  floor: 300 },
-    'nijobs':             { from: 'info@jobs.nijobs.com',          outcome: 'hit',  bytesCut: 5536, floor: 3000 }, // drifted -> link mode 'Manage all your subscriptions'
+    'nijobs':             { from: 'info@jobs.nijobs.com',          outcome: 'hit',  bytesCut: 5536, floor: 3000 }, // Template A (recommendation): link mode 'Manage all your subscriptions' (marker B absent -> array == single marker)
+    // footer-multi-marker (2026-06-21): NIJobs "N new X jobs" DIGEST (Template B). Same sender, but the
+    // footer has TWO elements in order: 'Change criteria for jobs by email' (~0.81, a click.nijobs.com
+    // per-recipient tracker) THEN 'Manage all your subscriptions' (~0.83). The single-marker-A cut HITS
+    // (cut 5422 B) but LEAVES the earlier 'Change criteria' tracker; the array [A,B] takes the earliest
+    // valid cut -> 5933 B (= 5422 + 511), removing that residual too. NOT a miss (production already
+    // A-cut these; stored CleanLength == footerCutIndex_(A)). Re-measured from the shipped LF fixture.
+    'nijobs-digest':      { from: 'info@jobs.nijobs.com',          outcome: 'hit',  bytesCut: 5933, floor: 3000 }, // Template B (digest): array earliest-cut-wins at marker B
     'ziprecruiter':       { from: 'alerts@ziprecruiter.co.uk',     outcome: 'hit',  bytesCut: 1461, floor: 800 },  // drifted -> urlcut (unsubscribe href)
     'welcometothejungle': { from: 'hello@welcometothejungle.com',   outcome: 'hit',  bytesCut: 1135, floor: 100 },
     'milkround':          { from: 'info@jobs.milkround.com',        outcome: 'hit',  bytesCut: 5222, floor: 3000 }, // dot-boundary key; drifted -> link mode (same as nijobs)
@@ -264,6 +271,9 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // footer-cut-token-lead: each phrase is a token-LEAD footer endpoint that a plain text cut would
     // LEAVE (the per-recipient token sits before the marker); link/urlcut must remove it.
     'nijobs':                       ['Unsubscribe from this email'],
+    // footer-multi-marker: the digest's residual footer tracker that marker A alone LEAVES and marker B
+    // removes (a token-LEAD click.nijobs.com 'Change criteria' link). Its removal is the whole point.
+    'nijobs-digest':                ['Change criteria for jobs by email'],
     'milkround':                    ['Unsubscribe from this email'],
     'ziprecruiter':                 ['/unsubscribe?token=', 'job_alerts'], // urlcut removes the per-recipient unsubscribe <a> entirely
     'cord':                         ['settings%2Fnotifications'],          // link snap removes the preferences/unsubscribe link + its JWT
@@ -297,4 +307,81 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
       }
     }
   }
+});
+
+// ---------- multi-marker arrays (slice footer-multi-marker, 2026-06-21) ----------
+// A FOOTER_MARKERS value may be a single marker OR an array of markers (one per template). truncateAtFooter_
+// normalizes to an array and footerCutIndexMulti_ takes the EARLIEST valid cut (footers are terminal, so the
+// earliest start is the real footer). A 1-element / scalar entry is byte-identical to today — back-compat is
+// pinned by the unchanged corpus goldens above. The first user is NIJobs, which ships two templates:
+//   A) recommendation/"picked for you" — footer leads with 'Manage all your subscriptions' (marker B absent).
+//   B) "N new \"X\" jobs" DIGEST — footer has 'Change criteria for jobs by email' (~0.81) THEN 'Manage all
+//      your subscriptions' (~0.83). Production already HITS at A (cut 5422 B) but LEAVES the earlier
+//      'Change criteria' click.nijobs.com per-recipient tracker; the array [A,B] cuts at B (5933 B) and
+//      removes it. (This is residual-tracker removal on a hit, NOT a miss/alarm fix.)
+
+test('footerCutIndexMulti_: returns the resolving marker index, or the MINIMUM when several resolve', () => {
+  const head = 'JOB BODY CONTENT '.repeat(30);              // pad past the 0.5 floor
+  const text = head + 'AAA Footer Alpha BBB Footer Beta CCC';
+  const alpha = gas.footerCutIndex_(text, 'Footer Alpha');  // earlier
+  const beta  = gas.footerCutIndex_(text, 'Footer Beta');   // later
+  assert.ok(alpha > -1 && beta > -1 && alpha < beta, 'precondition: both markers resolve, Alpha earlier');
+
+  assert.equal(gas.footerCutIndexMulti_(text, ['Nope Absent', 'Footer Beta']), beta, 'only marker[1] resolves → its index');
+  assert.equal(gas.footerCutIndexMulti_(text, ['Footer Alpha', 'Nope Absent']), alpha, 'only marker[0] resolves → its index');
+  assert.equal(gas.footerCutIndexMulti_(text, ['Nope Absent', 'Also Absent']), -1, 'neither resolves → -1');
+  assert.equal(gas.footerCutIndexMulti_(text, ['Footer Alpha', 'Footer Beta']), alpha, 'both resolve → the MINIMUM index');
+  assert.equal(gas.footerCutIndexMulti_(text, ['Footer Beta', 'Footer Alpha']), alpha, 'min is order-independent');
+});
+
+// the exact processMessage_ pre-footer pipeline (mirrors the corpus test)
+const prePipeline = (raw) => gas.collapseTableWrappers_(gas.clean(gas.cleanLinksInHtml_(raw).html)).html;
+const MARK_A = { text: 'Manage all your subscriptions', mode: 'link' };
+const MARK_B = { text: 'Change criteria for jobs by email', mode: 'link' };
+
+test('cross-template: NIJobs Template A (recommendation) has marker B ABSENT → array cut == single marker A', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nijobs.html'), 'utf8'));
+  assert.equal(pre.lastIndexOf('Change criteria for jobs by email'), -1, 'marker B is absent from Template A');
+  assert.equal(gas.footerCutIndexMulti_(pre, [MARK_A, MARK_B]), gas.footerCutIndex_(pre, MARK_A),
+    'with B absent the array resolves to exactly marker A');
+  assert.equal(gas.truncateAtFooter_(pre, 'info@jobs.nijobs.com').bytesCut, 5536, 'array cuts Template A identically (5536 B)');
+});
+
+test('cross-template: NIJobs Template B (digest) has BOTH markers, B earlier than A → array cuts at B', () => {
+  // Corrected guardrail (v1 wrongly asserted "marker A absent in the digest"). Marker A IS present — it is
+  // the current production cut point; the array adds the EARLIER marker B so the residual tracker goes too.
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nijobs-digest.html'), 'utf8'));
+  const ia = pre.lastIndexOf('Manage all your subscriptions');
+  const ib = pre.lastIndexOf('Change criteria for jobs by email');
+  assert.ok(ia > -1, 'marker A IS present in the digest (do NOT assert its absence — that was the v1 error)');
+  assert.ok(ib > -1, 'marker B is present in the digest');
+  assert.ok(ib < ia, 'marker B sits earlier than marker A, so earliest-cut-wins selects B');
+  const cutA = gas.footerCutIndex_(pre, MARK_A);
+  const cutB = gas.footerCutIndex_(pre, MARK_B);
+  assert.ok(cutB < cutA, 'the resolved B cut is earlier than the A cut');
+  assert.equal(gas.footerCutIndexMulti_(pre, [MARK_A, MARK_B]), cutB, 'the array resolves to the earlier B cut');
+});
+
+test('mutation check: deleting the Template B marker re-leaves the residual click.nijobs.com tracker', () => {
+  // If the B array element is removed, this MUST flip: the cut drops by 511 B and the per-recipient
+  // 'Change criteria' tracker the A-cut leaves reappears in the kept text — proving B is actually exercised.
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nijobs-digest.html'), 'utf8'));
+  const withB    = pre.slice(0, gas.footerCutIndexMulti_(pre, [MARK_A, MARK_B])); // ships
+  const withoutB = pre.slice(0, gas.footerCutIndexMulti_(pre, [MARK_A]));         // mutation: B deleted
+  assert.equal(pre.length - withB.length, 5933, 'array [A,B] cuts 5933 B');
+  assert.equal(pre.length - withoutB.length, 5422, 'with B deleted, only marker A cuts (5422 B)');
+  assert.equal(withoutB.length - withB.length, 511, 'marker B removes 511 B more than marker A alone');
+  assert.ok(!withB.includes('Change criteria for jobs by email'), 'array [A,B]: the residual tracker is GONE');
+  assert.ok(withoutB.includes('Change criteria for jobs by email'), 'B deleted: the residual tracker REAPPEARS');
+});
+
+test('digest fixture: no per-recipient PII survives the redaction (leak-free committed capture)', () => {
+  // Real capture, redacted length-neutrally: click.nijobs.com tokens → TOKEN_REDACTED…, greeting name →
+  // 'User', x-stepcast-id → zeros. Guard the committed file so a real per-recipient token can't slip in.
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nijobs-digest.html'), 'utf8');
+  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
+  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (any case)');
+  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
+  assert.equal(raw.match(/click\.nijobs\.com\/(?:f\/a|q)\/(?!TOKEN_REDACTED)/g), null,
+    'every click.nijobs.com tracking token (links + open pixels) is redacted');
 });
