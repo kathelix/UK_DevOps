@@ -301,18 +301,30 @@ flagged-footer store.
 ## Screening: tokens of email screened (proxy gauge)
 
 The batch Summary carries a line like `📊 ~<N> tokens of email screened (o200k proxy — not run
-billing)` (instructions §8; design: `docs/TECH_DESIGN.md` §6). It is a **comparative volume gauge**
-only — the token count of the email the run screened that batch (the concatenated `CleanText` of the
-RawEmails rows flipped to `Processed`), computed in-run with the OpenAI **tiktoken `o200k_base`**
-tokenizer. Read it day-over-day to see how much email the screening run is chewing through; a sudden
-jump or drop tracks intake volume, not a fault.
+billing)` (instructions §8; design: `docs/TECH_DESIGN.md` §6). It is a **cleaned-email volume
+gauge** — the token count of the email the run screened that batch (the concatenated `CleanText` of
+the RawEmails rows flipped to `Processed`), computed in-run with the OpenAI **tiktoken `o200k_base`**
+tokenizer. Read it day-over-day to see how much email the screening run is chewing through.
+
+**It measures volume, not health — correlate, don't conclude.** The number reflects only total
+`CleanText` volume; it cannot say *why* that volume moved, so it neither proves a fault nor proves the
+absence of one. An unexpected jump or drop is a prompt to cross-check, not a verdict: a quiet (or
+busy) day genuinely moves it, but so can a **partial collector / search-index miss** (fewer rows
+reached RawEmails) and **footer or sender-template drift** (an un-cut footer inflates `CleanText`;
+this is exactly the volume/size-drop canary recorded as a future option in `docs/TECH_DESIGN.md` §4).
+On an unexpected movement, correlate it with the batch's **email count** (the "Total emails
+processed" line), the **collector marker-miss / footer-freshness alerts**, and whether the
+**`chars/4` fallback** label is present (below).
 
 **It is not billing.** The number is an OpenAI-tokenizer **proxy**, not Claude's exact tokens and
 **not** the run's metered/billed usage (the run can't read its own usage meter) — never quote it as
 cost. A `📊 ~<N> tokens of email screened (rough chars/4 — tiktoken unavailable; not run billing)`
 line means the run fell back to a coarse `chars ÷ 4` estimate because tiktoken or its vocab didn't
-load that day; the gauge is still usable for trend but cruder — no action needed. As with every
-other report line, the **canonical `VERSION:` value lives in the instructions file, not pinned here**.
+load that day; the gauge is still usable for trend but cruder, and a fallback-day number is **not
+directly comparable** to a tiktoken-day one — the measurement method changed, not necessarily the
+volume, so don't read the method-driven shift as a content change (no action needed for the fallback
+itself). As with every other report line, the **canonical `VERSION:` value lives in the instructions
+file, not pinned here**.
 
 ## Canary: missing-email check
 
