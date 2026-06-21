@@ -3,8 +3,10 @@
 VERSION: 2.5
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
-> changes (intake source, non-negotiable gates, output contract), MINOR for
-> non-breaking ones (criteria tweaks, new soft-reject signals, wording).
+> changes (intake source, non-negotiable gates, the screening **decision/output
+> contract**), MINOR for non-breaking ones (criteria tweaks, new soft-reject signals,
+> wording, and **non-gating data-quality feeders** — e.g. the §8 footer-freshness
+> alert, itself added at MINOR v2.2; changing its candidate format is MINOR).
 > Claude echoes the version it loaded in every batch report, so stale copies
 > announce themselves.
 
