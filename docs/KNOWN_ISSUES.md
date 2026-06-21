@@ -53,17 +53,3 @@ Reed's "WFH Remote" badge is recruiter-set; verified false on 2026-06-07 (Rise T
 **Why it can't work (verified on Claude Code v2.1.177, PR #37):** the journal record format is correct (it matches what interactive `/rename` writes), but two layers defeat it — (a) a *running* session's title is driven by the app's **in-memory** state, so an out-of-band journal append never renames live; it can only take effect on the next **resume** (`/rename` works because it updates in-memory state; there is no CLI/programmatic equivalent — `--name` is startup-only); and (b) **compaction rewrites the journal from in-memory state and drops the out-of-band append entirely**, so in a long/compacted session the title is lost before any resume ever happens (observed: the PR #36 session compacted and retained 0 `custom-title` records despite the hook firing correctly).
 
 **Use instead:** Claude Code natively links PRs to sessions — on `gh pr create` it writes first-class `pr-link` records (`{"type":"pr-link","prNumber":N,…}`) that **survive compaction**, and `claude --from-pr <n>` resumes the session that opened PR `<n>`. That reliably covers "find/resume a session by PR number"; the only thing lost by retiring the hook is a *visible* `PR#nn` label in the `/resume` picker, which isn't achievable reliably anyway. Removing the hook also requires removing its un-committable global registration — see the retirement PR for the exact `~/.claude/settings.json` + symlink changes.
-
-## 8. Footer-freshness scan can misclassify a residual as drift→replace (interim; resolved by PR 2) — INTERIM
-
-**Resolved by PR 2 (residual-aware `instructions` §3/§8); remove this entry in that PR.**
-
-**Context:** the collector now supports a **marker array** per domain (footer multi-marker, PR #44 / `docs/TECH_DESIGN.md` §4), so one key can carry a marker per template (NIJobs `[A, B]`). A mapped sender can be cut at one marker (`hit`) yet still leave an **earlier** footer element as a **residual** that an earlier array marker would remove.
-
-**Symptom / gap:** the **current** screening footer-freshness scan (`instructions` §3 detect / §8 emit) triggers on a listed tail-boilerplate signal and classifies any key-match-with-remaining-footer-signal as **drift → emit a scalar candidate that replaces that key's phrase**. It has **no** whole-vs-residual or collector-outcome test, so a residual tail-signal on a mapped **array** sender is (mis)classified `drift` and would prompt a **replace** — dropping a marker still serving the other live template.
-
-**Scope (narrow, no live instance):** the only array sender is **NIJobs**, and its `Change criteria` residual (a) does not match a §3 trigger and (b) is now **cut** by PR #44 — so no live residual is exposed today. The hazard is general/future: a *different* mapped sender growing a trigger-matching residual in the PR #44 → PR 2 window.
-
-**Interim handling:** the operator runbook (`docs/OPERATIONS.md` — *Screening: footer-freshness alert*) documents the correct action — **append** an earlier array marker, **do not replace** the working one — and flags that the automated alert may still say `drift`/replace until PR 2; apply judgement in that window.
-
-**Fix:** PR 2 adds the third **"residual"** classification (mapped sender IS cut but an earlier element remains → **append**, not replace), distinct from **new** and **drift**, and removes this entry.

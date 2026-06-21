@@ -264,14 +264,14 @@ fires only for **mapped** senders whose marker drifted; this screening-side scan
 **unmapped** senders the collector never flags, and surfaces both **same-day, inline**. On a
 clean day (every footer fully cut) the run is silent — no alert.
 
-**What it means.** Normally one of two: a **new** footer (sender not in `FOOTER_MARKERS`) or a
-**changed** footer (a mapped sender whose marker drifted). The alert names the sender's registered
-domain and proposes a ready-to-paste candidate marker `'<domain>': '<phrase>'`. *(Interim caveat, until the
-`instructions` §3/§8 update ships: a **residual** — a mapped sender the collector **did** cut but
-whose cut left an **earlier** footer element/tracker (the mapped marker wasn't the earliest; e.g.
-an **array** sender) — currently has **no** dedicated classification, so the automated alert may
-label it **drift** and propose a scalar **replace**. That is **wrong for an array sender**: the
-correct fix is **append**, not replace — see step 3 / `docs/TECH_DESIGN.md` §4 / [KNOWN_ISSUES §8].)*
+**What it means.** Two cases: a **new** footer (sender not in `FOOTER_MARKERS`) → propose a fresh
+**registered-domain scalar** key; or a **matched-key** footer (a footer signal remains under an
+existing key) → **append** a marker to that key (convert a scalar to an array), **never replace**.
+The scan does **not** try to tell a *drift* (marker dead) from a *residual* (marker cut at a later
+point, earlier element left): the scheduled run has only the post-cut `CleanText`, not the
+collector's `hit`/`miss`, so it can't — and it doesn't need to, because **append is safe under both**
+(a stale appended marker is a harmless −1; replacing a still-live marker breaks the sender's other
+template). See step 3 / `docs/TECH_DESIGN.md` §4.
 
 **Action** — add/correct the marker so the collector cuts that footer:
 
@@ -286,16 +286,16 @@ correct fix is **append**, not replace — see step 3 / `docs/TECH_DESIGN.md` §
    across **≥2** samples; **drop** the domain if it can't be (n=1 → it **stays unmapped** and keeps
    re-flagging by design until a 2nd sample lands). This is typically a **batch** exercise — several
    unmapped senders surface together, so pull each one's history in the same pass.
-3. Add (new sender) or correct (drift) the `'<domain>': '<phrase>'` entry in `FOOTER_MARKERS`
-   (`apps-script/gmail-collector.gs`). For a **drift**, correct the **existing** key's phrase
-   (the alert names that key) — don't append a narrower subdomain key, which loses to the existing
-   one in insertion order and won't take effect. For a **residual** (the mapped marker still works
-   but an *earlier* footer element/tracker remains — the sender ships a second template, e.g.
-   NIJobs digests), make the domain's value an **array** and **append** the earlier marker — do
-   **not** replace the working one, which still serves the other template (earliest valid cut wins;
-   `docs/TECH_DESIGN.md` §4). **Until the `instructions` §3/§8 update ships, the automated alert has
-   no "residual" class and may label this case `drift` and propose a scalar replace — apply
-   judgement and append instead** ([KNOWN_ISSUES §8](KNOWN_ISSUES.md)). For a **new** sender, add a **registered-domain**
+3. Add the `'<domain>': …` entry in `FOOTER_MARKERS` (`apps-script/gmail-collector.gs`). For a
+   **matched key** (the alert names it), **append** the new marker to that key's value — convert a
+   scalar to an **array** — and **never replace** the existing marker: you can't tell from
+   `CleanText` whether it is dead (drift) or still serving another template (residual), and append
+   is safe either way (a stale marker is a harmless −1; deleting a live one breaks that template;
+   earliest valid cut wins, `docs/TECH_DESIGN.md` §4). Don't add a narrower subdomain key — it
+   loses to the existing one in insertion order. *(Auto-pruning a confirmed-dead marker is separate
+   manual housekeeping: verify it no longer appears in a **fresh Gmail/raw capture** — not in
+   `CleanText`, where a successful cut already removed it — then delete it.)* For a **new** sender,
+   add a **registered-domain**
    (eTLD+1) key, and also capture a redacted fixture and pin its cut bytes per the *Collector:
    per-sender footer cutoff* marker-miss runbook (steps 2–3), so the suite covers it. The alert
    proposes a plain `'<domain>': '<phrase>'` candidate (a `text` marker); **you choose the mode** at
@@ -462,6 +462,6 @@ between.
 | A RawEmails row is still `New` after a screening run | Its §9 Status flip failed (reported in the run's done-marker tally) | Fail-safe by design — the row is re-screened next run. If rows pile up `New`, check the Claude→Airtable connector / write permissions; a row stuck `New` across runs but never re-reported means the run isn't reaching §9 |
 | RawEmails empty but unread mail exists in Gmail | Collector trigger missing/failed, or index orphans | Executions panel first; then the §1 canary distinguishes them (orphans don't trigger it) |
 | Screening run reports fewer emails than UI shows unread | Index orphans (KNOWN_ISSUES §1) | Expected for securityclearedjobs.com; investigate only for senders that matter |
-| Screening batch shows a **Footer-freshness alert** (`'<domain>': '<phrase>'` candidate) | A footer reached `CleanText` un-cut — a **new** (unmapped) or **changed** (drifted) sender footer; informational, by design, not a failure | Not a break. Follow *Screening: footer-freshness alert* above: confirm-before-pin the candidate, add/correct the `FOOTER_MARKERS` entry, redeploy; the alert auto-stops once the collector cuts that footer |
+| Screening batch shows a **Footer-freshness alert** (`'<domain>': …` candidate) | A footer signal sits at a row's `CleanText` tail — an **unmapped** sender (**new**) or a **matched key** whose footer wasn't fully cut; informational, by design, not a failure | Not a break. Follow *Screening: footer-freshness alert* above: confirm-before-pin the candidate, then **new** → add a fresh registered-domain key, **matched key** → **append** to that key (convert scalar→array, never replace), redeploy; the alert auto-stops once the collector cuts that footer |
 | Screening run halts: "The UK_DevOps folder must be attached to run the screening pipeline" | The field is now a bootstrap stub; the mounted folder is missing, so it fails loud with no fallback (by design) | Attach the UK_DevOps folder to the session and re-run. If scheduled runs can't mount it, see *Instructions loading* — the no-fallback contract may need revisiting (flag the Architect) |
 | Batch report echoes the wrong `VERSION:` or none | The field still holds an old inline copy, or the stub points at a moved/renamed path | Re-paste `instructions/PROJECT_FIELD_STUB.md` into the field; confirm `instructions/Claude_project_instructions.md` exists at that path and carries a `VERSION:` line |
