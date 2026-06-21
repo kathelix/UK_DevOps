@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.3
+VERSION: 2.4
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, output contract), MINOR for
@@ -356,6 +356,18 @@ Apply the band:
 ##### Summary
 
 - Total emails processed in this batch
+- **Tokens of email screened** — a proxy volume gauge so the owner can compare how much email the
+  run chews through day-over-day. Compute it in the run's sandbox: concatenate the `CleanText` of
+  the **RawEmails rows screened this batch** (the same `New`-row set §9 flips to `Processed` —
+  **not** this conversation's own usage, **not** Vacancies) and count its tokens with **tiktoken
+  `o200k_base`** (`pip install tiktoken --break-system-packages` ad-hoc; the vocab loads over the
+  allowlisted network). Emit exactly one line:
+  - normal: `📊 ~<N> tokens of email screened (o200k proxy — not run billing)`
+  - **fallback** — if tiktoken or its vocab is unavailable, estimate `chars ÷ 4` and mark the
+    degradation so it's visible: `📊 ~<N> tokens of email screened (rough chars/4 — tiktoken unavailable; not run billing)`
+  - **Caveat (always true):** this is an OpenAI-tokenizer **proxy**, not Claude's exact token count,
+    and **not** the run's billed/metered usage (the run can't read its own usage meter) — purely a
+    comparative volume gauge.
 - Running total of confirmed matches across all batches (numbered list, each with its best-known link)
 
 ##### Footer-freshness alert (only when detected)
