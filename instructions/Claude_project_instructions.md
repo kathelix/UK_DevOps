@@ -332,14 +332,16 @@ unattended scheduled run performs. This pass runs **only** in an interactive ses
   listing, follow its **Source / Apply / company link through to the LinkedIn/ATS/employer
   posting** and verify live + fully-remote + rate/IR35 **there** — the board's own page is not
   sufficient.
-- **Origin-canonical first; no paywalled mirror; trust the origin over the snippet.** Resolve the
-  role's **originating** source's own free canonical (the board the digest came from — Reed/NIJobs/
-  etc., its own listing) before any third-party board, and **never** verify on or store a
-  **subscription/paywalled mirror** (e.g. OutsideSpy) when a free human-viewable canonical exists —
-  mirrors the offline §6a rule above. A digest **snippet may omit gates the full origin listing
-  states**, so resolving the origin can **confirm** remote/IR35 the snippet hid — an **upgrade**
-  path, not only a debunk (2026-06-23: the Reed origin stated "Fully Remote / Outside IR35"; the
-  digest snippet did not).
+- **Origin-canonical first; no paywalled mirror; read the full origin, not just the snippet.**
+  Resolve the role's **originating** source's own free canonical (the board the digest came from —
+  Reed/NIJobs/etc., its own listing) before any third-party board, and **never** verify on or store
+  a **subscription/paywalled mirror** (e.g. OutsideSpy) when a free human-viewable canonical exists —
+  mirrors the offline §6a rule above. A digest **snippet may omit a remote/IR35 claim the full
+  origin listing states** — resolving the origin **surfaces** that claim (2026-06-23: the Reed origin
+  stated "Fully Remote / Outside IR35"; the digest snippet did not), a **lead to verify at the true
+  source** (LinkedIn/ATS/employer, per the rule above); it may support an upgrade **only once
+  confirmed there**, never on the board's word alone (cf. §3 *Aggregator remote tags* — a board's
+  own remote label is never confirmation).
 - **Auto-skip closed listings — but a guessed-URL 404 is not a closed listing.** Before surfacing
   any role, confirm the live posting is still **open**. If it shows "no longer accepting
   applications" / "this job has expired" / "position filled" / a genuine 404 on the *resolved*
