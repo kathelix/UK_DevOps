@@ -245,7 +245,13 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'nijobs-digest':      { from: 'info@jobs.nijobs.com',          outcome: 'hit',  bytesCut: 5933, floor: 3000 }, // Template B (digest): array earliest-cut-wins at marker B
     'ziprecruiter':       { from: 'alerts@ziprecruiter.co.uk',     outcome: 'hit',  bytesCut: 1461, floor: 800 },  // drifted -> urlcut (unsubscribe href)
     'welcometothejungle': { from: 'hello@welcometothejungle.com',   outcome: 'hit',  bytesCut: 1135, floor: 100 },
-    'milkround':          { from: 'info@jobs.milkround.com',        outcome: 'hit',  bytesCut: 5222, floor: 3000 }, // dot-boundary key; drifted -> link mode (same as nijobs)
+    // footer-milkround-append (2026-06-23): the in-corpus milkround mail is the StepStone DIGEST (same
+    // shape as nijobs Template B). Marker A 'Manage all your subscriptions' (~0.85) is PRECEDED (~514 B
+    // earlier) by a 'Change criteria for jobs by email' click.milkround.com per-recipient tracker (~0.84).
+    // The single-marker-A cut HIT (5222 B) but LEFT that tracker; the array [A,B] takes the earliest valid
+    // cut -> 5736 B (= 5222 + 514), removing the residual too. NOT a miss (production already A-cut these);
+    // flagged by the 2026-06-23 footer-freshness scan. Re-measured from the shipped LF fixture.
+    'milkround':          { from: 'info@jobs.milkround.com',        outcome: 'hit',  bytesCut: 5736, floor: 3000 }, // dot-boundary key; DIGEST array earliest-cut-wins at marker B (was 5222 at A alone)
     'procontractjobs':    { from: 'info@procontractjobs.com',       outcome: 'hit',  bytesCut: 1965, floor: 1700 }, // exact key
     // --- footer-map-extension-2 (2026-06-19): 3 mapped senders (re-measured LF goldens; markers begin the footer block) ---
     'outsideir35':        { from: 'alerts@email.outsideir35.org.uk',           outcome: 'hit',  bytesCut: 511,  floor: 80 },  // dot-boundary key
@@ -274,7 +280,10 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // footer-multi-marker: the digest's residual footer tracker that marker A alone LEAVES and marker B
     // removes (a token-LEAD click.nijobs.com 'Change criteria' link). Its removal is the whole point.
     'nijobs-digest':                ['Change criteria for jobs by email'],
-    'milkround':                    ['Unsubscribe from this email'],
+    // footer-milkround-append: the array now ALSO removes the earlier 'Change criteria for jobs by email'
+    // click.milkround.com residual that the A-only cut left (mirrors nijobs-digest); 'Unsubscribe' sits
+    // after marker A and was already removed by the A-cut, so both must be gone after the array cut.
+    'milkround':                    ['Unsubscribe from this email', 'Change criteria for jobs by email'],
     'ziprecruiter':                 ['/unsubscribe?token=', 'job_alerts'], // urlcut removes the per-recipient unsubscribe <a> entirely
     'cord':                         ['settings%2Fnotifications'],          // link snap removes the preferences/unsubscribe link + its JWT
     'jooble':                       ['redir/unsubscribe', 'Privacy Policy'],
@@ -319,6 +328,10 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
 //      your subscriptions' (~0.83). Production already HITS at A (cut 5422 B) but LEAVES the earlier
 //      'Change criteria' click.nijobs.com per-recipient tracker; the array [A,B] cuts at B (5933 B) and
 //      removes it. (This is residual-tracker removal on a hit, NOT a miss/alarm fix.)
+// The second user is milkround (footer-milkround-append, 2026-06-23) — same StepStone family, same digest
+// shape and SAME markers A/B. The in-corpus milkround mail is the digest only (every sample is "N new X jobs"),
+// so unlike NIJobs there is no A-only template; the array [A,B] cuts at B (5736 B, was 5222 at A alone),
+// dropping the same 'Change criteria' click.milkround.com residual. Flagged by the footer-freshness scan.
 
 test('footerCutIndexMulti_: returns the resolving marker index, or the MINIMUM when several resolve', () => {
   const head = 'JOB BODY CONTENT '.repeat(30);              // pad past the 0.5 floor
@@ -384,4 +397,63 @@ test('digest fixture: no per-recipient PII survives the redaction (leak-free com
   assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
   assert.equal(raw.match(/click\.nijobs\.com\/(?:f\/a|q)\/(?!TOKEN_REDACTED)/g), null,
     'every click.nijobs.com tracking token (links + open pixels) is redacted');
+});
+
+// ---------- milkround digest (slice footer-milkround-append, 2026-06-23) ----------
+// milkround is the SECOND multi-marker user: same StepStone family as NIJobs, same digest shape and the SAME
+// markers A/B. The in-corpus milkround mail is the digest ONLY (every stored sample is "N new X jobs in United
+// Kingdom"), so unlike NIJobs there is no A-only / recommendation template — nothing for marker B to over-cut.
+// The array [A,B] takes the earliest valid cut (B), dropping the 'Change criteria' click.milkround.com residual
+// that the single-marker-A cut left. Confirmed byte-identical across the pre-cut fixture + 2 stored RawEmails
+// samples (06-23 residual, 06-11 uncut); B earlier than A in both the fixture and the uncut stored footer.
+
+test('milkround digest: BOTH markers present, B earlier than A → array cuts at B (residual removed)', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-milkround.html'), 'utf8'));
+  const ia = pre.lastIndexOf('Manage all your subscriptions');
+  const ib = pre.lastIndexOf('Change criteria for jobs by email');
+  assert.ok(ia > -1, 'marker A IS present in the milkround digest (the production cut point)');
+  assert.ok(ib > -1, 'marker B is present in the milkround digest');
+  assert.ok(ib < ia, 'marker B sits earlier than marker A, so earliest-cut-wins selects B');
+  const cutA = gas.footerCutIndex_(pre, MARK_A);
+  const cutB = gas.footerCutIndex_(pre, MARK_B);
+  assert.ok(cutB > -1 && cutA > -1 && cutB < cutA, 'both resolve, the B cut is earlier than the A cut');
+  // the array resolves to EXACTLY the B cut — it does not over-cut to anything earlier (no spurious match)
+  assert.equal(gas.footerCutIndexMulti_(pre, [MARK_A, MARK_B]), cutB, 'the array resolves to the earlier B cut');
+  // end-to-end through the live FOOTER_MARKERS array
+  const r = gas.truncateAtFooter_(pre, 'info@jobs.milkround.com');
+  assert.equal(r.outcome, 'hit');
+  assert.equal(r.bytesCut, 5736, 'array [A,B] cuts 5736 B (re-measure + update here in the same commit if intentional)');
+  assert.ok(!r.html.includes('Change criteria for jobs by email'), 'the click.milkround.com residual tracker is GONE');
+});
+
+test('milkround digest mutation check: deleting marker B re-leaves the residual click.milkround.com tracker', () => {
+  // If the B array element is removed, this MUST flip: the cut drops by 514 B and the per-recipient
+  // 'Change criteria' tracker the A-cut leaves reappears in the kept text — proving B is actually exercised.
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-milkround.html'), 'utf8'));
+  const withB    = pre.slice(0, gas.footerCutIndexMulti_(pre, [MARK_A, MARK_B])); // ships
+  const withoutB = pre.slice(0, gas.footerCutIndexMulti_(pre, [MARK_A]));         // mutation: B deleted (old scalar)
+  assert.equal(pre.length - withB.length, 5736, 'array [A,B] cuts 5736 B');
+  assert.equal(pre.length - withoutB.length, 5222, 'with B deleted, only marker A cuts (5222 B — the old scalar value)');
+  assert.equal(withoutB.length - withB.length, 514, 'marker B removes 514 B more than marker A alone');
+  assert.ok(!withB.includes('Change criteria for jobs by email'), 'array [A,B]: the residual tracker is GONE');
+  assert.ok(withoutB.includes('Change criteria for jobs by email'), 'B deleted: the residual tracker REAPPEARS');
+});
+
+test('milkround fixture: no per-recipient PII survives the redaction (leak-free committed capture)', () => {
+  // Real digest capture, redacted length-neutrally: click.milkround.com tokens → TOKEN_REDACTED…, greeting name
+  // → 'User', x-stepcast-id → padded. Guard the committed file so a real per-recipient token can't slip in.
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-milkround.html'), 'utf8');
+  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
+  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (any case)');
+  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
+  // every click.milkround.com URL path segment that is a long token must be the redacted form (TOKEN_REDACTED)
+  // or the shared structural infix 'AAAmIhA~' (a campaign id common to all milkround links, not per-recipient).
+  const leaks = [];
+  for (const u of (raw.match(/https:\/\/click\.milkround\.com\/[^"]+/g) || [])) {
+    const pathPart = u.replace(/^https:\/\/click\.milkround\.com\//, ''); // drop scheme+host (host > 16 chars)
+    for (const seg of pathPart.split('/')) {
+      if (seg.replace(/~+$/, '').length >= 16 && !seg.includes('TOKEN_REDACTED') && seg !== 'AAAmIhA~') leaks.push(seg);
+    }
+  }
+  assert.deepEqual(leaks, [], 'every click.milkround.com per-recipient token is redacted');
 });
