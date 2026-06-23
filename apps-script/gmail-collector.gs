@@ -1141,8 +1141,9 @@ function collapseTableWrappers_(html) {
 //   - { urlPattern, mode:'urlcut' } → footer whose only element is a per-recipient link with no
 //                        anchor text (text would have nothing to match): cut at the LAST
 //                        <a …href="…"> whose href matches urlPattern, at/after the floor.
-// An ARRAY value is for a sender that ships MULTIPLE footer templates (one marker per template,
-// each tried; the EARLIEST valid cut wins — see footerCutIndexMulti_). The floor check applies
+// An ARRAY value lists MULTIPLE candidate footer starts for one sender — whether those candidates
+// cover different footer templates OR multiple footer elements within a single template (each
+// tried; the EARLIEST valid cut wins — see footerCutIndexMulti_). The floor check applies
 // to the RESOLVED cut index in every mode, per marker (never the whole-array scope).
 //
 // Markers outlive sender addresses (whatjobs moved mail.whatjobs.co.uk → mail.uk.whatjobs.com
@@ -1308,11 +1309,12 @@ function footerCutIndex_(text, marker) {
   return -1;                                        // unknown shape → miss (defensive)
 }
 
-// Earliest valid cut across an ARRAY of markers. -1 when none resolve. A sender can ship
-// MULTIPLE footer templates (e.g. NIJobs Template A 'recommendation' vs Template B digest),
-// and one marker can only cut its own template; the array lets one domain key carry a marker
-// per template. Footers are terminal, so when two markers resolve (rare) the EARLIER index is
-// the true footer start — we cut MORE, not less. Each marker is still floor-checked inside
+// Earliest valid cut across an ARRAY of markers. -1 when none resolve. The array lists MULTIPLE
+// candidate footer starts under one domain key — candidates that cover different templates (e.g.
+// NIJobs recommendation vs digest) AND/OR multiple footer elements within a single template (e.g.
+// the milkround / NIJobs digest, whose footer has an earlier 'Change criteria' tracker before the
+// 'Manage all your subscriptions' cut point). Footers are terminal, so when several markers resolve
+// the EARLIER index is the true footer start — we cut MORE, not less. Each marker is still floor-checked inside
 // footerCutIndex_ (the floor is per marker, never the whole-array scope). Pure; exported for
 // unit tests. truncateAtFooter_ normalizes a scalar entry to a 1-element array, so the scalar
 // path stays byte-identical to today (back-compat).
@@ -1339,7 +1341,8 @@ function truncateAtFooter_(html, fromEmail) {
   const domain = footerDomainOf_(fromEmail);
   const entry = domain ? footerMarkerFor_(domain) : null;
   if (!entry) return { html: text, outcome: 'none', bytesCut: 0, domain: '' };
-  // A marker value is EITHER a single marker OR an array of markers (one per template).
+  // A marker value is EITHER a single marker OR an array of candidate footer starts (covering
+  // different templates and/or multiple footer elements within one template).
   // Normalize to an array and take the earliest valid cut; a 1-element array is byte-identical
   // to the old single-marker path (back-compat). outcome semantics unchanged: 'miss' = NO marker
   // in the array resolved (fail-loud, exactly as today); 'hit' = some marker resolved.

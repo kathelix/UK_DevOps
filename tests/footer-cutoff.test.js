@@ -319,7 +319,8 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
 });
 
 // ---------- multi-marker arrays (slice footer-multi-marker, 2026-06-21) ----------
-// A FOOTER_MARKERS value may be a single marker OR an array of markers (one per template). truncateAtFooter_
+// A FOOTER_MARKERS value may be a single marker OR an array of candidate footer starts (covering different
+// templates and/or multiple footer elements within one template). truncateAtFooter_
 // normalizes to an array and footerCutIndexMulti_ takes the EARLIEST valid cut (footers are terminal, so the
 // earliest start is the real footer). A 1-element / scalar entry is byte-identical to today — back-compat is
 // pinned by the unchanged corpus goldens above. The first user is NIJobs, which ships two templates:
