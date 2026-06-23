@@ -386,11 +386,16 @@ non-negotiable gates on the rendered page, and **upgrades** a Flag that proves g
    applies to). Verify only these two lists — **not** every email link.
 2. For each role, navigate its resolved canonical link (`navigate` → `get_page_text`) and
    **accept the cookie banner** (owner-pre-authorised for these job-board/employer pages only).
-3. **Drill to the real source.** If the canonical link is an aggregator card, follow its
-   Source/Apply/company link through to the LinkedIn/ATS/employer posting and verify **there** —
-   aggregator cards lie about work model, rate-unit, and open-status (outsideir35.org.uk,
-   2026-06-17). Re-verify work model (fully remote / remote-EU), clearance (no SC/DV/eDV), cloud
-   (not Azure-only), and rate/IR35.
+3. **Resolve the origin, then drill to the real source.** Prefer the role's **originating** board's
+   own **free** canonical (the board the digest came from — Reed/NIJobs/etc.) before any third-party
+   board, and **never** verify on or store a **paywalled mirror** (e.g. OutsideSpy) when a free
+   canonical exists. If the canonical link is an aggregator card, follow its Source/Apply/company
+   link through to the LinkedIn/ATS/employer posting and verify **there** — aggregator cards lie
+   about work model, rate-unit, and open-status (outsideir35.org.uk, 2026-06-17). **An
+   origin/aggregator page's gate claims are leads, not confirmation:** a fuller origin listing may
+   *surface* a remote/IR35 claim the digest snippet omitted, but confirm it at the true source —
+   **never upgrade on the board's word alone**. Re-verify work model (fully remote / remote-EU),
+   clearance (no SC/DV/eDV), cloud (not Azure-only), and rate/IR35.
 4. **Act:** live + open + gates hold → confirm (a Flag now > 75% **upgrades** to Recommend);
    aggregator-fiction / dead / closed / a gate now fails → **drop / downgrade / auto-skip** with
    the reason.
@@ -403,7 +408,8 @@ non-negotiable gates on the rendered page, and **upgrades** a Flag that proves g
    a guessed Reddit Greenhouse req 404'd while the role was live).
 
 **What gets updated in Airtable.** On every row written/updated, store the **verified
-live-source URL** (the real posting, not the aggregator card) in the `Link` field
+live-source URL** (the real posting, not the aggregator card — and **never** a paywalled mirror
+such as OutsideSpy when a free canonical exists) in the `Link` field
 (`fldz2C7r1hSNrET4i`), per §6a. Confirmed / upgraded / dropped decisions and any auto-skips flow
 through the normal §0/§8 Vacancies writes.
 
