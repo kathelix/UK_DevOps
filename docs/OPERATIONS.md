@@ -394,9 +394,13 @@ non-negotiable gates on the rendered page, and **upgrades** a Flag that proves g
 4. **Act:** live + open + gates hold → confirm (a Flag now > 75% **upgrades** to Recommend);
    aggregator-fiction / dead / closed / a gate now fails → **drop / downgrade / auto-skip** with
    the reason.
-5. **Closed listings auto-skip:** "no longer accepting applications" / "expired" / "position
-   filled" / 404 → write a `Skipped` Vacancies row (today's `Date`, `Notes` "listing closed at
-   review", keep the link) and report it as auto-skipped.
+5. **Closed listings auto-skip — but only a genuine 404:** "no longer accepting applications" /
+   "expired" / "position filled" / a genuine **404 on the *resolved* posting** → write a `Skipped`
+   Vacancies row (today's `Date`, `Notes` "listing closed at review", keep the link) and report it
+   as auto-skipped. A **404 on a *guessed/constructed* URL** (a req-ID you assembled, not a link you
+   resolved) is an **unresolved link, not a dead role** — re-resolve via the employer's
+   board/search and confirm the real posting **loads** before deciding open vs. closed (2026-06-23:
+   a guessed Reddit Greenhouse req 404'd while the role was live).
 
 **What gets updated in Airtable.** On every row written/updated, store the **verified
 live-source URL** (the real posting, not the aggregator card) in the `Link` field
