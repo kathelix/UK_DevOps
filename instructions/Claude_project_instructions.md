@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.5
+VERSION: 2.6
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, the screening **decision/output
@@ -284,11 +284,15 @@ Every role surfaced to the user (Recommend **or** Flag) and every row written to
 Resolution order — use the highest that resolves:
 1. Direct employer/ATS posting (Lever, Greenhouse, Workable, Ashby, or the company's own careers page for that role)
 2. Recruiter's own website listing for the role
-3. Canonical aggregator job page (Reed / Totaljobs / LinkedIn / Welcome to the Jungle) — the human-viewable URL, **not** a click-tracker
+3. Canonical aggregator job page — the human-viewable URL, **not** a click-tracker. **Prefer the originating source's own free canonical:** if the role arrived via a Reed / NIJobs / Totaljobs / etc. digest, resolve *that* board's own listing first, before reaching for a different third-party board (Reed / Totaljobs / LinkedIn / Welcome to the Jungle are all acceptable canonical boards).
 4. If no role-specific URL resolves: the recruiter/company careers page
 5. If nothing resolves: write `search: <title> + <recruiter>` in `Notes` and say so in chat
 
 **Never** store or present a tracking/redirect URL (`clicks.reed.co.uk`, `click.nijobs.com`, `*.pstmrk.it`, `web.jobmails.io`, `*.ct.sendgrid.net`, and similar). They can't be followed — `web_search` the canonical posting (within the §2 Step-4 budget) and use that.
+
+**Never** store a **subscription / paywalled mirror** (e.g. OutsideSpy, which charges to view or apply) as the link when a **free** human-viewable canonical exists — a paywalled scrape isn't a usable link. Resolve the free origin (the originating board's own listing, the employer/ATS, or LinkedIn) and store that instead. (You may still *read* such a mirror to verify a fact, as §2 Step 4 allows — the rule governs what you **store/present**, not what you search.)
+
+**Resolve, never guess.** Store only a link you have actually located for *this* role (a `web_search` result, a real board listing, a real ATS page) — **never construct or guess** an ATS/req-ID URL (e.g. assembling a `…/jobs/<req-id>` slug), which 404s when the id is wrong (2026-06-23: a guessed Reddit Greenhouse req URL 404'd). If you can't locate the real posting, drop to step 4/5 rather than pinning a fabricated one.
 
 - **In chat:** show the link inline next to every Recommend and Flag.
 - **In Airtable:** write it to the `Link` field (`fldz2C7r1hSNrET4i`) on every created/updated row — not just in `Notes`. If a later run finds a better link for an existing role, `update_records_for_table` to improve it.
@@ -328,11 +332,24 @@ unattended scheduled run performs. This pass runs **only** in an interactive ses
   listing, follow its **Source / Apply / company link through to the LinkedIn/ATS/employer
   posting** and verify live + fully-remote + rate/IR35 **there** — the board's own page is not
   sufficient.
-- **Auto-skip closed listings.** Before surfacing any role, confirm the live posting is still
-  **open**. If it shows "no longer accepting applications" / "this job has expired" / "position
-  filled" / 404, **auto-skip** it: write a `Skipped` row (today's `Date`, `Notes` = "listing
-  closed at review", keep the link in the `Link` field) and report it as auto-skipped rather
-  than presenting it as an open Recommend/Flag.
+- **Origin-canonical first; no paywalled mirror; trust the origin over the snippet.** Resolve the
+  role's **originating** source's own free canonical (the board the digest came from — Reed/NIJobs/
+  etc., its own listing) before any third-party board, and **never** verify on or store a
+  **subscription/paywalled mirror** (e.g. OutsideSpy) when a free human-viewable canonical exists —
+  mirrors the offline §6a rule above. A digest **snippet may omit gates the full origin listing
+  states**, so resolving the origin can **confirm** remote/IR35 the snippet hid — an **upgrade**
+  path, not only a debunk (2026-06-23: the Reed origin stated "Fully Remote / Outside IR35"; the
+  digest snippet did not).
+- **Auto-skip closed listings — but a guessed-URL 404 is not a closed listing.** Before surfacing
+  any role, confirm the live posting is still **open**. If it shows "no longer accepting
+  applications" / "this job has expired" / "position filled" / a genuine 404 on the *resolved*
+  posting, **auto-skip** it: write a `Skipped` row (today's `Date`, `Notes` = "listing closed at
+  review", keep the link in the `Link` field) and report it as auto-skipped rather than presenting
+  it as an open Recommend/Flag. **But** if the 404 came from a **guessed/constructed** URL (a
+  req-ID you assembled, not a link you resolved), that's an **unresolved link, not a dead role** —
+  re-resolve via the employer's board/search, confirm the real posting **loads**, and only then
+  decide open vs. closed (2026-06-23: a guessed Reddit Greenhouse req 404'd while the role was
+  live).
 - **Act on what the live (source) page shows:**
   - Live + open + gates hold → **confirm**; a **Flag** that now clears > 75% **upgrades** to
     Recommend (note why).
@@ -343,8 +360,10 @@ unattended scheduled run performs. This pass runs **only** in an interactive ses
     the best-known link and store it in the Airtable `Link` field (`fldz2C7r1hSNrET4i`) on any
     row written or updated.
 - **Output.** An updated Recommend/Flag table reflecting the upgrades/drops with the verified
-  links; then continue the existing §8 Reviewed-not-applied flow (log Ivan's apply/skip
-  decisions to Airtable per §0/§8, with the verified link).
+  links. **Renumber the list consistently** after any drop / downgrade / auto-skip — re-present it
+  with a clean, consecutive sequence and **don't cite stale indices** from the pre-verification
+  list. Then continue the existing §8 Reviewed-not-applied flow (log Ivan's apply/skip decisions to
+  Airtable per §0/§8, with the verified link).
 
 ---
 
@@ -368,7 +387,10 @@ Apply the band:
 
 ### 8. Output Format
 
-- Use **continuous numbering across all batches** so roles can be referenced by number
+- Use **continuous numbering across all batches** so roles can be referenced by number. When a
+  list is **revised** — a role dropped or downgraded (e.g. by the §6a Chrome pass) — re-present it
+  with a **clean, consistent sequence** and don't cite **stale indices** that no longer point to
+  the same role.
 - **Rejections:** brief reason only, grouped by rejection category — no need to list every rejected role individually
 
 #### End of each batch — required sections
@@ -439,6 +461,15 @@ bounded; do **not** build a persistent "already-flagged" store.
 
 ##### Post
 
+- **Confidentiality — the Post + the 3 image concepts are PUBLIC.** This deliverable is published
+  to LinkedIn and Instagram, where Ivan's current B2B client may read it, so it MUST carry **no
+  signal that Ivan is personally job-seeking or applying**: no "applied", "applications out",
+  "interviewing", "looking to move", "my shortlist", "roles I'm chasing", or any first-person
+  apply/leave language. Name specific roles or recruiters **only as market evidence** (public
+  hiring activity the analyst observed), **never** as Ivan's own picks or pipeline. **Public vs
+  private split:** the apply/skip decisions live in the **private** working artifacts — Airtable
+  **Vacancies** (§0) and the `<date>_recommend-flag.md` handoff (below) **may** record what Ivan
+  applies to or skips; **only** this public Post/image deliverable must be scrubbed.
 - Header format: `🤖 Claude on DevOps market: <short funny joke based on this batch (max 35 chars)>`
 - For use as a post on LinkedIn and Instagram
 - Tone: sarcasm dial at 8/10. Dry-and-tired ≠ sarcastic-and-tired. If a section reads like an observation, rewrite it as an eye-roll.
@@ -448,8 +479,8 @@ bounded; do **not** build a persistent "already-flagged" store.
 - Target length: 200–300 characters per section, 2–3 sections total. Ruthlessly cut anything that doesn't land.
 - Each section must with `▶️ ` preppended by two new lines.
 - Sarcasm, punchy, sardonic is the primary mode. Dry is fine but sharp is better.
-- Write from the perspective of amused AI analyst (yourself) or a weary DevOps job seeker (Ivan). We find the market absurd and is happy to say so.
-- Hallucination and invention are explicitly permitted for comic effect — joke about recruiters, the market, far UK locations, Ivan as a tired DevOps, Claude as an AI with feelings. Accuracy is for the results table; the post is creative writing.
+- Write primarily as the amused **AI market-analyst (Claude)** surveying the DevOps market — you find it absurd and say so. A "weary DevOps" angle is fine only as **general** market-weariness humour (the market is exhausting for everyone), **never** tied to Ivan personally applying, interviewing, or looking to move (see *Confidentiality* above).
+- Hallucination and invention are explicitly permitted for comic effect — joke about recruiters, the market, far UK locations, the DevOps grind in general, Claude as an AI with feelings. Accuracy is for the results table; the post is creative writing. (Per *Confidentiality* above, no joke may imply Ivan himself is applying or job-hunting.)
 - Short specific role names or recruiter details to be sparsely included in the post to improve the credibility of the post.
 - Written to allow an image generator (e.g. ChatGPT) to generate a funny image based on the text (visual gag based on the post)
 - Footer format: date in format "YYYY-MM-dd" for example 2026-04-26 for the 26th of April 2026.
@@ -472,7 +503,9 @@ up front. So produce ready-to-use creative concepts, not one literal prompt.
 - **Raise the temperature:** fantasise, exaggerate, hallucinate for comic effect —
   accuracy lives in the results table, not here. Anchor each concept to one real,
   specific detail from the batch (a recruiter, a place, a rate, a buzzword) so it
-  stays credible.
+  stays credible — but these concepts ship in the **public** deliverable, so the same
+  §8 Post *Confidentiality* rule applies: market evidence, **never** a signal that Ivan
+  is personally applying or job-hunting.
 - **Improvise daily — no fixed motif.** Each day should feel fresh; don't reuse
   yesterday's metaphor or settle into a permanent "signature" look. Rotate themes the
   same way the Post does (see Post → Freshness & theme rotation).
@@ -485,13 +518,18 @@ up front. So produce ready-to-use creative concepts, not one literal prompt.
 Bundle the **Post** and the **3 image concepts** into a single dated markdown file in
 the Job Search project folder, named `<YYYY-MM-DD>_linkedin-post-and-image-ideas.md`,
 and present it — so Ivan can paste the whole thing straight into ChatGPT. The chat
-output still shows them inline; the file is the portable copy.
+output still shows them inline; the file is the portable copy. This file is **public**
+— it goes to ChatGPT, then LinkedIn/Instagram — so it MUST satisfy the §8 Post
+*Confidentiality* rule (no signal that Ivan is personally job-seeking).
 
 ##### Recommend/Flag handoff file (for the interactive §6a Chrome pass)
 
 Also write the day's **Recommend + Flag** roles to a second dated markdown file in the Job
 Search project folder, named `<YYYY-MM-DD>_recommend-flag.md` — a **sibling** to the post/image
-deliverable above, not a replacement. This is the **stateless handoff** that lets a *separate*
+deliverable above, not a replacement. **Unlike the public post/image deliverable, this handoff is
+a private working artifact** — it is never published, so it **may** name Ivan's Recommend/apply
+picks, and the §8 Post *Confidentiality* scrub does **not** apply to it. This is the **stateless
+handoff** that lets a *separate*
 interactive session run the §6a *live link resolution (Claude-in-Chrome)* pass without resuming
 this run's thread. The unattended scheduled run **writes** this file but does **not** perform the
 Chrome pass itself (§6a; run-mode framing at the top of Block 1).
