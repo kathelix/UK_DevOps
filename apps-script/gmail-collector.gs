@@ -1141,8 +1141,9 @@ function collapseTableWrappers_(html) {
 //   - { urlPattern, mode:'urlcut' } → footer whose only element is a per-recipient link with no
 //                        anchor text (text would have nothing to match): cut at the LAST
 //                        <a …href="…"> whose href matches urlPattern, at/after the floor.
-// An ARRAY value is for a sender that ships MULTIPLE footer templates (one marker per template,
-// each tried; the EARLIEST valid cut wins — see footerCutIndexMulti_). The floor check applies
+// An ARRAY value lists MULTIPLE candidate footer starts for one sender — whether those candidates
+// cover different footer templates OR multiple footer elements within a single template (each
+// tried; the EARLIEST valid cut wins — see footerCutIndexMulti_). The floor check applies
 // to the RESOLVED cut index in every mode, per marker (never the whole-array scope).
 //
 // Markers outlive sender addresses (whatjobs moved mail.whatjobs.co.uk → mail.uk.whatjobs.com
@@ -1184,9 +1185,23 @@ const FOOTER_MARKERS = {
   'ziprecruiter.co.uk': { urlPattern: 'ziprecruiter\\.co\\.uk/job_alerts/[^"/]+/unsubscribe\\?token=', mode: 'urlcut' },
   'welcometothejungle.com': 'Receive these notifications:',
   // milkround is StepStone family and ships the same drifted footer as nijobs — keep this as an
-  // independent entry (duplicate marker, NOT a shared constant): either sender can change its
-  // template without the other. Confirmed against ≥2 stored milkround CleanText samples (2026-06-20).
-  'milkround.com': { text: 'Manage all your subscriptions', mode: 'link' },  // replaces 'In order to avoid that third parties'
+  // independent entry (duplicate markers, NOT a shared constant): either sender can change its
+  // template without the other. The in-corpus milkround mail is the "N new \"X\" jobs in United
+  // Kingdom" DIGEST (the same shape as nijobs Template B), whose footer carries 'Manage all your
+  // subscriptions' (A, the production cut point) PRECEDED (~514 B earlier) by a 'Change criteria for
+  // jobs by email' link (a click.milkround.com per-recipient tracker, B). Marker A alone HITS but
+  // LEAVES that earlier tracker as a residual; appending B and taking the earliest valid cut removes
+  // it too. link mode snaps to the enclosing <a> so the per-recipient token goes with it. (A
+  // hit-with-residual, NOT a miss — flagged by the 2026-06-23 footer-freshness scan.) Confirmed
+  // byte-identical across ≥2 stored samples (pre-cut fixture + 06-23 residual + 06-11 uncut), B
+  // earlier than A; the digest is the only milkround template in-corpus, so there is no A-only
+  // template for B to over-cut. Append-only — never replace A (you can't tell drift from residual
+  // off CleanText; a stale appended marker is a harmless −1, deleting a live one breaks the other
+  // template; earliest valid cut wins, docs/TECH_DESIGN.md §4).
+  'milkround.com': [
+    { text: 'Manage all your subscriptions', mode: 'link' },     // A: production cut point (was a scalar; replaces 'In order to avoid that third parties')
+    { text: 'Change criteria for jobs by email', mode: 'link' }, // B: earlier click.milkround.com tracker (append-only; footer-milkround-append, 2026-06-23)
+  ],
   'procontractjobs.com': 'Pro Contract Jobs Team',  // confirmed against 10 stored samples
   // --- footer-map-extension-2 (2026-06-19): 3 senders whose marker BEGINS the footer action block ---
   // The marker must start the footer block so the cut removes the unsubscribe/manage links + their
@@ -1294,11 +1309,12 @@ function footerCutIndex_(text, marker) {
   return -1;                                        // unknown shape → miss (defensive)
 }
 
-// Earliest valid cut across an ARRAY of markers. -1 when none resolve. A sender can ship
-// MULTIPLE footer templates (e.g. NIJobs Template A 'recommendation' vs Template B digest),
-// and one marker can only cut its own template; the array lets one domain key carry a marker
-// per template. Footers are terminal, so when two markers resolve (rare) the EARLIER index is
-// the true footer start — we cut MORE, not less. Each marker is still floor-checked inside
+// Earliest valid cut across an ARRAY of markers. -1 when none resolve. The array lists MULTIPLE
+// candidate footer starts under one domain key — candidates that cover different templates (e.g.
+// NIJobs recommendation vs digest) AND/OR multiple footer elements within a single template (e.g.
+// the milkround / NIJobs digest, whose footer has an earlier 'Change criteria' tracker before the
+// 'Manage all your subscriptions' cut point). Footers are terminal, so when several markers resolve
+// the EARLIER index is the true footer start — we cut MORE, not less. Each marker is still floor-checked inside
 // footerCutIndex_ (the floor is per marker, never the whole-array scope). Pure; exported for
 // unit tests. truncateAtFooter_ normalizes a scalar entry to a 1-element array, so the scalar
 // path stays byte-identical to today (back-compat).
@@ -1325,7 +1341,8 @@ function truncateAtFooter_(html, fromEmail) {
   const domain = footerDomainOf_(fromEmail);
   const entry = domain ? footerMarkerFor_(domain) : null;
   if (!entry) return { html: text, outcome: 'none', bytesCut: 0, domain: '' };
-  // A marker value is EITHER a single marker OR an array of markers (one per template).
+  // A marker value is EITHER a single marker OR an array of candidate footer starts (covering
+  // different templates and/or multiple footer elements within one template).
   // Normalize to an array and take the earliest valid cut; a 1-element array is byte-identical
   // to the old single-marker path (back-compat). outcome semantics unchanged: 'miss' = NO marker
   // in the array resolved (fail-loud, exactly as today); 'hit' = some marker resolved.
