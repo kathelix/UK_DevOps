@@ -484,12 +484,18 @@ test('talent fixture: faithful raw transport — no QP corruption, no per-recipi
   assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (greeting was redacted Ivan -> User)');
   assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
   assert.ok(!raw.includes(Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '')), 'no base64-encoded recipient address');
-  // Every PER-RECIPIENT token (email_id/user_id/tk/search_id — constant across the email, so it identifies the
-  // recipient) must be the redacted placeholder, in both =literal and &#x3D; forms. pid/bpid VARY per job card
-  // (per-posting, not per-recipient — like job titles), so they are legitimately kept and not checked here.
+  // Every key the capture redacted must hold its placeholder — in both =literal and &#x3D; forms — so a future
+  // edit can't silently reintroduce a real value (Codex F1, PR #51). Genuine per-recipient PII: email_id /
+  // user_id / tk / search_id (each constant across the email -> identifies the recipient) + d_sent (per-send).
+  // Over-redacted (per-template / per-campaign, not per-recipient, but guarded so the committed redaction can't
+  // revert): template_id / t_id / c_id / c_name. pid/bpid VARY per job card (per-posting, like job titles — NOT
+  // per-recipient), so they are legitimately kept and NOT checked.
+  const REDACTED = /^TOKEN_REDACTEDA*$/, ZEROS = /^0+$/; // alnum-token vs numeric placeholder shapes
   const leaks = [];
-  for (const m of raw.matchAll(/(?:email_id|user_id|tk|search_id)(?:=|&#x3D;)([^&"'\s>]+)/g)) {
-    if (!m[1].includes('TOKEN_REDACTED')) leaks.push(m[1].slice(0, 16));
+  for (const key of ['email_id', 'user_id', 'tk', 'search_id', 'd_sent', 'template_id', 't_id', 'c_id', 'c_name']) {
+    for (const m of raw.matchAll(new RegExp('(?:[?&]|amp;)' + key + '(?:=|&#x3D;)([^&"\\s>]+)', 'g'))) {
+      if (!REDACTED.test(m[1]) && !ZEROS.test(m[1])) leaks.push(`${key}=${m[1].slice(0, 12)}`);
+    }
   }
-  assert.deepEqual(leaks, [], 'every per-recipient token (email_id/user_id/tk/search_id) is redacted');
+  assert.deepEqual(leaks, [], 'every redacted Talent token key holds its placeholder (no real value reintroduced)');
 });
