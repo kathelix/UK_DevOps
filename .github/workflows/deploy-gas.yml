@@ -13,14 +13,6 @@ on:
 permissions:
   contents: read
 
-# Mutual exclusion only: at most one deploy runs at a time (so two clasp pushes never race — including a
-# manual re-run of the same commit), and the in-progress run always finishes (cancel-in-progress: false, no
-# mid-push cancel). This does NOT order runs by commit — GitHub does not guarantee newest-last — so the
-# newest-wins guarantee is enforced by the tip guard in the push step below, not here (PR #53 T1).
-concurrency:
-  group: deploy-gas-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   clasp-push:
     runs-on: ubuntu-latest
@@ -52,26 +44,9 @@ jobs:
           fi
 
       - name: Push to Apps Script
-        # Deploy only if this run's commit is still main's tip — re-checked before the retry (whose sleep is
-        # the widest window for main to advance). GitHub does NOT order concurrency runs by commit, so an
-        # older run can execute after a newer one; without this guard its retry could push a stale snapshot
-        # over the newer deploy (PR #53 T1). A superseded run skips (exit 0 — a newer run deploys); a fetch
-        # failure fails loud so a skip can't masquerade as a successful "nothing to deploy".
-        run: |
-          tip_check() {
-            git fetch --quiet --depth=1 origin main \
-              || { echo "::error::cannot fetch origin/main to verify the deploy tip"; exit 1; }
-            [ "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)" ]
-          }
-          if ! tip_check; then
-            echo "::notice::Skipping deploy — $(git rev-parse --short HEAD) is behind origin/main $(git rev-parse --short FETCH_HEAD); a newer run deploys it"
-            exit 0
-          fi
-          if clasp push -f; then exit 0; fi
-          echo "clasp push -f failed; retrying once after backoff if still the tip"
-          sleep 10
-          if ! tip_check; then
-            echo "::notice::Superseded during backoff — a newer commit is now main's tip; not re-pushing the stale snapshot"
-            exit 0
-          fi
-          clasp push -f
+        # Retry once on a transient Apps Script API error (e.g. "Premature close"); see CLAUDE.md
+        # "post-merge main CI". ACCEPTED RISK (PR #53, owner decision): the sleep is a small window in which
+        # this older run's retry could overwrite a newer commit's deploy — accepted for a solo, low-volume
+        # project (~10 PRs/day → ~0% overlap), caught by the post-merge main-CI check + the CI-failure email.
+        # Revisit (add a stale-SHA tip guard) only if deploys become concurrent / high-volume.
+        run: clasp push -f || (sleep 10; clasp push -f)
