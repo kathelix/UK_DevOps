@@ -262,6 +262,12 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'jooble':                       { from: 'subscribe@uk.jooble.org',          outcome: 'hit', bytesCut: 827,  floor: 500 }, // dot-boundary key; link: snap to the footer-nav lead <a>
     'efinancialcareers-jobs':       { from: 'emails@efinancialcareers.com',     outcome: 'hit', bytesCut: 1739, floor: 1000 }, // link: marker in a <span> preceded by an empty tracked <a>; job-alert variant
     'efinancialcareers-newsletter': { from: 'emails@efinancialcareers.com',     outcome: 'hit', bytesCut: 1264, floor: 700 },  // same broadened marker also cuts the newsletter variant
+    // --- fixture-raw-transport (2026-06-24): talent.com mapped from a parity-gated raw-RFC822 fixture (text mode) ---
+    // Was DEFERRED (PR #50, get_thread QP-decode corruption); the byte-preserving raw transport produced a
+    // faithful fixture (its pipeline output byte-reproduces stored CleanText, diffs only in redacted tokens).
+    // In-corpus fixture is the single-job ("More jobs like …") template; the text cut at the marker removes the
+    // one-click unsubscribe (+ its tk= token) + Terms/Privacy/Cookie/Contact + postal. Re-measured from the LF fixture.
+    'talent':             { from: 'no-reply@alerts.talent.com',      outcome: 'hit',  bytesCut: 2537, floor: 1500 }, // dot-boundary key (alerts.talent.com → talent.com)
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
   };
 
@@ -289,6 +295,9 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'jooble':                       ['redir/unsubscribe', 'Privacy Policy'],
     'efinancialcareers-jobs':       ['Manage your preferences'],
     'efinancialcareers-newsletter': ['Manage your preferences'],
+    // fixture-raw-transport: the talent.com text cut must remove the one-click unsubscribe endpoint (its tk=
+    // auth token sits after the marker; the cut takes the whole footer action block + postal with it).
+    'talent':                       ['unsubscribe'],
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
     const g = FOOTER_GOLDEN[name];
@@ -457,4 +466,30 @@ test('milkround fixture: no per-recipient PII survives the redaction (leak-free 
     }
   }
   assert.deepEqual(leaks, [], 'every click.milkround.com per-recipient token is redacted');
+});
+
+// ---------- talent.com (slice fixture-raw-transport, 2026-06-24) ----------
+// talent.com was DEFERRED in PR #50: the Gmail-MCP get_thread QP-decodes its raw-=NN tracking URLs to
+// control bytes / U+FFFD, so get_thread could not produce a faithful fixture. The transport slice captured
+// via a byte-preserving raw-RFC822 path and proved per-message byte-identity to stored CleanText, so the
+// committed (redacted, LF) fixture's pipeline output byte-reproduces stored CleanText. text mode: the
+// nearest <a> before the marker is the footer 'Personalize my jobs' CTA in digest templates but a body
+// 'More Jobs' link in the single-job template (this in-corpus fixture), so link would over-cut the body.
+
+test('talent fixture: faithful raw transport — no QP corruption, no per-recipient PII (leak-free capture)', () => {
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-talent.html'), 'utf8');
+  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
+  // The defining win of the raw transport: NONE of the get_thread QP-decode artifacts that deferred talent.com.
+  assert.equal(raw.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|�/g), null, 'no C0 control bytes or U+FFFD (raw transport keeps literal =NN, unlike get_thread)');
+  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (greeting was redacted Ivan -> User)');
+  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
+  assert.ok(!raw.includes(Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '')), 'no base64-encoded recipient address');
+  // Every PER-RECIPIENT token (email_id/user_id/tk/search_id — constant across the email, so it identifies the
+  // recipient) must be the redacted placeholder, in both =literal and &#x3D; forms. pid/bpid VARY per job card
+  // (per-posting, not per-recipient — like job titles), so they are legitimately kept and not checked here.
+  const leaks = [];
+  for (const m of raw.matchAll(/(?:email_id|user_id|tk|search_id)(?:=|&#x3D;)([^&"'\s>]+)/g)) {
+    if (!m[1].includes('TOKEN_REDACTED')) leaks.push(m[1].slice(0, 16));
+  }
+  assert.deepEqual(leaks, [], 'every per-recipient token (email_id/user_id/tk/search_id) is redacted');
 });
