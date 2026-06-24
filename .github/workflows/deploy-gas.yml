@@ -44,4 +44,6 @@ jobs:
           fi
 
       - name: Push to Apps Script
-        run: clasp push -f
+        # Retry once on a transient Apps Script API error (e.g. "Premature close"); see CLAUDE.md
+        # "post-merge main CI" + PR #51/#53. A failure that survives the retry is more likely real.
+        run: clasp push -f || (sleep 10; clasp push -f)
