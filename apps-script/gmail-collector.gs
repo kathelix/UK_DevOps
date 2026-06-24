@@ -1225,7 +1225,8 @@ const FOOTER_MARKERS = {
   // tracking URLs to control bytes/U+FFFD, so get_thread couldn't produce a faithful fixture. The transport
   // slice captures via a byte-preserving raw-RFC822 path, proves per-message byte-identity to stored
   // CleanText, then redacts — so the committed fixture's pipeline output byte-reproduces stored CleanText
-  // (skeleton-identical; diffs only in the length-neutral redacted token regions). text mode (NOT link):
+  // (skeleton-identical; diffs only in the length-neutral redaction regions — per-recipient tokens + the
+  // greeting name). text mode (NOT link):
   // the marker is plain prose and the one-click unsubscribe + its tk= token sit AFTER it; link is
   // contraindicated because the nearest preceding <a> is the footer 'Personalize my jobs' CTA in the digest
   // templates but a body 'More Jobs' content link in the single-job template, so a snap would over-cut the

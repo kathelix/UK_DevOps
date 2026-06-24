@@ -264,7 +264,8 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'efinancialcareers-newsletter': { from: 'emails@efinancialcareers.com',     outcome: 'hit', bytesCut: 1264, floor: 700 },  // same broadened marker also cuts the newsletter variant
     // --- fixture-raw-transport (2026-06-24): talent.com mapped from a parity-gated raw-RFC822 fixture (text mode) ---
     // Was DEFERRED (PR #50, get_thread QP-decode corruption); the byte-preserving raw transport produced a
-    // faithful fixture (its pipeline output byte-reproduces stored CleanText, diffs only in redacted tokens).
+    // faithful fixture (its pipeline output byte-reproduces stored CleanText, diffs only in length-neutral
+    // redaction regions — tokens + the greeting name).
     // In-corpus fixture is the single-job ("More jobs like …") template; the text cut at the marker removes the
     // one-click unsubscribe (+ its tk= token) + Terms/Privacy/Cookie/Contact + postal. Re-measured from the LF fixture.
     'talent':             { from: 'no-reply@alerts.talent.com',      outcome: 'hit',  bytesCut: 2537, floor: 1500 }, // dot-boundary key (alerts.talent.com → talent.com)
