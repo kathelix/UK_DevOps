@@ -227,6 +227,8 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
     'outsideir35': { tables: 0, bytesSaved: 0 },
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },
+    'talent': { tables: 7, bytesSaved: 1200 }, // fixture-raw-transport (2026-06-24): single-job template
+
     'teksystems': { tables: 8, bytesSaved: 2354 },
     'welcometothejungle': { tables: 38, bytesSaved: 1254 },
     'whatjobs': { tables: 0, bytesSaved: 0 }, // unclosed outer table/tr/td: strict pairing MUST no-op

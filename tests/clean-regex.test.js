@@ -71,6 +71,7 @@ const GOLDEN = {
   'email-outsideir35.html': [16923, 16207],
   'email-procontractjobs.html': [60992, 45086],
   'email-reed.html': [57460, 7576],
+  'email-talent.html': [40417, 19427],
   'email-teksystems.html': [43093, 34006],
   'email-welcometothejungle.html': [52858, 5104],
   'email-whatjobs.html': [17169, 4252],

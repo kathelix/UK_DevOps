@@ -1214,12 +1214,25 @@ const FOOTER_MARKERS = {
   'teksystems.com':      'Trading as TEKsystems.',
   // --- footer-cut-token-lead (2026-06-20): TOKEN-LEAD footers — the per-recipient tracking token
   // sits BEFORE the marker text, so a plain text cut would leave it. link = snap to the
-  // enclosing/preceding <a>. Byte-confirmed ≥2 samples. (nexxt.com DEFERRED — see docs/TECH_DESIGN §4 /
-  // TODO.md: PII bar holds, but a faithful raw-capture fixture is not producible — the Gmail-MCP capture
-  // QP-decodes its tracking-URL bytes to control chars that diverge from the live collector's literal-QP path.)
+  // enclosing/preceding <a>. Byte-confirmed ≥2 samples. (nexxt.com PENDING — the get_thread QP-decode that
+  // blocked a faithful fixture is now handled by the fixture-raw-transport raw-RFC822 path that mapped
+  // talent.com; nexxt just needs its own capture + parity pass (jfw@ effectively n=1). docs/TECH_DESIGN §4 / TODO.md.)
   'cord.co':               { text: 'Update your email preferences', mode: 'link' }, // NEW. marker is inside the per-recipient <a>; snap drops its JWT token. (A preceding empty tracked <a> may survive — its send-id also rides the kept job links, so the cut targets the action endpoints, not that residue.)
   'jooble.org':            { text: 'Customer Support', mode: 'link' },               // NEW. footer-nav lead; its own href is generic (help.jooble.org) — the snap removes the whole nav incl. the per-recipient Unsubscribe JWT that follows it
   'efinancialcareers.com': { text: 'You received this email because you', mode: 'link' }, // NEW. broadened from '…subscribed' to the shared prefix so it ALSO catches the job-alert variant ('…have an account…') — a domain-keyed marker that missed one variant would fail-loud (miss) on every such email. Marker is a <span> preceded by an empty tracked <a>; snap drops that token.
+  // --- fixture-raw-transport (2026-06-24): talent.com, unblocked by the parity-gated raw-RFC822 capture
+  // transport. talent.com had been DEFERRED (PR #50): the Gmail-MCP get_thread QP-decodes its raw-=NN
+  // tracking URLs to control bytes/U+FFFD, so get_thread couldn't produce a faithful fixture. The transport
+  // slice captures via a byte-preserving raw-RFC822 path, proves per-message byte-identity to stored
+  // CleanText, then redacts — so the committed fixture's pipeline output byte-reproduces stored CleanText
+  // (skeleton-identical; diffs only in the length-neutral redaction regions — per-recipient tokens + the
+  // greeting name). text mode (NOT link):
+  // the marker is plain prose and the one-click unsubscribe + its tk= token sit AFTER it; link is
+  // contraindicated because the nearest preceding <a> is the footer 'Personalize my jobs' CTA in the digest
+  // templates but a body 'More Jobs' content link in the single-job template, so a snap would over-cut the
+  // body there. ≥2-sample byte-confirmed (3 stored samples). The surviving 'Personalize my jobs' token
+  // already rides every kept job link (cord precedent). See docs/TECH_DESIGN.md §4.
+  'talent.com': 'You are receiving this email because you expressed interest in subscribing to',
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
