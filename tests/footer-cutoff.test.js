@@ -526,24 +526,29 @@ test('talent fixture: faithful raw transport — no QP corruption, no per-recipi
 // postal removed). See docs/TECH_DESIGN.md §4 / the capture provenance folded into the PR body.
 //
 // Redaction manifest (length-neutral, by-shape): ten opaque query keys CONSTANT across the artifact (per-recipient)
-// are redacted to a [0A]-only placeholder (structural %0a / - preserved); the recipient name (Ivan -> User) and
-// address (-> userx.name@mailx.org) are the PR #51 F2 PII classes. Keys that VARY per job card (tcid/ttid/tv1/red/s
-// + posting links) are per-posting, not per-recipient, and are legitimately kept (not scanned). Occurrence counts
-// are pinned so the scan can't silently miss one (matcher-is-a-hypothesis), and every guard is mutation-proven
-// below — re-inserting a realistic value must flip the scan red (the PR #51 F1 trap: a guard that doesn't fire).
+// are redacted to a [0A]-only placeholder (structural %0a / - preserved); the recipient name (greeting) -> 'User'
+// and the recipient address -> the synthetic placeholder 'userx.name@mailx.org' are the PR #51 F2 PII classes.
+// Keys that VARY per job card (tcid/ttid/tv1/red/s + posting links) are per-posting, not per-recipient, and are
+// legitimately kept (not scanned). The test asserts the redaction PLACEHOLDERS are in place — never the real
+// recipient identity, since embedding it here would re-commit the very PII the fixture redacts (Codex F-P2, PR #52;
+// faithfulness/completeness is proven separately by the parity gate + redaction manifest). Opaque-key occurrence
+// counts are pinned so the scan can't silently miss one (matcher-is-a-hypothesis), and every guard is mutation-
+// proven below with a SYNTHETIC realistic value — re-inserting it must flip the scan red (the PR #51 F1 trap).
 const NEXXT_KEYS = ['cid', 'emid', 'tv2', 'sid', 'pid', 'sd', 'sidxid', 'm', 'p', 'ssid'];
+const NEXXT_NAME_PLACEHOLDER = '>User<';                  // redacted greeting (real name was replaced by 'User')
+const NEXXT_ADDR_PLACEHOLDER = 'userx.name@mailx.org';    // synthetic placeholder address (alert@ only)
 const nexxtVals = (text, key) =>
   [...text.matchAll(new RegExp('(?<![A-Za-z0-9])' + key + '(?:=|%3d|&#x3d;)([^&"\'\\s>]+)', 'gi'))].map(m => m[1]);
 // A redaction placeholder is [0A]-only after stripping the structural %0a / - that some keys preserve; a real
 // captured token carries other hex/alphanumerics and fails this.
 const nexxtIsPlaceholder = (v) => v.length > 0 && /^[0A]+$/.test(v.replace(/%0a/gi, '').replace(/-/g, ''));
-const NEXXT_ADDR_B64 = Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '');
-// All leak findings in `text` (empty array = clean): recipient name / address, or any opaque key whose value is not
-// a placeholder. Run on the committed fixture (must be clean) and on each mutation (must flag exactly that class).
-function nexxtLeaks(text) {
+// All leak findings in `text` (empty array = clean): a recipient-PII redaction site whose placeholder is MISSING
+// (a real/realistic value sits there instead), or any opaque key whose value is not a placeholder. Checks
+// placeholder PRESENCE, not real-PII absence, so the test embeds no real recipient identity.
+function nexxtLeaks(text, hasEmail) {
   const found = [];
-  if (/ivan/i.test(text)) found.push('recipient_name');
-  if (text.includes('boiko') || text.includes('gmail.com') || text.includes(NEXXT_ADDR_B64)) found.push('recipient_email');
+  if (!text.includes(NEXXT_NAME_PLACEHOLDER)) found.push('recipient_name');
+  if (hasEmail && !text.includes(NEXXT_ADDR_PLACEHOLDER)) found.push('recipient_email');
   for (const key of NEXXT_KEYS) {
     if (nexxtVals(text, key).some(v => !nexxtIsPlaceholder(v))) found.push(key);
   }
@@ -556,25 +561,26 @@ function nexxtNoLeak(file, counts, hasEmail) {
   // the defining win of the raw transport: NONE of the get_thread QP-decode artifacts that deferred nexxt.com
   assert.equal(raw.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|�/g), null,
     `${file}: no C0 control bytes or U+FFFD (raw transport keeps literal =NN, unlike get_thread)`);
-  // committed fixture is clean: no recipient PII, every opaque key placeholder-shaped
-  assert.deepEqual(nexxtLeaks(raw), [], `${file}: no per-recipient PII / un-redacted token survives`);
+  // committed fixture is clean: every recipient-PII placeholder in place, every opaque key placeholder-shaped
+  assert.deepEqual(nexxtLeaks(raw, hasEmail), [], `${file}: redaction placeholders intact; no un-redacted token survives`);
   // every redacted opaque key is caught at its exact manifest count (so the scan can't silently miss an occurrence)
   for (const key of NEXXT_KEYS) {
     assert.equal(nexxtVals(raw, key).length, counts[key], `${file}: ${key} occurrence count (scan must catch every one)`);
   }
-  // mutation proof — each guard is load-bearing: re-inserting a realistic value flips exactly that finding red.
-  const REAL = 'aZ9aZ9aZ9';                                   // not [0A]-shaped -> a leak
-  const mutations = { recipient_name: raw.replace('>User<', '>Ivan<') };
-  if (hasEmail) mutations.recipient_email = raw.replace('userx.name@mailx.org', 'boiko.ivan@gmail.com');
+  // mutation proof — each guard is load-bearing: re-inserting a SYNTHETIC realistic value flips exactly that finding
+  // red. Synthetic on purpose: the real recipient name/address must never be committed (Codex F-P2).
+  const REAL_TOKEN = 'aZ9aZ9aZ9';                            // not [0A]-shaped -> a leak
+  const mutations = { recipient_name: raw.replace(NEXXT_NAME_PLACEHOLDER, '>John<') };
+  if (hasEmail) mutations.recipient_email = raw.replace(NEXXT_ADDR_PLACEHOLDER, 'john.doe@example.com');
   for (const key of NEXXT_KEYS) {
     const esc = nexxtVals(raw, key)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    mutations[key] = raw.replace(new RegExp('((?<![A-Za-z0-9])' + key + '(?:=|%3d|&#x3d;))' + esc, 'i'), '$1' + REAL);
+    mutations[key] = raw.replace(new RegExp('((?<![A-Za-z0-9])' + key + '(?:=|%3d|&#x3d;))' + esc, 'i'), '$1' + REAL_TOKEN);
   }
   const expected = ['recipient_name', ...(hasEmail ? ['recipient_email'] : []), ...NEXXT_KEYS];
   assert.equal(Object.keys(mutations).length, hasEmail ? 12 : 11, `${file}: guard count (every redacted class)`);
   for (const cls of expected) {
     assert.notEqual(mutations[cls], raw, `${file}: ${cls} mutation actually changed the fixture (placeholder was present)`);
-    assert.ok(nexxtLeaks(mutations[cls]).includes(cls), `${file}: ${cls} guard is load-bearing — a realistic value is flagged`);
+    assert.ok(nexxtLeaks(mutations[cls], hasEmail).includes(cls), `${file}: ${cls} guard is load-bearing — a realistic value is flagged`);
   }
 }
 
