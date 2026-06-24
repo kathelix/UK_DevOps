@@ -1244,7 +1244,7 @@ const FOOTER_MARKERS = {
   // jfw@ is action-FIRST: B (~89%) is the MIN valid index → it wins and the cut removes the /optout?ssid + postal
   // (A ~94% follows). So BOTH templates are action-block-correct (§4 principle) and the jfw@ optout no longer
   // survives. Both markers are floor-checked individually and ≥2-confirmed in the stored corpus (A across the alert@
-  // samples; B byte-identical across all 3 samples / both templates). No link mode, no per-sender exception.
+  // samples; B byte-identical across all four captured messages — 3 alert@ + jfw@). No link mode, no per-sender exception.
   // docs/TECH_DESIGN.md §4.
   'nexxt.com': [
     'sent by Nexxt, c/o Nexxt Inc',               // A: postal line — earliest valid cut in the postal-first alert@ template
