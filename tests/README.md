@@ -90,12 +90,14 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   not by matching the CRLF-era stored `CleanLength` (see that PR).
   fixture-raw-transport added the byte-faithful raw-RFC822 captures (no `get_thread` QP corruption):
   `talent`, then `nexxt` — `email-nexxt.html` (alert@ postal-first, the committed primary) and
-  `email-nexxt-jfw.html` (jfw@ action-first), both sharing one `text` marker, each with a no-leak test
-  guarding **every** redacted key (recipient name/address + ten opaque query keys), mutation-proven with
-  synthetic values (no real recipient identity is committed). `jfw@` is the **action-first exception**:
-  its `/optout` action precedes the shared marker and therefore **survives** the cut, so — unlike every
-  other footer fixture — it carries **no** `FOOTER_ACTION_ENDPOINTS` assertion (only `alert@` does); its
-  PII bar (no recipient email present, postal removed) is covered by the no-leak test instead.
+  `email-nexxt-jfw.html` (jfw@ action-first), each with a no-leak test guarding **every** redacted key
+  (recipient name/address + ten opaque query keys), mutation-proven with **synthetic** values (no real
+  recipient identity is committed). nexxt is mapped as a **2-element marker array** (`[postal,
+  optout-intro]`, earliest-valid-cut-wins) because its two templates order the footer differently
+  (Architect F1, PR #52): alert@ resolves to the postal cut (1045 B), jfw@ to the earlier optout-intro cut
+  (442 B) — so **both** templates remove their `/optout` + unsubscribe endpoint (both carry a
+  `FOOTER_ACTION_ENDPOINTS` assertion), pinned by a cross-template test plus a mutation that deleting the
+  optout-intro marker re-leaves the jfw@ `/optout`.
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),

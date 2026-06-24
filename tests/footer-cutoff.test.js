@@ -269,14 +269,15 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // In-corpus fixture is the single-job ("More jobs like …") template; the text cut at the marker removes the
     // one-click unsubscribe (+ its tk= token) + Terms/Privacy/Cookie/Contact + postal. Re-measured from the LF fixture.
     'talent':             { from: 'no-reply@alerts.talent.com',      outcome: 'hit',  bytesCut: 2537, floor: 1500 }, // dot-boundary key (alerts.talent.com → talent.com)
-    // --- footer-nexxt-com (2026-06-24): nexxt.com, the LAST get_thread-QP-deferred sender, mapped via the same
-    // parity-gated raw-RFC822 transport (text mode). One shared marker covers both templates. alert@ (postal-first;
-    // committed primary) cuts recipient email + postal + /optout + unsubscribe. jfw@ (action-first; committed
-    // secondary, pins the action-first cut bytes) is action-first — its /optout precedes the marker and SURVIVES
-    // the text cut, so it gets NO FOOTER_ACTION_ENDPOINTS entry (PII bar still holds: no recipient email, postal
-    // removed). Re-measured from the shipped LF fixtures.
-    'nexxt':              { from: 'alert@email.nexxt.com',           outcome: 'hit',  bytesCut: 1045, floor: 700 }, // dot-boundary key (email.nexxt.com → nexxt.com); alert@ postal-first
-    'nexxt-jfw':          { from: 'jfw@email.nexxt.com',             outcome: 'hit',  bytesCut: 252,  floor: 150 }, // dot-boundary key; jfw@ action-first (optout precedes marker, survives)
+    // --- footer-nexxt-com (2026-06-24; 2-marker array per Architect F1, PR #52): nexxt.com, the LAST
+    // get_thread-QP-deferred sender, mapped via the same parity-gated raw-RFC822 transport. A 2-element array
+    // [postal, optout-intro] with earliest-valid-cut-wins handles both differently-ordered templates: alert@
+    // (postal-first) → the postal marker is the MIN index (cuts recipient email + postal + /optout + unsubscribe,
+    // all after it; the optout-intro @95.9% is a later NON-winning candidate, so 1045 B is UNCHANGED from the scalar);
+    // jfw@ (action-first) → the optout-intro is the MIN index (cuts /optout?ssid + postal, 442 B — was 252 at the
+    // postal alone — so the array now REMOVES the jfw optout). Re-measured from the shipped LF fixtures.
+    'nexxt':              { from: 'alert@email.nexxt.com',           outcome: 'hit',  bytesCut: 1045, floor: 700 }, // dot-boundary key (email.nexxt.com → nexxt.com); alert@ postal-first → postal marker (min)
+    'nexxt-jfw':          { from: 'jfw@email.nexxt.com',             outcome: 'hit',  bytesCut: 442,  floor: 300 }, // dot-boundary key; jfw@ action-first → optout-intro marker (min) removes the /optout
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
   };
 
@@ -307,11 +308,12 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // fixture-raw-transport: the talent.com text cut must remove the one-click unsubscribe endpoint (its tk=
     // auth token sits after the marker; the cut takes the whole footer action block + postal with it).
     'talent':                       ['unsubscribe'],
-    // footer-nexxt-com: the alert@ (postal-first) cut removes the /optout endpoint + unsubscribe text (both sit
-    // AFTER the marker). NOTE — there is deliberately no 'nexxt-jfw' entry: the jfw@ template is action-first, its
-    // /optout precedes the shared marker and intentionally SURVIVES the text cut (capture provenance; asserting
-    // its removal would be wrong). The jfw PII bar (no recipient email, postal removed) is covered by the no-leak test.
+    // footer-nexxt-com (2-marker array per Architect F1, PR #52): BOTH nexxt templates are action-block-correct, so
+    // both cut their /optout endpoint + unsubscribe text. alert@ (postal-first): the postal marker wins (earliest
+    // valid cut), removing the optout that follows it. jfw@ (action-first): the optout-intro marker wins, removing
+    // the /optout that follows IT — the array is precisely what removes the jfw optout the scalar postal marker left.
     'nexxt':                        ['/optout', 'unsubscribe'],
+    'nexxt-jfw':                    ['/optout', 'unsubscribe'],
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
     const g = FOOTER_GOLDEN[name];
@@ -514,16 +516,16 @@ test('talent fixture: faithful raw transport — no QP corruption, no per-recipi
   assert.deepEqual(leaks, [], 'every redacted Talent token key holds its placeholder (no real value reintroduced)');
 });
 
-// ---------- nexxt.com (slice footer-nexxt-com, 2026-06-24) ----------
+// ---------- nexxt.com (slice footer-nexxt-com, 2026-06-24; 2-marker array per Architect F1, PR #52) ----------
 // nexxt.com was the LAST get_thread-QP-deferred sender (PR #50): get_thread QP-decodes its raw-=NN tracking URLs
 // to control bytes / U+FFFD, so it could not produce a faithful fixture. The fixture-raw-transport raw-RFC822 path
 // (PR #51) captured it byte-faithfully and proved per-message byte-identity to stored CleanText for all 4 messages.
-// One shared text marker 'sent by Nexxt, c/o Nexxt Inc' covers both templates (domain-keyed): alert@ (postal-first,
-// committed primary, email-nexxt.html) and jfw@ (action-first, committed secondary, email-nexxt-jfw.html). text
-// mode: in alert@ the recipient email + postal sit AFTER the marker (removed, with the /optout endpoint +
-// unsubscribe text); jfw@ is action-first, so its /optout precedes the marker and SURVIVES the cut — its
-// per-recipient token is redacted in the fixture and the PII bar still holds (no recipient email in the jfw HTML,
-// postal removed). See docs/TECH_DESIGN.md §4 / the capture provenance folded into the PR body.
+// nexxt ships two differently-ORDERED templates, mapped by a 2-element marker ARRAY (postal + optout-intro,
+// earliest-valid-cut-wins): alert@ (postal-first, committed primary, email-nexxt.html) and jfw@ (action-first,
+// committed secondary, email-nexxt-jfw.html). Both are action-block-correct — the cut removes the /optout endpoint
+// + unsubscribe text in BOTH templates (see the cross-template array test + FOOTER_ACTION_ENDPOINTS below). NB the
+// committed fixtures are the UNCUT redacted captures (the cut runs at screening time), so this no-leak test guards
+// the committed redaction itself. See docs/TECH_DESIGN.md §4 / the capture provenance folded into the PR body.
 //
 // Redaction manifest (length-neutral, by-shape): ten opaque query keys CONSTANT across the artifact (per-recipient)
 // are redacted to a [0A]-only placeholder (structural %0a / - preserved); the recipient name (greeting) -> 'User'
@@ -590,4 +592,54 @@ test('nexxt alert@ fixture: leak-free raw-transport capture; all 12 redacted gua
 
 test('nexxt jfw@ fixture: leak-free raw-transport capture; all 11 redacted guards mutation-proven (no recipient email)', () => {
   nexxtNoLeak('email-nexxt-jfw.html', { cid: 4, emid: 4, tv2: 2, sid: 2, pid: 2, sd: 2, sidxid: 2, m: 5, p: 5, ssid: 1 }, false);
+});
+
+// ---------- nexxt.com 2-marker array (Architect F1, PR #52) ----------
+// nexxt's two templates are differently ORDERED, so the domain key carries a 2-element array [A=postal,
+// B=optout-intro] and earliest-valid-cut-wins (footerCutIndexMulti_) picks the right cut per template:
+//   alert@ (postal-first):  A (~95.1%) < B (~95.9%)  -> A wins; B present but non-winning (can't over-cut)
+//   jfw@   (action-first):  B (~88.6%) < A (~93.5%)  -> B wins; removes the /optout the scalar A-cut had LEFT
+// Same footerCutIndexMulti_ mechanism as NIJobs/milkround, here for cross-TEMPLATE ordering (not a within-
+// template residual). Both markers are plain text mode, floor-checked individually.
+const NEXXT_A = 'sent by Nexxt, c/o Nexxt Inc';              // postal line
+const NEXXT_B = 'If you wish to discontinue receiving this'; // optout intro (byte-identical prefix in both templates)
+
+test('nexxt array: alert@ (postal-first) resolves to the postal cut; optout-intro present but non-winning (1045 B)', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nexxt.html'), 'utf8'));
+  const iA = pre.lastIndexOf(NEXXT_A), iB = pre.lastIndexOf(NEXXT_B);
+  assert.ok(iA > -1 && iB > -1, 'both markers present in alert@');
+  assert.ok(iA < iB, 'alert@ is postal-first: A (postal) precedes B (optout-intro)');
+  assert.equal(gas.footerCutIndexMulti_(pre, [NEXXT_A, NEXXT_B]), gas.footerCutIndex_(pre, NEXXT_A),
+    'array resolves to the postal (min) cut');
+  const r = gas.truncateAtFooter_(pre, 'alert@email.nexxt.com');
+  assert.equal(r.outcome, 'hit');
+  assert.equal(r.bytesCut, 1045, 'alert@ stays 1045 B (postal wins; B is a later non-winning candidate)');
+  assert.ok(!r.html.includes('/optout') && !r.html.includes('unsubscribe'), 'the optout endpoint is removed');
+});
+
+test('nexxt array: jfw@ (action-first) resolves to the optout-intro cut, REMOVING the /optout (442 B)', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nexxt-jfw.html'), 'utf8'));
+  const iA = pre.lastIndexOf(NEXXT_A), iB = pre.lastIndexOf(NEXXT_B);
+  assert.ok(iA > -1 && iB > -1, 'both markers present in jfw@');
+  assert.ok(iB < iA, 'jfw@ is action-first: B (optout-intro) precedes A (postal)');
+  assert.equal(gas.footerCutIndexMulti_(pre, [NEXXT_A, NEXXT_B]), gas.footerCutIndex_(pre, NEXXT_B),
+    'array resolves to the earlier optout-intro (min) cut');
+  const r = gas.truncateAtFooter_(pre, 'jfw@email.nexxt.com');
+  assert.equal(r.outcome, 'hit');
+  assert.equal(r.bytesCut, 442, 'jfw@ cuts 442 B at the optout-intro (was 252 at the postal alone)');
+  assert.ok(!r.html.includes('/optout') && !r.html.includes('unsubscribe'), 'the /optout endpoint is removed by the array');
+});
+
+test('nexxt array mutation: deleting marker B re-leaves the jfw@ /optout (proves B is exercised); alert@ unchanged', () => {
+  const preJfw = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nexxt-jfw.html'), 'utf8'));
+  const withB    = preJfw.slice(0, gas.footerCutIndexMulti_(preJfw, [NEXXT_A, NEXXT_B])); // ships
+  const withoutB = preJfw.slice(0, gas.footerCutIndexMulti_(preJfw, [NEXXT_A]));          // mutation: B deleted (old scalar)
+  assert.equal(preJfw.length - withB.length, 442, 'array [A,B] cuts 442 B');
+  assert.equal(preJfw.length - withoutB.length, 252, 'with B deleted, only the postal marker A cuts (252 B — the old scalar value)');
+  assert.ok(!withB.includes('/optout'), 'array [A,B]: the jfw /optout is GONE');
+  assert.ok(withoutB.includes('/optout'), 'B deleted: the jfw /optout REAPPEARS (so B is precisely what removes it)');
+  // alert@ is unaffected by B (A wins there): deleting B leaves its cut identical (B never over-cuts)
+  const preAlert = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nexxt.html'), 'utf8'));
+  assert.equal(gas.footerCutIndexMulti_(preAlert, [NEXXT_A, NEXXT_B]), gas.footerCutIndexMulti_(preAlert, [NEXXT_A]),
+    'alert@ cut is identical with or without B (postal wins)');
 });

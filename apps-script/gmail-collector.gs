@@ -1231,18 +1231,25 @@ const FOOTER_MARKERS = {
   // body there. ≥2-sample byte-confirmed (3 stored samples). The surviving 'Personalize my jobs' token
   // already rides every kept job link (cord precedent). See docs/TECH_DESIGN.md §4.
   'talent.com': 'You are receiving this email because you expressed interest in subscribing to',
-  // --- fixture-raw-transport, 2nd consumer (2026-06-24): nexxt.com — the LAST get_thread-QP-deferred footer
-  // sender, mapped via the same byte-preserving raw-RFC822 transport that mapped talent.com (parity-gated: the
-  // decode-once HTML's pipeline output is byte-identical to stored CleanText; 4 messages PASS exact). A single
-  // shared text marker covers BOTH templates (domain-keyed): alert@/SmartMatch (postal-FIRST) and jfw@
-  // (action-FIRST). text mode (NOT link): in alert@ the recipient email + Nexxt postal block sit AFTER the
-  // marker, so the lastIndexOf cut discards them (the committed alert fixture also drops the /optout endpoint +
-  // unsubscribe text). jfw@ is action-FIRST — its /optout action sits BEFORE the marker and therefore SURVIVES
-  // the text cut; the PII bar still holds (no recipient email in the jfw HTML; the postal block is after the
-  // marker and is removed). That surviving jfw optout is a per-recipient residual (redacted in the fixture);
-  // mapping is a net PII win regardless — unmapped, the ENTIRE footer (incl. the recipient email + postal)
-  // survives. ≥2-sample byte-confirmed (3 alert@ + 1 jfw@ share the one marker). docs/TECH_DESIGN.md §4.
-  'nexxt.com': 'sent by Nexxt, c/o Nexxt Inc',
+  // --- fixture-raw-transport, 2nd consumer (2026-06-24; 2-marker array per Architect F1, PR #52): nexxt.com — the
+  // LAST get_thread-QP-deferred footer sender, mapped via the same parity-gated raw-RFC822 transport that mapped
+  // talent.com (decode-once HTML's pipeline output byte-identical to stored CleanText; 4 messages PASS exact). nexxt
+  // ships TWO differently-ORDERED templates, so one domain key carries a 2-element ARRAY of plain text markers and
+  // earliest-valid-cut-wins (footerCutIndexMulti_ — the NIJobs/milkround mechanism, here for cross-TEMPLATE ordering
+  // rather than a within-template residual):
+  //   A) 'sent by Nexxt, c/o Nexxt Inc'              — the postal line
+  //   B) 'If you wish to discontinue receiving this' — the optout intro (byte-identical prefix in BOTH templates)
+  // alert@/SmartMatch is postal-FIRST: A (~95%) is the MIN valid index → it wins and the cut removes the recipient
+  // email + postal + the optout that all follow it (B ~96% is a later, NON-winning candidate, so it can't over-cut).
+  // jfw@ is action-FIRST: B (~89%) is the MIN valid index → it wins and the cut removes the /optout?ssid + postal
+  // (A ~94% follows). So BOTH templates are action-block-correct (§4 principle) and the jfw@ optout no longer
+  // survives. Both markers are floor-checked individually and ≥2-confirmed in the stored corpus (A across the alert@
+  // samples; B byte-identical across all 3 samples / both templates). No link mode, no per-sender exception.
+  // docs/TECH_DESIGN.md §4.
+  'nexxt.com': [
+    'sent by Nexxt, c/o Nexxt Inc',               // A: postal line — earliest valid cut in the postal-first alert@ template
+    'If you wish to discontinue receiving this',  // B: optout intro — earliest valid cut in the action-first jfw@ template
+  ],
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
