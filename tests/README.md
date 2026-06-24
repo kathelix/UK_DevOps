@@ -40,7 +40,8 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   ziprecruiter, jobs4, whatjobs, milkround, procontractjobs, footer-map-extension-2's
   jobs-co-uk, outsideir35, teksystems, footer-cut-token-lead's cord, jooble,
   efinancialcareers ×2 variants, footer-multi-marker's nijobs-digest, and
-  fixture-raw-transport's talent — sanitized of PII, LF-only). A manifest check asserts every
+  fixture-raw-transport's talent + nexxt (alert@ postal-first / jfw@ action-first) — sanitized of
+  PII, LF-only). A manifest check asserts every
   `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
   (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
   regex in isolation, not the link-cleanup stage that runs before it.
@@ -87,6 +88,16 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   proven by byte-identity to the stored `CleanText` (CR-strip + per-recipient-token mask + whitespace-
   collapse for the MCP transport; accepting a faithful prefix where the live collector already cut),
   not by matching the CRLF-era stored `CleanLength` (see that PR).
+  fixture-raw-transport added the byte-faithful raw-RFC822 captures (no `get_thread` QP corruption):
+  `talent`, then `nexxt` — `email-nexxt.html` (alert@ postal-first, the committed primary) and
+  `email-nexxt-jfw.html` (jfw@ action-first), each with a no-leak test guarding **every** redacted key
+  (recipient name/address + ten opaque query keys), mutation-proven with **synthetic** values (no real
+  recipient identity is committed). nexxt is mapped as a **2-element marker array** (`[postal,
+  optout-intro]`, earliest-valid-cut-wins) because its two templates order the footer differently
+  (Architect F1, PR #52): alert@ resolves to the postal cut (1045 B), jfw@ to the earlier optout-intro cut
+  (442 B) — so **both** templates remove their `/optout` + unsubscribe endpoint (both carry a
+  `FOOTER_ACTION_ENDPOINTS` assertion), pinned by a cross-template test plus a mutation that deleting the
+  optout-intro marker re-leaves the jfw@ `/optout`.
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),

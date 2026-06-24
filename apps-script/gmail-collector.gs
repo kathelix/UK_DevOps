@@ -1214,9 +1214,7 @@ const FOOTER_MARKERS = {
   'teksystems.com':      'Trading as TEKsystems.',
   // --- footer-cut-token-lead (2026-06-20): TOKEN-LEAD footers — the per-recipient tracking token
   // sits BEFORE the marker text, so a plain text cut would leave it. link = snap to the
-  // enclosing/preceding <a>. Byte-confirmed ≥2 samples. (nexxt.com PENDING — the get_thread QP-decode that
-  // blocked a faithful fixture is now handled by the fixture-raw-transport raw-RFC822 path that mapped
-  // talent.com; nexxt just needs its own capture + parity pass (jfw@ effectively n=1). docs/TECH_DESIGN §4 / TODO.md.)
+  // enclosing/preceding <a>. Byte-confirmed ≥2 samples.
   'cord.co':               { text: 'Update your email preferences', mode: 'link' }, // NEW. marker is inside the per-recipient <a>; snap drops its JWT token. (A preceding empty tracked <a> may survive — its send-id also rides the kept job links, so the cut targets the action endpoints, not that residue.)
   'jooble.org':            { text: 'Customer Support', mode: 'link' },               // NEW. footer-nav lead; its own href is generic (help.jooble.org) — the snap removes the whole nav incl. the per-recipient Unsubscribe JWT that follows it
   'efinancialcareers.com': { text: 'You received this email because you', mode: 'link' }, // NEW. broadened from '…subscribed' to the shared prefix so it ALSO catches the job-alert variant ('…have an account…') — a domain-keyed marker that missed one variant would fail-loud (miss) on every such email. Marker is a <span> preceded by an empty tracked <a>; snap drops that token.
@@ -1233,6 +1231,25 @@ const FOOTER_MARKERS = {
   // body there. ≥2-sample byte-confirmed (3 stored samples). The surviving 'Personalize my jobs' token
   // already rides every kept job link (cord precedent). See docs/TECH_DESIGN.md §4.
   'talent.com': 'You are receiving this email because you expressed interest in subscribing to',
+  // --- fixture-raw-transport, 2nd consumer (2026-06-24; 2-marker array per Architect F1, PR #52): nexxt.com — the
+  // LAST get_thread-QP-deferred footer sender, mapped via the same parity-gated raw-RFC822 transport that mapped
+  // talent.com (decode-once HTML's pipeline output byte-identical to stored CleanText; 4 messages PASS exact). nexxt
+  // ships TWO differently-ORDERED templates, so one domain key carries a 2-element ARRAY of plain text markers and
+  // earliest-valid-cut-wins (footerCutIndexMulti_ — the NIJobs/milkround mechanism, here for cross-TEMPLATE ordering
+  // rather than a within-template residual):
+  //   A) 'sent by Nexxt, c/o Nexxt Inc'              — the postal line
+  //   B) 'If you wish to discontinue receiving this' — the optout intro (byte-identical prefix in BOTH templates)
+  // alert@/SmartMatch is postal-FIRST: A (~95%) is the MIN valid index → it wins and the cut removes the recipient
+  // email + postal + the optout that all follow it (B ~96% is a later, NON-winning candidate, so it can't over-cut).
+  // jfw@ is action-FIRST: B (~89%) is the MIN valid index → it wins and the cut removes the /optout?ssid + postal
+  // (A ~94% follows). So BOTH templates are action-block-correct (§4 principle) and the jfw@ optout no longer
+  // survives. Both markers are floor-checked individually and ≥2-confirmed in the stored corpus (A across the alert@
+  // samples; B byte-identical across all four captured messages — 3 alert@ + jfw@). No link mode, no per-sender exception.
+  // docs/TECH_DESIGN.md §4.
+  'nexxt.com': [
+    'sent by Nexxt, c/o Nexxt Inc',               // A: postal line — earliest valid cut in the postal-first alert@ template
+    'If you wish to discontinue receiving this',  // B: optout intro — earliest valid cut in the action-first jfw@ template
+  ],
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
