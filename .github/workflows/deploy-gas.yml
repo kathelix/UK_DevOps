@@ -13,6 +13,15 @@ on:
 permissions:
   contents: read
 
+# Serialize deploys so a delayed older run's retry can't overwrite a newer commit's deploy (PR #53 F1):
+# at most one deploy runs at a time, the in-progress run always finishes (cancel-in-progress: false — no
+# mid-push cancel), and only the newest queued run follows it, so live Apps Script converges to the newest
+# main commit. Without this, an older run that fails its first push and sleeps could wake after a newer run
+# succeeded and re-push its stale snapshot.
+concurrency:
+  group: deploy-gas-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   clasp-push:
     runs-on: ubuntu-latest
