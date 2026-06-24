@@ -269,6 +269,14 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // In-corpus fixture is the single-job ("More jobs like …") template; the text cut at the marker removes the
     // one-click unsubscribe (+ its tk= token) + Terms/Privacy/Cookie/Contact + postal. Re-measured from the LF fixture.
     'talent':             { from: 'no-reply@alerts.talent.com',      outcome: 'hit',  bytesCut: 2537, floor: 1500 }, // dot-boundary key (alerts.talent.com → talent.com)
+    // --- footer-nexxt-com (2026-06-24): nexxt.com, the LAST get_thread-QP-deferred sender, mapped via the same
+    // parity-gated raw-RFC822 transport (text mode). One shared marker covers both templates. alert@ (postal-first;
+    // committed primary) cuts recipient email + postal + /optout + unsubscribe. jfw@ (action-first; committed
+    // secondary, pins the action-first cut bytes) is action-first — its /optout precedes the marker and SURVIVES
+    // the text cut, so it gets NO FOOTER_ACTION_ENDPOINTS entry (PII bar still holds: no recipient email, postal
+    // removed). Re-measured from the shipped LF fixtures.
+    'nexxt':              { from: 'alert@email.nexxt.com',           outcome: 'hit',  bytesCut: 1045, floor: 700 }, // dot-boundary key (email.nexxt.com → nexxt.com); alert@ postal-first
+    'nexxt-jfw':          { from: 'jfw@email.nexxt.com',             outcome: 'hit',  bytesCut: 252,  floor: 150 }, // dot-boundary key; jfw@ action-first (optout precedes marker, survives)
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
   };
 
@@ -299,6 +307,11 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // fixture-raw-transport: the talent.com text cut must remove the one-click unsubscribe endpoint (its tk=
     // auth token sits after the marker; the cut takes the whole footer action block + postal with it).
     'talent':                       ['unsubscribe'],
+    // footer-nexxt-com: the alert@ (postal-first) cut removes the /optout endpoint + unsubscribe text (both sit
+    // AFTER the marker). NOTE — there is deliberately no 'nexxt-jfw' entry: the jfw@ template is action-first, its
+    // /optout precedes the shared marker and intentionally SURVIVES the text cut (capture provenance; asserting
+    // its removal would be wrong). The jfw PII bar (no recipient email, postal removed) is covered by the no-leak test.
+    'nexxt':                        ['/optout', 'unsubscribe'],
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
     const g = FOOTER_GOLDEN[name];
@@ -499,4 +512,76 @@ test('talent fixture: faithful raw transport — no QP corruption, no per-recipi
     }
   }
   assert.deepEqual(leaks, [], 'every redacted Talent token key holds its placeholder (no real value reintroduced)');
+});
+
+// ---------- nexxt.com (slice footer-nexxt-com, 2026-06-24) ----------
+// nexxt.com was the LAST get_thread-QP-deferred sender (PR #50): get_thread QP-decodes its raw-=NN tracking URLs
+// to control bytes / U+FFFD, so it could not produce a faithful fixture. The fixture-raw-transport raw-RFC822 path
+// (PR #51) captured it byte-faithfully and proved per-message byte-identity to stored CleanText for all 4 messages.
+// One shared text marker 'sent by Nexxt, c/o Nexxt Inc' covers both templates (domain-keyed): alert@ (postal-first,
+// committed primary, email-nexxt.html) and jfw@ (action-first, committed secondary, email-nexxt-jfw.html). text
+// mode: in alert@ the recipient email + postal sit AFTER the marker (removed, with the /optout endpoint +
+// unsubscribe text); jfw@ is action-first, so its /optout precedes the marker and SURVIVES the cut — its
+// per-recipient token is redacted in the fixture and the PII bar still holds (no recipient email in the jfw HTML,
+// postal removed). See docs/TECH_DESIGN.md §4 / the capture provenance folded into the PR body.
+//
+// Redaction manifest (length-neutral, by-shape): ten opaque query keys CONSTANT across the artifact (per-recipient)
+// are redacted to a [0A]-only placeholder (structural %0a / - preserved); the recipient name (Ivan -> User) and
+// address (-> userx.name@mailx.org) are the PR #51 F2 PII classes. Keys that VARY per job card (tcid/ttid/tv1/red/s
+// + posting links) are per-posting, not per-recipient, and are legitimately kept (not scanned). Occurrence counts
+// are pinned so the scan can't silently miss one (matcher-is-a-hypothesis), and every guard is mutation-proven
+// below — re-inserting a realistic value must flip the scan red (the PR #51 F1 trap: a guard that doesn't fire).
+const NEXXT_KEYS = ['cid', 'emid', 'tv2', 'sid', 'pid', 'sd', 'sidxid', 'm', 'p', 'ssid'];
+const nexxtVals = (text, key) =>
+  [...text.matchAll(new RegExp('(?<![A-Za-z0-9])' + key + '(?:=|%3d|&#x3d;)([^&"\'\\s>]+)', 'gi'))].map(m => m[1]);
+// A redaction placeholder is [0A]-only after stripping the structural %0a / - that some keys preserve; a real
+// captured token carries other hex/alphanumerics and fails this.
+const nexxtIsPlaceholder = (v) => v.length > 0 && /^[0A]+$/.test(v.replace(/%0a/gi, '').replace(/-/g, ''));
+const NEXXT_ADDR_B64 = Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '');
+// All leak findings in `text` (empty array = clean): recipient name / address, or any opaque key whose value is not
+// a placeholder. Run on the committed fixture (must be clean) and on each mutation (must flag exactly that class).
+function nexxtLeaks(text) {
+  const found = [];
+  if (/ivan/i.test(text)) found.push('recipient_name');
+  if (text.includes('boiko') || text.includes('gmail.com') || text.includes(NEXXT_ADDR_B64)) found.push('recipient_email');
+  for (const key of NEXXT_KEYS) {
+    if (nexxtVals(text, key).some(v => !nexxtIsPlaceholder(v))) found.push(key);
+  }
+  return found;
+}
+
+function nexxtNoLeak(file, counts, hasEmail) {
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
+  assert.ok(!/\r/.test(raw), `${file}: fixture stays LF-only`);
+  // the defining win of the raw transport: NONE of the get_thread QP-decode artifacts that deferred nexxt.com
+  assert.equal(raw.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|�/g), null,
+    `${file}: no C0 control bytes or U+FFFD (raw transport keeps literal =NN, unlike get_thread)`);
+  // committed fixture is clean: no recipient PII, every opaque key placeholder-shaped
+  assert.deepEqual(nexxtLeaks(raw), [], `${file}: no per-recipient PII / un-redacted token survives`);
+  // every redacted opaque key is caught at its exact manifest count (so the scan can't silently miss an occurrence)
+  for (const key of NEXXT_KEYS) {
+    assert.equal(nexxtVals(raw, key).length, counts[key], `${file}: ${key} occurrence count (scan must catch every one)`);
+  }
+  // mutation proof — each guard is load-bearing: re-inserting a realistic value flips exactly that finding red.
+  const REAL = 'aZ9aZ9aZ9';                                   // not [0A]-shaped -> a leak
+  const mutations = { recipient_name: raw.replace('>User<', '>Ivan<') };
+  if (hasEmail) mutations.recipient_email = raw.replace('userx.name@mailx.org', 'boiko.ivan@gmail.com');
+  for (const key of NEXXT_KEYS) {
+    const esc = nexxtVals(raw, key)[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    mutations[key] = raw.replace(new RegExp('((?<![A-Za-z0-9])' + key + '(?:=|%3d|&#x3d;))' + esc, 'i'), '$1' + REAL);
+  }
+  const expected = ['recipient_name', ...(hasEmail ? ['recipient_email'] : []), ...NEXXT_KEYS];
+  assert.equal(Object.keys(mutations).length, hasEmail ? 12 : 11, `${file}: guard count (every redacted class)`);
+  for (const cls of expected) {
+    assert.notEqual(mutations[cls], raw, `${file}: ${cls} mutation actually changed the fixture (placeholder was present)`);
+    assert.ok(nexxtLeaks(mutations[cls]).includes(cls), `${file}: ${cls} guard is load-bearing — a realistic value is flagged`);
+  }
+}
+
+test('nexxt alert@ fixture: leak-free raw-transport capture; all 12 redacted guards mutation-proven', () => {
+  nexxtNoLeak('email-nexxt.html', { cid: 22, emid: 22, tv2: 20, sid: 20, pid: 2, sd: 2, sidxid: 2, m: 5, p: 5, ssid: 1 }, true);
+});
+
+test('nexxt jfw@ fixture: leak-free raw-transport capture; all 11 redacted guards mutation-proven (no recipient email)', () => {
+  nexxtNoLeak('email-nexxt-jfw.html', { cid: 4, emid: 4, tv2: 2, sid: 2, pid: 2, sd: 2, sidxid: 2, m: 5, p: 5, ssid: 1 }, false);
 });
