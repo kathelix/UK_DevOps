@@ -375,8 +375,9 @@ non-negotiable gates on the rendered page, and **upgrades** a Flag that proves g
    or a region block); treat any geo-reject as **VPN-not-connected**, pause, and re-connect —
    **never** record the role as a dead listing on a geo-reject. (Driving Total VPN 2
    automatically via computer use is a deferred stretch — `TODO.md`; remind-only for now.)
-   If a geo-reject persists *after* reconnecting the UK VPN, see [UK Egress &
-   Residential-Proxy Strategy](UK_EGRESS_AND_PROXY.md) for the residential-proxy fallback.
+   For UK-egress options and the **future, owner-activated** residential-proxy fallback (not a
+   live agent step — the geo-reject rule above is unchanged), see [UK Egress &
+   Residential-Proxy Strategy](UK_EGRESS_AND_PROXY.md).
 2. **Chrome + the Claude-in-Chrome extension** available and connected in the session.
 3. **The handoff file.** Point Claude at the latest `<date>_recommend-flag.md` the scheduled
    run wrote in the Job Search project folder (instructions §8). Note its date; if it isn't

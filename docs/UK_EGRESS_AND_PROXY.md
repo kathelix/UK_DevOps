@@ -1,7 +1,8 @@
 # UK Egress & Residential-Proxy Strategy
 
+> **Status: forward-strategy & owner playbook — NOT a change to the live §6a Chrome-pass contract.** The live screening rule is unchanged: a geo-reject during the §6a pass = **VPN-not-connected** → pause and re-remind the owner, never record the role as a dead listing (instructions §6a). This doc covers the UK-egress *options* and the **future, owner-activated** residential-proxy fallback (not yet built).
 > Scope: how the interactive **§6a "live link resolution (Claude-in-Chrome)"** pass obtains a UK exit IP, and the fallback for when a UK exit is blocked by exit-IP reputation rather than geography.
-> Status: operations reference. Last updated: 2026-06-25.
+> Last updated: 2026-06-25.
 
 ## Why a UK exit IP is needed
 
@@ -21,7 +22,7 @@ Current approach: a paid consumer VPN app (Total VPN) connected to a **UK** serv
 
 ## The blocking problem (why a "better VPN" is not the answer)
 
-Geo-rejects can still occur **with** a UK VPN, because the block is by **exit-IP reputation**, not geography. Cloudflare and large job boards score **datacenter and known-VPN IP ranges** as low-trust and may challenge or reject them on sight; **residential ISP IPs** score well. Every commercial VPN and every cloud VM exits from a datacenter IP, so swapping VPN tool does not reliably fix blocking. The only reliably-unblocked UK egress is a **UK residential IP**.
+Geo-rejects can still occur **with** a UK VPN, because the block is by **exit-IP reputation**, not geography. Cloudflare and large job boards score **datacenter and known-VPN IP ranges** as low-trust and may challenge or reject them on sight; **residential ISP IPs** score well. Mainstream consumer-VPN endpoints and cloud VMs exit from datacenter (or known-VPN) IPs, so swapping VPN tool does not reliably fix blocking. The only reliably-unblocked UK egress is a **UK residential IP**.
 
 ## Block-resistant fallback: UK residential proxy
 
@@ -32,13 +33,13 @@ A residential proxy is a **browser/app-level HTTP(S) (or SOCKS5) proxy** — *no
 - **Customer ≠ exit node.** Paying to *use* a residential proxy does **not** turn the runner's own machine into an exit node for others. A machine only becomes an exit by installing a bandwidth-sharing app or a free app/VPN that bundles such an SDK (e.g. the historical HolaVPN → Luminati case). So buying proxy access is safe; **do not install "free VPN" or "earn by sharing your internet" apps**.
 - Prefer providers with transparent, consent-based (opt-in) sourcing and recognised certifications; avoid "free residential proxies" (typically malware / botnet-sourced).
 
-**Provider shortlist** (pay-as-you-go, UK, low volume)
+**Provider shortlist** (pay-as-you-go, UK, low volume). Costs and pool sizes are **relative ordering only** — **check the provider's current pricing / pool page before purchase**:
 
-| Provider | $/GB (PAYG) | Traffic expiry | To start | Pool / sourcing |
-|---|---|---|---|---|
-| **DataImpulse** (chosen) | $1 | Non-expiring | $5 min deposit | ~90M IPs; ISO 27001; first-party opt-in app + SDK |
-| Decodo (ex-Smartproxy) | $4 | verify | free 100 MB trial | 125M IPs (5M UK); opt-in sourcing |
-| IPRoyal | $7 | Non-expiring | day pass | larger pool; documented Pawns.app opt-in sourcing |
+| Provider | Relative cost (PAYG) | Notes |
+|---|---|---|
+| **DataImpulse** (chosen) | Cheapest | Non-expiring traffic; low minimum deposit; ISO 27001; first-party opt-in app + SDK |
+| Decodo (ex-Smartproxy) | Mid-price | Free trial to test before buying; opt-in sourcing |
+| IPRoyal | Priciest | Non-expiring traffic; most-transparent sourcing (documented Pawns.app opt-in) |
 
 A Chrome pass is a handful of page-loads (~tens of MB), so the per-run cost is pennies; a single GB covers dozens–hundreds of passes.
 
@@ -47,9 +48,9 @@ A Chrome pass is a handful of page-loads (~tens of MB), so the per-run cost is p
 - Use the **Proxy SwitchyOmega** extension (it handles `user:pass` auth that raw Chrome cannot). Create an HTTP profile pointing at the provider's **UK endpoint** (`host:port`) with the supplied credentials; toggle it **on** before the pass and **off** after.
 - **Credential boundary:** the **operator** signs up, funds the account, and supplies the endpoint credentials. The agent only configures the browser profile and toggles it — it does not create accounts or enter payment / credentials.
 
-**Trigger**
+**Trigger (owner action — not a live agent step)**
 
-Reach for the residential proxy when a board **geo-rejects during the §6a Chrome pass and reconnecting the UK VPN does not clear it**. Until then, the consumer-VPN (UI) path remains the default.
+The live §6a rule is unchanged: a geo-reject = treat as **VPN-not-connected**, pause and re-remind, never record the role as dead. This proxy path is **not yet built and is not an autonomous escalation**. A *pattern* of geo-rejects that **persist after reconnecting the UK VPN** is the signal for the **owner** to stand the proxy up: sign up, fund the account, and supply the endpoint credentials (the agent then wires Proxy SwitchyOmega per *Wiring* above). Until the owner activates it, the consumer-VPN (UI) path is the **only** egress.
 
 ## Long-term direction
 
