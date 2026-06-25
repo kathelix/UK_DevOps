@@ -44,4 +44,9 @@ jobs:
           fi
 
       - name: Push to Apps Script
-        run: clasp push -f
+        # Retry once on a transient Apps Script API error (e.g. "Premature close"); see CLAUDE.md
+        # "post-merge main CI". ACCEPTED RISK (PR #53, owner decision): the sleep is a small window in which
+        # this older run's retry could overwrite a newer commit's deploy — accepted for a solo, low-volume
+        # project (~10 PRs/day → ~0% overlap), caught by the post-merge main-CI check + the CI-failure email.
+        # Revisit (add a stale-SHA tip guard) only if deploys become concurrent / high-volume.
+        run: clasp push -f || (sleep 10; clasp push -f)
