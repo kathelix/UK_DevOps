@@ -355,8 +355,12 @@ it stays a bounded rolling window (the per-base 1,000-record cap — §5). A sho
 - **Rotation fell back** in the batch report = a genuinely repetitive day where every candidate lead
   was already suppressed, so the post led with the least-recently-used topic. Expected occasionally;
   persistent fallback means topic phrasing is too coarse (revisit Option A, §6) — not a fault.
-- **PostTopics unreadable** (Airtable hiccup) degrades clean: the post runs with an empty suppressed
-  set (it may repeat yesterday's lead that once) rather than skipping the post. As with every other
+- **PostTopics read/write failures degrade clean — never a post failure.** An unreadable table at run
+  start (Airtable hiccup, not-yet-provisioned) runs the post with an **empty suppressed set** (it may
+  repeat yesterday's lead that once). A failed run-end **write or trim** (missing table, name mismatch,
+  delete permission, hiccup) is **warn-only** — it's reported in the batch report but never fails the
+  run, suppresses the Post, or blocks the §9 done-markers; a missed trim self-corrects next run. So a
+  PostTopics problem surfaces as a noted freshness miss, never a lost screening run. As with every other
   report line, the **canonical `VERSION:` value lives in the instructions file, not pinned here**.
 
 ## Canary: missing-email check
