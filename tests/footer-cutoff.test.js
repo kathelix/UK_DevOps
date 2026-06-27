@@ -367,27 +367,52 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
 // email each flip the scan red. These helpers are shared by every footer no-leak test below.
 const GREETING_RE = /\b(?:Hi|Hello|Dear)[,!]?\s+([A-Z][A-Za-z'’-]*)/g; // 'Hi, User' / 'Hello\n User' / 'Hi Candidate'
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const EMAIL_TEST = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;     // non-global clone for stateless .test()
+const B64_RUN = /[A-Za-z0-9+/_-]{16,}={0,2}/g;                          // candidate base64 / base64url runs
 const ALLOWED_GREETINGS = new Set(['User', 'Candidate']); // 'User' = redacted recipient name; 'Candidate' = cv-library's generic greeting
 const greetingsIn = (t) => [...t.matchAll(GREETING_RE)].map((m) => m[1]);
 const emailsIn = (t) => t.match(EMAIL_RE) || [];
+// True when a base64/base64url run decodes to an email-shaped string — catches a recipient address hidden inside
+// an opaque token (a JWT/tracking blob), not just plaintext. Address-agnostic, so no real address is embedded.
+function decodesToEmail(run) {
+  for (const v of [run, run.replace(/-/g, '+').replace(/_/g, '/')]) {
+    let dec;
+    try { dec = Buffer.from(v, 'base64').toString('utf8'); } catch { continue; }
+    if (EMAIL_TEST.test(dec)) return true;
+  }
+  return false;
+}
 
-// Recipient-identity leaks (empty = clean): any @-email at all, or a greeting value outside the non-PII allow-set.
+// Recipient-identity leaks (empty = clean): a plaintext @-email, a greeting value outside the non-PII allow-set,
+// or a base64/base64url run that DECODES to an email (an encoded recipient address tucked inside a token).
 function identityLeaks(text) {
   const found = [];
   if (emailsIn(text).length !== 0) found.push('recipient_email');
   if (greetingsIn(text).some((g) => !ALLOWED_GREETINGS.has(g))) found.push('recipient_name');
+  if ((text.match(B64_RUN) || []).some(decodesToEmail)) found.push('recipient_email_encoded');
   return found;
 }
 
-// Assert the committed fixture leaks no recipient identity, pin the exact greeting set, and mutation-prove a
-// SYNTHETIC added name + email each flip the scan (no real recipient identity is embedded in the test source).
+// Assert the committed fixture leaks no recipient identity, pin the exact greeting set, and mutation-prove that
+// each guard is load-bearing with SYNTHETIC values only (no real recipient identity is embedded in the test
+// source): an added name, an added plaintext email, an added base64-encoded email, and — when the fixture has a
+// greeting — an un-redaction of the greeting placeholder.
 function assertNoRecipientIdentity(raw, file, expectedGreetings) {
   assert.ok(!/\r/.test(raw), `${file}: fixture stays LF-only`);
   assert.deepEqual(emailsIn(raw), [], `${file}: no @-email appears (recipient address never present)`);
   assert.deepEqual(greetingsIn(raw), expectedGreetings, `${file}: greeting set is exactly the expected non-PII value(s)`);
-  assert.deepEqual(identityLeaks(raw), [], `${file}: no recipient identity`);
+  assert.deepEqual(identityLeaks(raw), [], `${file}: no recipient identity (plaintext or encoded)`);
   assert.ok(identityLeaks(raw + '<p>Hi, Syntheticname</p>').includes('recipient_name'), `${file}: name guard catches an additive name`);
   assert.ok(identityLeaks(raw + ' contact synthetic.user@example.org').includes('recipient_email'), `${file}: email guard catches an additive email`);
+  const encoded = Buffer.from('synthetic.user@example.org').toString('base64');
+  assert.ok(identityLeaks(raw + ' tok=' + encoded).includes('recipient_email_encoded'), `${file}: encoded-email guard catches a base64-encoded address`);
+  if (expectedGreetings.length) {
+    // un-redact the greeting placeholder -> a synthetic non-allow-set name must flip the name guard
+    const m = [...raw.matchAll(GREETING_RE)][0];
+    const unred = raw.replace(m[0], m[0].replace(m[1], 'Syntheticname'));
+    assert.notEqual(unred, raw, `${file}: greeting un-redaction changed the fixture`);
+    assert.ok(identityLeaks(unred).includes('recipient_name'), `${file}: name guard catches an un-redaction of the greeting placeholder`);
+  }
 }
 
 // ---------- multi-marker arrays (slice footer-multi-marker, 2026-06-21) ----------
