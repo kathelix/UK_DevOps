@@ -358,6 +358,38 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
   }
 });
 
+// ---------- shared no-leak identity guard (PR #52 / PR #55) ----------
+// A real-capture fixture's no-leak test must NOT itself embed the real recipient name/email (that re-commits the
+// PII into the test source). Instead, extract-and-validate generically with SYNTHETIC sentinels: assert no token
+// is an @-email (the recipient address never appears as one in any committed fixture), and every greeting site
+// holds a non-PII value from a small allow-set — 'User' (the redacted recipient name) or 'Candidate' (cv-library's
+// own generic, never-personalised greeting). Then mutation-prove a synthetic added name and a synthetic added
+// email each flip the scan red. These helpers are shared by every footer no-leak test below.
+const GREETING_RE = /\b(?:Hi|Hello|Dear)[,!]?\s+([A-Z][A-Za-z'’-]*)/g; // 'Hi, User' / 'Hello\n User' / 'Hi Candidate'
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const ALLOWED_GREETINGS = new Set(['User', 'Candidate']); // 'User' = redacted recipient name; 'Candidate' = cv-library's generic greeting
+const greetingsIn = (t) => [...t.matchAll(GREETING_RE)].map((m) => m[1]);
+const emailsIn = (t) => t.match(EMAIL_RE) || [];
+
+// Recipient-identity leaks (empty = clean): any @-email at all, or a greeting value outside the non-PII allow-set.
+function identityLeaks(text) {
+  const found = [];
+  if (emailsIn(text).length !== 0) found.push('recipient_email');
+  if (greetingsIn(text).some((g) => !ALLOWED_GREETINGS.has(g))) found.push('recipient_name');
+  return found;
+}
+
+// Assert the committed fixture leaks no recipient identity, pin the exact greeting set, and mutation-prove a
+// SYNTHETIC added name + email each flip the scan (no real recipient identity is embedded in the test source).
+function assertNoRecipientIdentity(raw, file, expectedGreetings) {
+  assert.ok(!/\r/.test(raw), `${file}: fixture stays LF-only`);
+  assert.deepEqual(emailsIn(raw), [], `${file}: no @-email appears (recipient address never present)`);
+  assert.deepEqual(greetingsIn(raw), expectedGreetings, `${file}: greeting set is exactly the expected non-PII value(s)`);
+  assert.deepEqual(identityLeaks(raw), [], `${file}: no recipient identity`);
+  assert.ok(identityLeaks(raw + '<p>Hi, Syntheticname</p>').includes('recipient_name'), `${file}: name guard catches an additive name`);
+  assert.ok(identityLeaks(raw + ' contact synthetic.user@example.org').includes('recipient_email'), `${file}: email guard catches an additive email`);
+}
+
 // ---------- multi-marker arrays (slice footer-multi-marker, 2026-06-21) ----------
 // A FOOTER_MARKERS value may be a single marker OR an array of candidate footer starts (covering different
 // templates and/or multiple footer elements within one template). truncateAtFooter_
@@ -433,9 +465,8 @@ test('digest fixture: no per-recipient PII survives the redaction (leak-free com
   // Real capture, redacted length-neutrally: click.nijobs.com tokens → TOKEN_REDACTED…, greeting name →
   // 'User', x-stepcast-id → zeros. Guard the committed file so a real per-recipient token can't slip in.
   const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nijobs-digest.html'), 'utf8');
-  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
-  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (any case)');
-  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
+  // recipient name/email guarded via the shared sentinel-free helper (no real identity embedded — PR #55)
+  assertNoRecipientIdentity(raw, 'email-nijobs-digest.html', ['User']);
   assert.equal(raw.match(/click\.nijobs\.com\/(?:f\/a|q)\/(?!TOKEN_REDACTED)/g), null,
     'every click.nijobs.com tracking token (links + open pixels) is redacted');
 });
@@ -484,9 +515,8 @@ test('milkround fixture: no per-recipient PII survives the redaction (leak-free 
   // Real digest capture, redacted length-neutrally: click.milkround.com tokens → TOKEN_REDACTED…, greeting name
   // → 'User', x-stepcast-id → padded. Guard the committed file so a real per-recipient token can't slip in.
   const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-milkround.html'), 'utf8');
-  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
-  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (any case)');
-  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
+  // recipient name/email guarded via the shared sentinel-free helper (no real identity embedded — PR #55)
+  assertNoRecipientIdentity(raw, 'email-milkround.html', ['User']);
   // every click.milkround.com URL path segment that is a long token must be the redacted form (TOKEN_REDACTED)
   // or the shared structural infix 'AAAmIhA~' (a campaign id common to all milkround links, not per-recipient).
   const leaks = [];
@@ -509,12 +539,11 @@ test('milkround fixture: no per-recipient PII survives the redaction (leak-free 
 
 test('talent fixture: faithful raw transport — no QP corruption, no per-recipient PII (leak-free capture)', () => {
   const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-talent.html'), 'utf8');
-  assert.ok(!/\r/.test(raw), 'fixture stays LF-only');
+  // recipient name/email guarded via the shared sentinel-free helper (no real identity embedded — PR #55). The
+  // talent greeting renders the name on its own line ('Hello\n User'), which the shared GREETING_RE captures.
+  assertNoRecipientIdentity(raw, 'email-talent.html', ['User']);
   // The defining win of the raw transport: NONE of the get_thread QP-decode artifacts that deferred talent.com.
   assert.equal(raw.match(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]|�/g), null, 'no C0 control bytes or U+FFFD (raw transport keeps literal =NN, unlike get_thread)');
-  assert.equal(raw.match(/ivan/gi), null, 'no recipient name leaks (greeting was redacted Ivan -> User)');
-  assert.ok(!raw.includes('boiko') && !raw.includes('gmail.com'), 'no recipient address leaks');
-  assert.ok(!raw.includes(Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '')), 'no base64-encoded recipient address');
   // Every key the capture redacted must hold its placeholder — in both =literal and &#x3D; forms — so a future
   // edit can't silently reintroduce a real value (Codex F1, PR #51). Genuine per-recipient PII: email_id /
   // user_id / tk / search_id (each constant across the email -> identifies the recipient) + d_sent (per-send).
@@ -703,11 +732,9 @@ test('applygateway link mode: cut snaps to the enclosing <a> (JWT href dropped),
 // F1/F2). NB the committed fixtures are the UNCUT redacted captures (the footer cut runs at screening time), so
 // these guard the committed redaction itself.
 //
-// No real recipient identity is embedded in this test source (PR #55 F1): the recipient address never appears as
-// an @-email in any fixture (assert the @-email set is empty), and every greeting site holds a non-PII value —
-// 'User' (the redacted recipient name) or 'Candidate' (cv-library's own generic, never-personalised greeting).
-// A real name or address inserted additively is caught because it is neither; the mutation proofs use only
-// SYNTHETIC values.
+// No real recipient identity is embedded in this test source (PR #55 F1): the shared assertNoRecipientIdentity
+// guard (above) asserts the @-email set is empty and every greeting site is a non-PII allow-set value, and the
+// mutation proofs use only SYNTHETIC values.
 //
 // constant-vs-varying note: talentsource24's VisitJob alert-id (constant across all job cards) and per-send
 // open/visit id (varies per send) are per-RECIPIENT and were additionally redacted to 0s here (the capture had
@@ -715,12 +742,6 @@ test('applygateway link mode: cut snaps to the enclosing <a> (JWT href dropped),
 // job_activities `data=` JWT IS redacted too (token-shaped, over-redacted by shape — its payload carries
 // recipient data). Per-POSTING ids that vary per card (cv-library/haystack job ids, talentsource24 'Ref no.'
 // 32-hex) ride every kept job link and are NOT recipient PII, so they stay.
-const GREETING_RE = /\bHi,?\s+([A-Za-z][A-Za-z'’-]*)/g;
-const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const ALLOWED_GREETINGS = new Set(['User', 'Candidate']); // 'User' = redacted recipient name; 'Candidate' = cv-library's generic greeting
-const greetingsIn = (t) => [...t.matchAll(GREETING_RE)].map((m) => m[1]);
-const emailsIn = (t) => t.match(EMAIL_RE) || [];
-
 const PLACEHOLDER_ZEROS = (v) => /^0+$/.test(v);
 const PLACEHOLDER_ZERO_UUID = (v) => v === '00000000-0000-0000-0000-000000000000';
 const PLACEHOLDER_TOK = (v) => /^TOKEN_REDACTEDA*$/.test(v);
@@ -744,25 +765,13 @@ function keyLeaks(raw, keys) {
   return found;
 }
 
-// Recipient-identity leaks (empty = clean): any @-email at all, or a greeting value outside the non-PII allow-set.
-function identityLeaks(text) {
-  const found = [];
-  if (emailsIn(text).length !== 0) found.push('recipient_email');
-  if (greetingsIn(text).some((g) => !ALLOWED_GREETINGS.has(g))) found.push('recipient_name');
-  return found;
-}
-
-// One leak-free + mutation-proof pass over a fixture. expectedGreetings pins the exact greeting set (so an added
-// greeting site is caught too). EVERY key is mutation-proven against BOTH an un-redaction (swap the 1st
-// occurrence's placeholder for a realistic same-shape value → :value) AND an additive insert (append a 2nd
-// realistic occurrence → :count); the recipient name + email guards are each additive-proven with SYNTHETIC
-// values, so no real recipient identity is embedded.
+// One leak-free + mutation-proof pass over a fixture. The shared assertNoRecipientIdentity (above) handles the
+// name/email guards (pinning expectedGreetings) + their synthetic additive proofs. EVERY key is then
+// mutation-proven against BOTH an un-redaction (swap the 1st occurrence's placeholder for a realistic same-shape
+// value → :value) AND an additive insert (append a 2nd realistic occurrence → :count).
 function noLeak(file, expectedGreetings, keys) {
   const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
-  assert.ok(!/\r/.test(raw), `${file}: fixture stays LF-only`);
-  assert.deepEqual(emailsIn(raw), [], `${file}: no @-email appears (recipient address never present)`);
-  assert.deepEqual(greetingsIn(raw), expectedGreetings, `${file}: greeting set is exactly the expected non-PII value(s)`);
-  assert.deepEqual(identityLeaks(raw), [], `${file}: no recipient identity`);
+  assertNoRecipientIdentity(raw, file, expectedGreetings);
   assert.deepEqual(keyLeaks(raw, keys), [], `${file}: every redacted key holds its placeholder`);
   for (const k of keys) {
     const m = [...raw.matchAll(k.re)][0];
@@ -772,9 +781,6 @@ function noLeak(file, expectedGreetings, keys) {
     assert.ok(keyLeaks(unred, keys).includes(`${k.label}:value`), `${file}: ${k.label} guard catches an un-redaction`);
     assert.ok(keyLeaks(raw + realFull, keys).includes(`${k.label}:count`), `${file}: ${k.label} guard catches an additive insert`);
   }
-  // recipient name/email additive proofs — SYNTHETIC values only
-  assert.ok(identityLeaks(raw + '<p>Hi, Syntheticname</p>').includes('recipient_name'), `${file}: recipient-name guard catches an additive name`);
-  assert.ok(identityLeaks(raw + ' contact synthetic.user@example.org').includes('recipient_email'), `${file}: recipient-email guard catches an additive email`);
 }
 
 test('cv-library fixture: leak-free footer-token redaction (every key mutation-proven)', () => {
