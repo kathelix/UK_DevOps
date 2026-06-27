@@ -349,19 +349,23 @@ in-batch signal not in it; at run end it writes today's lead and **trims** PostT
 it stays a bounded rolling window (the per-base 1,000-record cap — §5). A short **usual-noise tail**
 (one jab at SC / IR35 / fake-remote) is exempt: never logged, never suppressed, may repeat by design.
 
-- **Nothing to operate routinely** — PostTopics self-maintains (write + trim each run). It is **not**
-  an inventory; if you ever see it far past ~14 rows, the run-end trim isn't firing — check the §8
-  run log for the trim step.
+- **Nothing to operate routinely** — PostTopics self-maintains (write + required trim each run). It is
+  **not** an inventory; the run-end trim is the bounded-growth safeguard, so a healthy table sits at
+  ~14 rows.
 - **Rotation fell back** in the batch report = a genuinely repetitive day where every candidate lead
   was already suppressed, so the post led with the least-recently-used topic. Expected occasionally;
   persistent fallback means topic phrasing is too coarse (revisit Option A, §6) — not a fault.
-- **PostTopics read/write failures degrade clean — never a post failure.** An unreadable table at run
-  start (Airtable hiccup, not-yet-provisioned) runs the post with an **empty suppressed set** (it may
-  repeat yesterday's lead that once). A failed run-end **write or trim** (missing table, name mismatch,
-  delete permission, hiccup) is **warn-only** — it's reported in the batch report but never fails the
-  run, suppresses the Post, or blocks the §9 done-markers; a missed trim self-corrects next run. So a
-  PostTopics problem surfaces as a noted freshness miss, never a lost screening run. As with every other
-  report line, the **canonical `VERSION:` value lives in the instructions file, not pinned here**.
+- **PostTopics errors are fail-fast — fix immediately, don't wait.** Distinguish an **empty table** (day 1
+  or a genuinely quiet 7-day window) — normal, runs with no suppression — from an **operation error**.
+  A **read error** at run start (table missing/renamed, permission denied, Airtable failure)
+  **alert-and-stops** the run before screening, exactly like any other §0/§1 Airtable dependency (M6.2
+  "Airtable problem → alert and stop"). A **write or trim error** at run end is reported as a **failed
+  run** (a ❌ leads the batch report naming the failed op). Either way: investigate and fix the cause
+  (most likely a UI rename of the table/fields before the post-merge id backfill — KNOWN_ISSUES §3 — or
+  a permission/quota issue); **do not** dismiss it as self-correcting, because a silently-skipped trim
+  would let PostTopics grow into the per-base 1,000-record cap. The §9 done-markers are independent, so
+  a PostTopics failure never re-screens or un-marks a batch. As with every other report line, the
+  **canonical `VERSION:` value lives in the instructions file, not pinned here**.
 
 ## Canary: missing-email check
 
