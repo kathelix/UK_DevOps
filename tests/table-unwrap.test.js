@@ -212,11 +212,15 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // newsletter 76/2508). ziprecruiter stays a no-op (div layout) even at its new template.
   // footer-multi-marker (2026-06-21) added the NIJobs DIGEST fixture (nijobs-digest 9/345) — pins the
   // unwrap of the kept digest body, so a regression confined to it can't pass on footer bytesCut alone.
+  // footer-map-extension-3 (2026-06-27) added haystack (17/756), talentsource24 (2/66) and applygateway
+  // (div layout, 0/0 like ziprecruiter), re-measured from the shipped LF fixtures.
   const GOLDEN = {
+    'applygateway': { tables: 0, bytesSaved: 0 }, // footer-map-extension-3 (2026-06-27): div-based layout (no single-child wrappers), like ziprecruiter
     'cord': { tables: 15, bytesSaved: 514 },
     'cv-library': { tables: 40, bytesSaved: 1320 },
     'efinancialcareers-jobs': { tables: 34, bytesSaved: 1122 },
     'efinancialcareers-newsletter': { tables: 76, bytesSaved: 2508 },
+    'haystack': { tables: 17, bytesSaved: 756 }, // footer-map-extension-3
     'jobs-co-uk': { tables: 2, bytesSaved: 66 },
     'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
@@ -228,6 +232,7 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
     'reed': { tables: 18, bytesSaved: 594 },
     'talent': { tables: 7, bytesSaved: 1200 }, // fixture-raw-transport (2026-06-24): single-job template
+    'talentsource24': { tables: 2, bytesSaved: 66 }, // footer-map-extension-3
 
     'teksystems': { tables: 8, bytesSaved: 2354 },
     'welcometothejungle': { tables: 38, bytesSaved: 1254 },
