@@ -131,17 +131,24 @@ test('mergeLiveIntoSchema warns, never auto-edits, on type drift', () => {
   assert.match(warnings[0], /type drift on RawEmails\.HtmlLength: schema=number live=singleLineText/);
 });
 
-test('MANAGED_TABLES is the documented two-table allowlist', () => {
-  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies']);
+test('MANAGED_TABLES is the documented three-table allowlist', () => {
+  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies', 'PostTopics']);
 });
 
-// Fixed-point guard on the *real* committed schema. The live field ids were captured
-// from the production base (appV9puNHinuRKTk9) via the Airtable MCP on 2026-06-17 and
-// backfilled into airtable/schema.json token-free, by feeding this same literal to
-// mergeLiveIntoSchema. Re-running the merge against the committed schema must therefore
-// be a no-op with zero warnings — pinning schema.json as a fixed point so a future
-// hand-edit that drops an id or drifts a type fails loudly here. Only id/name/type are
-// needed: the merge backfills id and checks type, preserving each field's own prose.
+// Fixed-point guard on the *real* committed schema, scoped to the tables whose live
+// ids were captured from the production base (appV9puNHinuRKTk9) via the Airtable MCP
+// on 2026-06-17 and backfilled into airtable/schema.json token-free. Re-running the
+// merge against the committed schema must be a no-op with zero warnings — pinning
+// schema.json as a fixed point so a future hand-edit that drops an id or drifts a type
+// fails loudly here. Only id/name/type are needed: the merge backfills id and checks
+// type, preserving each field's own prose.
+//
+// PostTopics is INTENTIONALLY omitted from LIVE_TABLES: it ships in this slice
+// committed name-only (no live ids yet — the table is provisioned by apply-schema on
+// merge, and import-schema backfills its ids post-merge; KNOWN_ISSUES §3). The merge
+// only touches tables present in LIVE_TABLES and leaves other managed schema tables
+// untouched, so the no-op still holds. Once PostTopics is backfilled, add its captured
+// ids here so this guard covers it too.
 const committedSchema = require('../airtable/schema.json');
 const LIVE_TABLES = [
   {
@@ -182,6 +189,6 @@ const LIVE_TABLES = [
 
 test('committed schema.json is a fixed point of the merge against the captured live ids (no drift, no-op)', () => {
   const { schema: merged, warnings } = mergeLiveIntoSchema(committedSchema, LIVE_TABLES);
-  assert.deepEqual(warnings, [], 'no type-drift warnings — every committed type matches live');
-  assert.deepStrictEqual(merged, committedSchema, 'merge is a no-op: every managed table/field already carries its live id');
+  assert.deepEqual(warnings, [], 'no type-drift warnings — every captured RawEmails/Vacancies type matches live');
+  assert.deepStrictEqual(merged, committedSchema, 'merge is a no-op: the id-bearing managed tables (RawEmails, Vacancies) already carry their live ids, and name-only PostTopics is left untouched');
 });
