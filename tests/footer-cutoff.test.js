@@ -26,7 +26,7 @@ const gas = loadCollector();
 const MARK = gas.FOOTER_MARKERS['whatjobs.com'];
 const WHATJOBS = 'jobalerts@whatjobs.com';   // exact-key sender
 const REED = 'noreply@reed.co.uk';           // exact-key sender, different marker
-const UNMAPPED = 'jobs@cv-library.co.uk';    // no FOOTER_MARKERS key
+const UNMAPPED = 'jobs@unmapped.example';    // no FOOTER_MARKERS key (cv-library is now mapped — footer-map-extension-3)
 
 // ---------- outcomes: hit / miss / none ----------
 
@@ -215,9 +215,10 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
   // The footer-map-extension slice added milkround (dot-boundary key jobs.milkround.com ->
   // milkround.com, reusing nijobs' GDPR marker, cuts 2799 B at 82.1%) and procontractjobs
   // (exact key, cuts 1965 B at 95.1%). footer-map-extension-2 (2026-06-19) added three MAPPED
-  // senders (jobs-co-uk, outsideir35, teksystems); haystack/talentsource24/applygateway were
-  // DEFERRED (Codex F1: their address marker sits AFTER the footer action links, so the cut would
-  // leave the unsubscribe/manage endpoints behind — a marker must BEGIN the footer block). jobs-co-uk
+  // senders (jobs-co-uk, outsideir35, teksystems); haystack/talentsource24/applygateway were DEFERRED
+  // then (Codex F1, PR #40: their address marker sits AFTER the footer action links, so a postal-line cut
+  // would leave the unsubscribe/manage endpoints behind) but are now MAPPED by footer-map-extension-3
+  // (2026-06-27) via a footer-START text marker / link mode (see below). jobs-co-uk
   // uses the footer brand line 'Jobs.co.uk' (occ=2; lastIndexOf selects the ~95% footer copy), which
   // cuts the Edit-alert / Remove-account / account links + postal block (the FOOTER_ACTION_ENDPOINTS
   // assertion below pins that). footer-cut-token-lead (2026-06-20) added the TOKEN-LEAD senders, where
@@ -278,7 +279,14 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // postal alone — so the array now REMOVES the jfw optout). Re-measured from the shipped LF fixtures.
     'nexxt':              { from: 'alert@email.nexxt.com',           outcome: 'hit',  bytesCut: 1045, floor: 700 }, // dot-boundary key (email.nexxt.com → nexxt.com); alert@ postal-first → postal marker (min)
     'nexxt-jfw':          { from: 'jfw@email.nexxt.com',             outcome: 'hit',  bytesCut: 442,  floor: 300 }, // dot-boundary key; jfw@ action-first → optout-intro marker (min) removes the /optout
-    'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'none', bytesCut: 0,    floor: 0 }, // unmapped
+    // --- footer-map-extension-3 (2026-06-27): un-defer haystack/talentsource24/applygateway (PR #40) + map cv-library.
+    // The PR #40 DEFERRAL ("address line sits AFTER the action links") is undone by a footer-START text marker
+    // (notice line / sign-off) or link mode (PR #50/#52). cv-library was simply never mapped. Re-measured from the
+    // shipped LF fixtures; the per-recipient token lands after the cut anchor in every sample (see no-leak tests).
+    'haystack':           { from: 'hello@haystackapp.io',           outcome: 'hit',  bytesCut: 1535, floor: 1000 }, // text 'You received this email because you'; cuts the sendgrid /asm/ unsubscribe+manage links (leaves a token-free address line above)
+    'talentsource24':     { from: 'alerts@talentsource24.com',      outcome: 'hit',  bytesCut: 1067, floor: 700 },  // text 'Happy job hunting!'; cuts the footer ?guid= account links + postal (the DUPLICATE top-bar guid survives — tail cut can't reach it, §4 caveat)
+    'applygateway':       { from: 'noreply@zip.applygateway.com',   outcome: 'hit',  bytesCut: 1269, floor: 800 },  // dot-boundary key (zip.applygateway.com → applygateway.com); link mode 'Unsubscribe from this email' snaps to the enclosing <a>, dropping the ~700-char unsubscribe JWT
+    'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'hit',  bytesCut: 815,  floor: 600 }, // text 'CV-Library Ltd, Beacon House' (postal footer-start); the /uns/<token> unsubscribe <a> follows
   };
 
   // F1 (Codex, PR #40): a footer marker must BEGIN the footer action block, so the cut must REMOVE
@@ -314,6 +322,13 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     // the /optout that follows IT — the array is precisely what removes the jfw optout the scalar postal marker left.
     'nexxt':                        ['/optout', 'unsubscribe'],
     'nexxt-jfw':                    ['/optout', 'unsubscribe'],
+    // footer-map-extension-3 (2026-06-27): the un-deferred/new senders. Each phrase is footer-ONLY in its fixture
+    // (a terminal cut can't reach the header/top-bar copies, so phrases shared with a header are excluded —
+    // notably talentsource24's top preferences bar keeps its own ?guid= links, §4 caveat).
+    'cv-library':     ['/uns/', 'CAN_DYN'],                          // the unsubscribe <a> + its /uns/<token>=/CAN_DYN: per-recipient token
+    'haystack':       ['/asm/unsubscribe', '/asm/'],                 // the sendgrid /asm/ unsubscribe + manage links (both carry the per-recipient data= token)
+    'talentsource24': ['Edit this Job Alert', 'Remove my account', 'Powered by Allthetopbananas'], // footer-only anchor texts (the top-bar duplicate uses different labels for the same ?guid= URLs)
+    'applygateway':   ['Unsubscribe from this email', '/unsubscribe?token=', 'job_alerts/00000000', 'Apply Gateway Ltd'], // link snap removes the unsubscribe/edit <a> (JWT in href) + postal
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
     const g = FOOTER_GOLDEN[name];
@@ -656,4 +671,169 @@ test('nexxt array mutation: deleting marker B re-leaves the jfw@ /optout (proves
   const preAlert = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-nexxt.html'), 'utf8'));
   assert.equal(gas.footerCutIndexMulti_(preAlert, [NEXXT_A, NEXXT_B]), gas.footerCutIndexMulti_(preAlert, [NEXXT_A]),
     'alert@ cut is identical with or without B (postal wins)');
+});
+
+// ---------- applygateway link mode (slice footer-map-extension-3, 2026-06-27) ----------
+// applygateway is the PR #40 "address-after-links" case the link mode unlocks: the unsubscribe <a>'s
+// VISIBLE text is the marker 'Unsubscribe from this email' but its HREF carries a ~700-char per-recipient
+// JWT (job_alerts/<UUID>/unsubscribe?token=<JWT>). A plain text cut would slice at the visible text and
+// LEAVE the open <a href="…JWT…"> tag; link mode snaps the cut back to that enclosing <a> so the JWT goes.
+test('applygateway link mode: cut snaps to the enclosing <a> (JWT href dropped), not the anchor text', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-applygateway.html'), 'utf8'));
+  const r = gas.truncateAtFooter_(pre, 'noreply@zip.applygateway.com');
+  assert.equal(r.outcome, 'hit');
+  const tail = pre.slice(r.html.length);
+  // the discarded tail BEGINS at the enclosing anchor open tag (so the token-bearing href is in the tail)
+  assert.ok(tail.startsWith('<a'), 'the cut starts at the enclosing <a>, so the JWT-bearing href is discarded');
+  assert.ok(tail.includes('/unsubscribe?token='), 'the unsubscribe href (JWT) is in the discarded tail');
+  // the kept text must NOT end mid-anchor (a text cut would leave the dangling <a href="…JWT…"> open tag)
+  assert.ok(!/<a\b[^>]*$/.test(r.html), 'the kept text does not end with a dangling <a open tag');
+  assert.ok(!r.html.includes('/unsubscribe?token='), 'no unsubscribe token href survives in the kept text');
+  // text mode would resolve LATER (at the visible marker), proving link actually moved the cut back
+  const linkIdx = gas.footerCutIndex_(pre, { text: 'Unsubscribe from this email', mode: 'link' });
+  const textIdx = gas.footerCutIndex_(pre, 'Unsubscribe from this email');
+  assert.ok(linkIdx > -1 && textIdx > -1 && linkIdx < textIdx, 'link snaps the cut earlier than the visible-text cut');
+});
+
+// ---------- footer-map-extension-3 no-leak guards (2026-06-27) ----------
+// Four footer-mapped fixtures: three NEW raw captures (haystack / talentsource24 / applygateway) + the reused
+// cv-library fixture. Each committed fixture is redacted length-neutrally; these tests guard EVERY redacted
+// key — extract-and-validate the whole occurrence set per class, pin its count (matcher-is-a-hypothesis), and
+// mutation-prove BOTH an un-redaction AND an additive insert flip the scan red (PR #51/#52). No real recipient
+// identity is embedded in the test source. NB the committed fixtures are the UNCUT redacted captures (the footer
+// cut runs at screening time), so these guard the committed redaction itself.
+//
+// constant-vs-varying note: talentsource24's VisitJob alert-id (constant across all job cards) and per-send
+// open/visit id (varies per send) are per-RECIPIENT and were additionally redacted to 0s here (the capture had
+// left them); applygateway's tsid (constant 60× across all card redirects) likewise. Per-POSTING ids that vary
+// per card (cv-library/haystack job ids, applygateway job_activity per-card data is per-card but token-shaped so
+// guarded by shape, talentsource24 'Ref no.' 32-hex) ride every kept job link and are NOT recipient PII.
+const RECIP_NAME_RE = /\b(?:ivan|boiko|boyko)\b/i;
+const RECIP_ADDR_B64 = Buffer.from('boiko.ivan@gmail.com').toString('base64').replace(/=+$/, '');
+const PLACEHOLDER_ZEROS = (v) => /^0+$/.test(v);
+const PLACEHOLDER_ZERO_UUID = (v) => v === '00000000-0000-0000-0000-000000000000';
+const PLACEHOLDER_TOK = (v) => /^TOKEN_REDACTEDA*$/.test(v);
+const PLACEHOLDER_R = (v) => /^R+$/.test(v);
+
+// Generic per-key scan: returns the list of leak labels (empty = clean). Each key = {label, re (group 1 = the
+// token value), ok (placeholder predicate), count (expected occurrences)}. A wrong count OR a non-placeholder
+// value both flag the key — so an additive insert (count up) and an un-redaction (value bad) are both caught.
+function keyLeaks(raw, keys) {
+  const found = [];
+  for (const k of keys) {
+    const vals = [...raw.matchAll(k.re)].map((m) => m[1]);
+    if (vals.length !== k.count) found.push(`${k.label}:count`);
+    if (vals.some((v) => !k.ok(v))) found.push(`${k.label}:value`);
+  }
+  return found;
+}
+
+// Assert no recipient identity (name token / address domain / base64 address) appears anywhere in the fixture.
+function assertNoRecipientIdentity(raw, file) {
+  assert.ok(!/\r/.test(raw), `${file}: fixture stays LF-only`);
+  assert.equal(raw.match(RECIP_NAME_RE), null, `${file}: no recipient name token (ivan/boiko/boyko, any case)`);
+  assert.ok(!raw.includes('gmail.com'), `${file}: no recipient address domain`);
+  assert.ok(!raw.includes(RECIP_ADDR_B64), `${file}: no base64-encoded recipient address`);
+}
+
+// Drive every key + the recipient-name guard through both an un-redaction and an additive insert; each must flip.
+function mutationProve(raw, file, keys, addExtra) {
+  // un-redaction: corrupt the first value of each key to a non-placeholder. Splice within the full regex match
+  // (not a global string replace) so keys whose zero/token placeholders share substrings can't collide. Any tamper
+  // flips the scan red — as a value flag when the corruption still matches the key's char class (a real digit id in
+  // a \d+ slot), or as a count flag when it doesn't (the strict \d+/R+ slot stops matching). Either proves the key
+  // is load-bearing, so assert the LABEL is flagged (not a specific suffix).
+  for (const k of keys) {
+    const m = [...raw.matchAll(k.re)][0];
+    const badFull = m[0].replace(m[1], 'aZ9' + m[1].slice(3)); // length-neutral, breaks every placeholder shape
+    const mutated = raw.replace(m[0], badFull);
+    assert.notEqual(mutated, raw, `${file}: ${k.label} un-redaction changed the fixture`);
+    assert.ok(keyLeaks(mutated, keys).some((l) => l.startsWith(`${k.label}:`)), `${file}: ${k.label} guard catches an un-redaction`);
+  }
+  // additive insert: a second occurrence of each key's URL shape (count goes up -> flips)
+  for (const ex of addExtra) {
+    const mutated = raw + ex.snippet;
+    assert.ok(keyLeaks(mutated, keys).includes(`${ex.label}:count`), `${file}: ${ex.label} guard catches an additive insert`);
+  }
+  // recipient-name additive: a second greeting carrying the real name must flip the identity guard
+  assert.ok(RECIP_NAME_RE.test(raw + '<p>Hi, Ivan</p>'), `${file}: recipient-name guard catches an additive name`);
+}
+
+test('cv-library fixture: leak-free footer-token redaction (mutation-proven)', () => {
+  const file = 'email-cv-library.html';
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
+  assertNoRecipientIdentity(raw, file);
+  // cv-library's greeting is the generic 'Hi Candidate' (no recipient name). Its single per-recipient token is
+  // the /uns/<base64>=/CAN_DYN:<token> unsubscribe link, redacted to R-runs.
+  const keys = [
+    { label: 'uns_b64',     re: /\/uns\/(R+)=\/CAN_DYN/g,          ok: PLACEHOLDER_R, count: 1 },
+    { label: 'uns_can_dyn', re: /\/CAN_DYN:(R+):0+/g,              ok: PLACEHOLDER_R, count: 1 },
+  ];
+  assert.deepEqual(keyLeaks(raw, keys), [], `${file}: every /uns/ token holds its R-placeholder`);
+  mutationProve(raw, file, keys, [
+    { label: 'uns_b64', snippet: '<a href="http://www.cv-library.co.uk/uns/RRRRRRRRRRRRRRRR=/CAN_DYN:RRRRRRRR:0000000000">x</a>' },
+  ]);
+});
+
+test('haystack fixture: leak-free sendgrid-token redaction (mutation-proven)', () => {
+  const file = 'email-haystack.html';
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
+  assertNoRecipientIdentity(raw, file);
+  // No greeting name is present in this template. Redacted per-recipient keys: the SendGrid subuser host id, the
+  // /asm/ user_id, the /asm/ data= token (unsubscribe + manage), and the ls/click + wf/open upn trackers.
+  const keys = [
+    { label: 'sendgrid_host', re: /\/\/u(\d+)\.ct\.sendgrid\.net/g, ok: PLACEHOLDER_ZEROS, count: 11 },
+    { label: 'user_id',       re: /user_id=([^&"\s]+)/g,            ok: PLACEHOLDER_ZEROS, count: 2 },
+    { label: 'asm_data',      re: /(?:[?&]|amp;)data=([^&"\s]+)/g,  ok: PLACEHOLDER_TOK,   count: 2 },  // preceded by &amp;
+    { label: 'upn',           re: /(?:[?&]|amp;)upn=([^&"\s]+)/g,   ok: PLACEHOLDER_TOK,   count: 9 },
+  ];
+  assert.deepEqual(keyLeaks(raw, keys), [], `${file}: every sendgrid token holds its placeholder`);
+  mutationProve(raw, file, keys, [
+    { label: 'asm_data', snippet: '<a href="https://u00000000.ct.sendgrid.net/asm/?user_id=00000000&data=TOKEN_REDACTEDAA">x</a>' },
+    { label: 'upn',      snippet: '<a href="https://u00000000.ct.sendgrid.net/ls/click?upn=TOKEN_REDACTEDAA">x</a>' },
+  ]);
+});
+
+test('talentsource24 fixture: leak-free redaction incl. the additionally-redacted alert/send ids (mutation-proven)', () => {
+  const file = 'email-talentsource24.html';
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
+  assertNoRecipientIdentity(raw, file);
+  // greeting was 'Hi,  Ivan' -> 'Hi,  User'; assert exactly that one site, value 'User'.
+  const greetings = [...raw.matchAll(/Hi,\s+([A-Za-z]+)</g)].map((m) => m[1]);
+  assert.deepEqual(greetings, ['User'], `${file}: exactly one greeting site, value 'User'`);
+  // Redacted per-recipient keys: account-link guid (6×, footer + top-bar duplicate), the VisitJob alert id +
+  // per-send open/visit id (footer-map-extension-3 added these — the capture had left them un-redacted), the
+  // AlertOpen per-send pixel, and the VisitJob reference param.
+  const keys = [
+    { label: 'guid',       re: /guid=([0-9a-fA-F-]+)/g,                ok: PLACEHOLDER_ZERO_UUID, count: 6 },
+    { label: 'alert_id',   re: /VisitJob\/15\/(\d+)\/\d+\//g,          ok: PLACEHOLDER_ZEROS,     count: 15 },
+    { label: 'send_id',    re: /VisitJob\/15\/\d+\/(\d+)\//g,          ok: PLACEHOLDER_ZEROS,     count: 15 },
+    { label: 'alert_open', re: /AlertOpen\/(\d+)\.gif/g,               ok: PLACEHOLDER_ZEROS,     count: 1 },
+    { label: 'reference',  re: /reference=([0-9a-fA-F]+)/g,            ok: PLACEHOLDER_ZEROS,     count: 15 },
+  ];
+  assert.deepEqual(keyLeaks(raw, keys), [], `${file}: every account/tracking token holds its placeholder`);
+  mutationProve(raw, file, keys, [
+    { label: 'guid',     snippet: '<a href="https://alerts.talentsource24.com/account/jobalerts?guid=2afea8f1-f46a-4f61-a9c4-9c5ec582cf31&cid=15">x</a>' },
+    { label: 'alert_id', snippet: '<a href="https://alerts.talentsource24.com/Email/VisitJob/15/59982652/0000000000/0?x=1">x</a>' },
+  ]);
+});
+
+test('applygateway fixture: leak-free redaction incl. the additionally-redacted tsid (mutation-proven)', () => {
+  const file = 'email-applygateway.html';
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8');
+  assertNoRecipientIdentity(raw, file);
+  // No greeting name in this template. Redacted per-recipient keys: the job_alerts account UUID, the
+  // unsubscribe/edit JWT (token=), the per-card job_activities/track data= token, and tsid (footer-map-extension-3
+  // added tsid — constant 60× across every card redirect -> per-recipient/per-send).
+  const keys = [
+    { label: 'job_alert_uuid', re: /job_alerts\/([0-9a-f-]{36})/g,         ok: PLACEHOLDER_ZERO_UUID, count: 2 },
+    { label: 'unsub_jwt',      re: /(?:[?&]|amp;)token=([^&"\s]+)/g,        ok: PLACEHOLDER_TOK,       count: 2 },
+    { label: 'activity_data',  re: /(?:[?&]|amp;)data=([^&"\s]+)/g,         ok: PLACEHOLDER_TOK,       count: 60 },
+    { label: 'tsid',           re: /tsid(?:=|%3[Dd])(\d+)/g,               ok: PLACEHOLDER_ZEROS,     count: 60 },
+  ];
+  assert.deepEqual(keyLeaks(raw, keys), [], `${file}: every applygateway token holds its placeholder`);
+  mutationProve(raw, file, keys, [
+    { label: 'unsub_jwt',     snippet: '<a href="https://apply-gateway.jobboard.io/job_alerts/00000000-0000-0000-0000-000000000000/unsubscribe?token=TOKEN_REDACTEDAA">x</a>' },
+    { label: 'tsid',          snippet: 'href="x%3Ftsid%3D000000000"' },
+  ]);
 });

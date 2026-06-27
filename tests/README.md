@@ -39,8 +39,9 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   styles (`fixtures/email-*.html`: cv-library, reed, nijobs, welcometothejungle, joblookup,
   ziprecruiter, jobs4, whatjobs, milkround, procontractjobs, footer-map-extension-2's
   jobs-co-uk, outsideir35, teksystems, footer-cut-token-lead's cord, jooble,
-  efinancialcareers ×2 variants, footer-multi-marker's nijobs-digest, and
-  fixture-raw-transport's talent + nexxt (alert@ postal-first / jfw@ action-first) — sanitized of
+  efinancialcareers ×2 variants, footer-multi-marker's nijobs-digest,
+  fixture-raw-transport's talent + nexxt (alert@ postal-first / jfw@ action-first), and
+  footer-map-extension-3's haystack, talentsource24, applygateway — sanitized of
   PII, LF-only). A manifest check asserts every
   `email-*.html` has a golden entry and vice versa, so a fixture can't sit unread by any test
   (and adding a footer-cutoff fixture forces a golden entry here). Regex-only — it tests the
@@ -79,7 +80,7 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   `footerCutIndex_` on tiny token-before-anchor strings — the snap/href-match logic independent of the
   large fixtures); and the **value-pinning corpus test** — every mapped fixture through the full
   pipeline (link cleanup → `CLEAN_REGEX` → unwrap → footer cutoff) with per-fixture cut bytes pinned
-  above their corridor floors (cv-library, unmapped, byte-identical).
+  above their corridor floors.
   footer-map-extension-2 added three mapped fixtures here (jobs-co-uk, outsideir35, teksystems), and
   footer-cut-token-lead added the token-lead senders (cord, jooble, efinancialcareers ×2 variants; the
   drift senders nijobs/milkround/ziprecruiter re-captured at their current templates), all with a
@@ -98,6 +99,17 @@ primitive leaves / `Object.keys` / JSON round-trips), and a VM-realm regex is no
   (442 B) — so **both** templates remove their `/optout` + unsubscribe endpoint (both carry a
   `FOOTER_ACTION_ENDPOINTS` assertion), pinned by a cross-template test plus a mutation that deleting the
   optout-intro marker re-leaves the jfw@ `/optout`.
+  footer-map-extension-3 (2026-06-27) un-deferred haystack (text `You received this email because you`),
+  talentsource24 (text `Happy job hunting!`) and applygateway (link mode — the unsubscribe JWT is in the
+  marker's own `<a href>`, so the snap to the enclosing `<a>` drops it, asserted by a dedicated link-mode
+  test) — the PR #40 deferral predated the `link` mode + footer-START text markers — and **flipped
+  cv-library from `none` to a `hit`** (text `CV-Library Ltd, Beacon House`; the unmapped-sender case now
+  uses a synthetic `unmapped.example` From). Each new fixture carries an action-endpoint assertion and a
+  no-leak test guarding every redacted key (mutation-proven, no real recipient identity committed); the
+  constant-vs-varying re-analysis additionally redacted talentsource24's alert/send ids + applygateway's
+  `tsid` (per-recipient tokens the capture had left). talentsource24's duplicate **top-of-body** preferences
+  bar keeps its own `?guid=` links — a tail cut can't reach a head bar (TECH_DESIGN §4 caveat), so the
+  footer endpoints asserted gone are the footer-only anchor texts.
 - **`parsers.test.js`** — `parseFrom_`, and `decodeB64Url_` (both body shapes the
   Gmail service returns, plus the forensic error paths).
 - **`reliability-helpers.test.js`** — `isOverRuntimeBudget_` (timeout boundary),

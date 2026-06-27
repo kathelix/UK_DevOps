@@ -1206,9 +1206,9 @@ const FOOTER_MARKERS = {
   // --- footer-map-extension-2 (2026-06-19): 3 senders whose marker BEGINS the footer action block ---
   // The marker must start the footer block so the cut removes the unsubscribe/manage links + their
   // per-recipient tokens (sender-specificity is secondary — domain-keyed, so a shared phrase under a
-  // distinct key is fine). haystackapp.io / talentsource24.com / applygateway.com are DEFERRED: no
-  // clean footer-start marker (their address line sits *after* the action links, so cutting there
-  // would leave the unsubscribe/edit endpoints behind). See docs/TECH_DESIGN.md §4 (Codex F1, PR #40).
+  // distinct key is fine). (haystackapp.io / talentsource24.com / applygateway.com were DEFERRED here
+  // in PR #40 — their address line sits *after* the action links — but are now MAPPED below via the
+  // text-notice / sign-off / link-mode markers the PR #50/#52 modes unlocked: footer-map-extension-3.)
   'outsideir35.org.uk':  'Outside IR35 Tech Jobs',
   'jobs.co.uk':          'Jobs.co.uk',  // footer brand line (case-sensitive; occ=2, lastIndexOf = footer ~95%); cuts Edit this Job Alert / Remove my account / account links + postal
   'teksystems.com':      'Trading as TEKsystems.',
@@ -1250,6 +1250,19 @@ const FOOTER_MARKERS = {
     'sent by Nexxt, c/o Nexxt Inc',               // A: postal line — earliest valid cut in the postal-first alert@ template
     'If you wish to discontinue receiving this',  // B: optout intro — earliest valid cut in the action-first jfw@ template
   ],
+  // --- footer-map-extension-3 (2026-06-27): un-defer haystack/talentsource24/applygateway (PR #40) + add cv-library.
+  // The 2026-06-27 §8 footer-freshness scan flagged all four as footers surviving into CleanText. The first three
+  // were DEFERRED in PR #40 ("the address line sits AFTER the action links, so a postal-line cut would leave the
+  // unsubscribe/edit endpoints behind"); the link/urlcut modes added in PR #50/#52 plus a footer-START text marker
+  // (notice line / sign-off) make a clean, byte-confirmed cut possible. cv-library was simply never mapped.
+  // Byte-confirmed against stored RawEmails CleanText (the post-unwrap, pre-cut input truncateAtFooter_ sees):
+  // cv-library 3/3 (all collected history — the max available), haystack 8/8, talentsource24 8/8, applygateway 7/7;
+  // the per-recipient token lands AFTER the cut anchor in every sample. New keys (registered domain / eTLD+1), not
+  // appends to existing arrays. docs/TECH_DESIGN.md §4.
+  'cv-library.co.uk':    'CV-Library Ltd, Beacon House',                        // text. Footer-start = postal addr (token-free); the /uns/<token> unsubscribe <a> follows. cut ~94-95%.
+  'haystackapp.io':      'You received this email because you',                 // text. Notice line; sendgrid /asm/unsubscribe?...data=<token> + /asm/?...data=<token> follow. Leaves a token-free "Haystack App Ltd, …" address line above (acceptable residue, no per-recipient token). cut ~68-87%.
+  'talentsource24.com':  'Happy job hunting!',                                  // text. Pre-links sign-off; the 3 ?guid=<token> account links (Edit alert / Remove account / Unsubscribe) + postal addr follow. cut ~94%. NB a DUPLICATE top-of-email preferences bar carries the same ?guid= — a tail cut structurally cannot reach it; out of scope (docs/TECH_DESIGN.md §4).
+  'applygateway.com':    { text: 'Unsubscribe from this email', mode: 'link' }, // link. Token (jobboard.io/job_alerts/<UUID>/unsubscribe?token=<JWT>, ~700-char JWT) is in the href of the SAME <a> as the anchor text → link snaps to the enclosing <a> and drops it; the address line "Apply Gateway Ltd, …" follows and is removed too. (Address-after-links = the exact PR #40 case; link mode is the unlock.) cut ~98%.
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the

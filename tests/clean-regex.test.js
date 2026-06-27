@@ -52,15 +52,19 @@ test('each alternative strips what it targets (focused cases)', () => {
 // footer) + procontractjobs (SendGrid), footer-map-extension-2's three mapped senders
 // (jobs-co-uk, outsideir35, teksystems), and footer-cut-token-lead's token-lead senders
 // (cord, jooble, efinancialcareers ×2 variants; nijobs/milkround/ziprecruiter re-captured at
-// their drifted current templates). Each entry is [rawLength, cleanLength] (JS string
+// their drifted current templates), the raw-transport senders talent + nexxt (×2 templates),
+// and footer-map-extension-3's un-deferred/new senders (applygateway div-heavy, haystack SendGrid,
+// talentsource24). Each entry is [rawLength, cleanLength] (JS string
 // .length, not UTF-8 bytes — emoji/£ are multi-byte). If CLEAN_REGEX or a fixture changes
 // intentionally, eyeball the diff and update in the SAME commit.
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 const GOLDEN = {
+  'email-applygateway.html': [132944, 111106],
   'email-cord.html': [40283, 6496],
   'email-cv-library.html': [88696, 18008],
   'email-efinancialcareers-jobs.html': [41918, 8596],
   'email-efinancialcareers-newsletter.html': [79555, 21453],
+  'email-haystack.html': [38955, 11160],
   'email-jobs-co-uk.html': [44780, 18578],
   'email-jobs4.html': [25367, 5577],
   'email-joblookup.html': [54676, 11866],
@@ -74,6 +78,7 @@ const GOLDEN = {
   'email-procontractjobs.html': [60992, 45086],
   'email-reed.html': [57460, 7576],
   'email-talent.html': [40417, 19427],
+  'email-talentsource24.html': [44931, 18709],
   'email-teksystems.html': [43093, 34006],
   'email-welcometothejungle.html': [52858, 5104],
   'email-whatjobs.html': [17169, 4252],
