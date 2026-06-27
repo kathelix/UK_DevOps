@@ -355,17 +355,24 @@ it stays a bounded rolling window (the per-base 1,000-record cap — §5). A sho
 - **Rotation fell back** in the batch report = a genuinely repetitive day where every candidate lead
   was already suppressed, so the post led with the least-recently-used topic. Expected occasionally;
   persistent fallback means topic phrasing is too coarse (revisit Option A, §6) — not a fault.
-- **PostTopics errors are fail-fast — fix immediately, don't wait.** Distinguish an **empty table** (day 1
-  or a genuinely quiet 7-day window) — normal, runs with no suppression — from an **operation error**.
-  A **read error** at run start (table missing/renamed, permission denied, Airtable failure)
-  **alert-and-stops** the run before screening, exactly like any other §0/§1 Airtable dependency (M6.2
-  "Airtable problem → alert and stop"). A **write or trim error** at run end is reported as a **failed
-  run** (a ❌ leads the batch report naming the failed op). Either way: investigate and fix the cause
-  (most likely a UI rename of the table/fields before the post-merge id backfill — KNOWN_ISSUES §3 — or
-  a permission/quota issue); **do not** dismiss it as self-correcting, because a silently-skipped trim
-  would let PostTopics grow into the per-base 1,000-record cap. The §9 done-markers are independent, so
-  a PostTopics failure never re-screens or un-marks a batch. As with every other report line, the
-  **canonical `VERSION:` value lives in the instructions file, not pinned here**.
+- **PostTopics errors are loud but never block screening — fix promptly, don't wait.** Screening, the
+  recommend/flag handoff, and the §9 done-markers **never depend on PostTopics** and always run; a
+  PostTopics failure is scoped to the **Post** and always surfaces a prominent ❌. Distinguish an **empty
+  table** (day 1 or a genuinely quiet 7-day window) — normal, runs with no suppression — from an
+  **operation error**:
+  - **Read error at run start** (table missing/renamed, permission denied, a PostTopics-specific Airtable
+    error) → the **Post + image concepts are skipped** today (no fresh lead can be guaranteed); the batch
+    report leads with ❌ *"PostTopics unreadable — Post skipped"*. Screening + recommend/flag + §9 still
+    complete.
+  - **Write or trim error at run end** → the **Post is still delivered** (it was built from a valid
+    suppressed set) with a ❌ naming the op (write → today's topic unrecorded, tomorrow may repeat it;
+    trim → bounded-growth safeguard skipped, watch the per-base record cap). Screening + §9 proceed.
+
+  Either way, investigate and fix the cause (most likely a UI rename of the table/fields before the
+  post-merge id backfill — KNOWN_ISSUES §3 — or a permission/quota issue); **do not** dismiss it as
+  self-correcting, because a silently-skipped trim would let PostTopics grow into the per-base
+  1,000-record cap. As with every other report line, the **canonical `VERSION:` value lives in the
+  instructions file, not pinned here**.
 
 ## Canary: missing-email check
 
