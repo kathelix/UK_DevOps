@@ -338,6 +338,27 @@ volume, so don't read the method-driven shift as a content change (no action nee
 itself). As with every other report line, the **canonical `VERSION:` value lives in the instructions
 file, not pinned here**.
 
+## Screening: post-topic rotation
+
+The daily §8 Post leads with a **fresh** topic, not the day's dominant noise, enforced against a
+persisted history rather than memory (instructions §8 *Freshness & topic rotation*; design:
+`docs/TECH_DESIGN.md` §6). State lives in the Airtable **PostTopics** table (`Date` + `Topic`, one
+row per post per day, in the §0/§1 base `appV9puNHinuRKTk9` — provisioned by `apply-schema`). At run
+start the post reads the last 7 days' topics as a **suppressed set** and leads with the freshest
+in-batch signal not in it; at run end it writes today's lead and **trims** PostTopics to ~14 rows so
+it stays a bounded rolling window (the per-base 1,000-record cap — §5). A short **usual-noise tail**
+(one jab at SC / IR35 / fake-remote) is exempt: never logged, never suppressed, may repeat by design.
+
+- **Nothing to operate routinely** — PostTopics self-maintains (write + trim each run). It is **not**
+  an inventory; if you ever see it far past ~14 rows, the run-end trim isn't firing — check the §8
+  run log for the trim step.
+- **Rotation fell back** in the batch report = a genuinely repetitive day where every candidate lead
+  was already suppressed, so the post led with the least-recently-used topic. Expected occasionally;
+  persistent fallback means topic phrasing is too coarse (revisit Option A, §6) — not a fault.
+- **PostTopics unreadable** (Airtable hiccup) degrades clean: the post runs with an empty suppressed
+  set (it may repeat yesterday's lead that once) rather than skipping the post. As with every other
+  report line, the **canonical `VERSION:` value lives in the instructions file, not pinned here**.
+
 ## Canary: missing-email check
 
 The screening run's **§1 discrepancy canary** is the primary check post-cutover. On a run
@@ -427,8 +448,9 @@ cutover (M6.2)* → Rollback).
 
 ## Airtable schema (version control)
 
-`airtable/schema.json` is the version-controlled desired schema for the two managed tables
-(RawEmails, Vacancies). Two scripts manage it, both **additive-only** — the Meta API cannot
+`airtable/schema.json` is the version-controlled desired schema for the managed tables
+(RawEmails, Vacancies, PostTopics — the allowlist is `import-schema.js`'s `MANAGED_TABLES`).
+Two scripts manage it, both **additive-only** — the Meta API cannot
 delete fields/tables or change types, so removals and retypes stay manual:
 
 - **`apply-schema.js`** — schema → live base. Runs in CI (`Deploy Airtable schema`, on any

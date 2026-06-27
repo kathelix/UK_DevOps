@@ -1,6 +1,6 @@
 # Job Vacancy Screening Pipeline
 
-VERSION: 2.6
+VERSION: 2.7
 
 > Versioning: every change to this file MUST bump the version — MAJOR for breaking
 > changes (intake source, non-negotiable gates, the screening **decision/output
@@ -476,7 +476,12 @@ bounded; do **not** build a persistent "already-flagged" store.
 - For use as a post on LinkedIn and Instagram
 - Tone: sarcasm dial at 8/10. Dry-and-tired ≠ sarcastic-and-tired. If a section reads like an observation, rewrite it as an eye-roll.
 - 2-3 sharp observations (formatted as sections) about what the batch revealed about the market — weird patterns, recruiter behaviour, rate compression, AI-buzzword inflation, geography/postcode absurdity, whatever's most absurd that day.
-- **Freshness & theme rotation.** Don't lead with the same angle every day. SC-clearance fatigue is real — the LinkedIn audience is bored of it. Mention clearance at most as a light passing jab, and only if it genuinely dominated the batch; otherwise reach for fresher angles (AI bolted onto every spec, undisclosed "competitive" salaries, aggregator spam/duplicates, the postcode lottery, rate compression, the rare genuinely-good remote role). Vary noticeably from the previous day's post.
+- **Freshness & topic rotation (stateful).** The post's *lead* must be a fresh angle, not the day's dominant noise — enforced against a persisted history (Airtable **PostTopics**), not left to memory. SC-clearance fatigue is real — the LinkedIn audience is bored of it.
+  1. **At run start** (alongside the §0 Vacancies read): read **PostTopics** rows where `Date` ≥ today − 7 days; hold their `Topic` values as the **suppressed set** (≤ ~7). PostTopics lives in the **same base** as §0/§1 (`appV9puNHinuRKTk9`); resolve it **by name** (`list_records_for_table`) — this is a deliberate exception to the §0/§1 "explicit IDs" rule, acceptable because it runs **once per run**, not in the hot per-email path. If PostTopics can't be read, proceed with an **empty** suppressed set (degrade clean — never skip the post over rotation state).
+  2. **Choosing the lead:** the post's lead is the freshest / most novel signal in today's batch whose topic is **not** in the suppressed set — judged **by meaning, not exact string** ("Kentucky" and "a remote-but-actually-Kentucky role" are the same topic). Prefer a small/novel signal over a big tired one. SC-clearance / Inside-IR35 / fake-remote are suppressed **as leads** by default; mention clearance at most as a light passing jab, and only if it genuinely dominated the batch. Other fresher angles: AI bolted onto every spec, undisclosed "competitive" salaries, aggregator spam/duplicates, the postcode lottery, rate compression, the rare genuinely-good remote role.
+  3. **Usual-noise tail (exempt, for a fair market read).** Keep **one short closing beat** (≤ 1 section, a light passing jab) acknowledging the dominant churn (SC / IR35 / fake-remote) so the post still gives an honest read of the market. This tail is **not** logged to PostTopics and is **never** subject to suppression — it may repeat by design.
+  4. **At run end** (alongside the §9 done-marker writes): write one PostTopics row `{ Date: today, Topic: <lead topic phrase, ≤ ~40 chars> }` (`create_records_for_table`), then **trim** PostTopics to the most recent ~14 rows (delete older via `delete_records_for_table`) so it stays a bounded rolling window, not an inventory (the per-base 1,000-record cap — `docs/TECH_DESIGN.md` §5). The trim is **required**, not optional.
+  5. **Starvation fallback.** If *every* candidate lead today is already in the suppressed set (a genuinely repetitive day), do **not** emit a stale lead and do **not** skip the post: lead with the **least-recently-used** available topic (the suppressed one with the oldest `Date`) and note in the batch report that rotation fell back. (Granular topic phrases make this rare.)
 - **Room for hope.** Sarcasm stays the primary mode, but when the batch contains a genuinely good role (e.g. a real remote AI gem), give the post a beat of hope or triumph — light-and-hopeful lands better on LinkedIn than relentless gloom. Don't make every day dark routine sarcasm.
 - Target length: 200–300 characters per section, 2–3 sections total. Ruthlessly cut anything that doesn't land.
 - Each section must with `▶️ ` preppended by two new lines.
@@ -510,7 +515,8 @@ up front. So produce ready-to-use creative concepts, not one literal prompt.
   is personally applying or job-hunting.
 - **Improvise daily — no fixed motif.** Each day should feel fresh; don't reuse
   yesterday's metaphor or settle into a permanent "signature" look. Rotate themes the
-  same way the Post does (see Post → Freshness & theme rotation).
+  same way the Post does (see Post → Freshness & topic rotation) — though here the
+  rotation stays a soft daily nudge, **not** the Post's PostTopics-backed suppression.
 - **Leave room for hope**, not only doom — at least one of the three should carry a
   hopeful or triumphant beat when the batch warrants it.
 - End with a one-line **pick**: which of the three is most shareable, and why (one clause).

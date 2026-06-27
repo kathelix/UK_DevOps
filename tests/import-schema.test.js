@@ -131,8 +131,8 @@ test('mergeLiveIntoSchema warns, never auto-edits, on type drift', () => {
   assert.match(warnings[0], /type drift on RawEmails\.HtmlLength: schema=number live=singleLineText/);
 });
 
-test('MANAGED_TABLES is the documented two-table allowlist', () => {
-  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies']);
+test('MANAGED_TABLES is the documented three-table allowlist', () => {
+  assert.deepEqual(MANAGED_TABLES, ['RawEmails', 'Vacancies', 'PostTopics']);
 });
 
 // Fixed-point guard on the *real* committed schema. The live field ids were captured

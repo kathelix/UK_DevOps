@@ -4,6 +4,7 @@ Forward-looking backlog for the GAS collector + screening pipeline. Roughly in p
 
 ## Screening pipeline
 
+- [ ] **Generalize post-topic rotation to the image guide's *Daily Concept Freshness Rule* (deferred — second instance).** The §8 Post now persists its lead topic in Airtable **PostTopics** and suppresses it for 7 days (shipped `VERSION: 2.7`, `docs/TECH_DESIGN.md` §6). The image guide's static *Daily Concept Freshness Rule* (`instructions/ChatGPT_image_generation_guide.md`) is the **second instance** of the same "don't repeat yesterday" idea, but differs: visual **metaphors**, a longer **≥30-day** window, and a different tool — ChatGPT reads its source-of-truth via GitHub-fetch and has **no Airtable access**, so the cleaner design is likely **Claude-side** (Claude already generates the §8 image concepts and touches Airtable). Decide **table-reuse vs sibling-table then**, informed by this second instance. Do **not** pre-generalize PostTopics for it now (no `Kind`/`Type` column). Image guide behaviour is unchanged until this is built.
 - [ ] **VPN automation for the live link-resolution pass (stretch).** Drive **Total VPN 2** (macOS app) via computer use: connect to a UK server at the start of the §6a Chrome pass, disconnect at the end — replacing the current remind-only step (`docs/OPERATIONS.md` → "Live link resolution (Chrome pass)"). Deferred from M6.3 (owner decision 2026-06-17).
 
 ## Collector (`apps-script/gmail-collector.gs`)
