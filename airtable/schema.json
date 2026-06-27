@@ -202,10 +202,12 @@
       ]
     },
     {
+      "id": "tblXQLZGCoyLEnRgh",
       "name": "PostTopics",
       "description": "Rolling 7-day memory of the daily §8 Post's LEAD topic, so the post leads with a fresh angle instead of the day's dominant noise (instructions §8 'Freshness & topic rotation'). One row per post per day. BOUNDED — the §8 run-end trim keeps ~14 rows; this is a rolling window, not an inventory (docs/TECH_DESIGN.md §5 per-base 1,000-record cap).",
       "fields": [
         {
+          "id": "fldXMqjp9BjLzYx9n",
           "name": "Date",
           "type": "date",
           "options": {
@@ -216,6 +218,7 @@
           "description": "Post date; drives the 7-day suppression window."
         },
         {
+          "id": "fldB1dDCQzWznNvN8",
           "name": "Topic",
           "type": "singleLineText",
           "description": "The post's lead topic phrase (free text, ≤ ~40 chars) — not a controlled vocabulary; the fuzzy match is Claude's judgment at run start."

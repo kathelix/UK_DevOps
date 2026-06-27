@@ -368,10 +368,9 @@ it stays a bounded rolling window (the per-base 1,000-record cap — §5). A sho
     suppressed set) with a ❌ naming the op (write → today's topic unrecorded, tomorrow may repeat it;
     trim → bounded-growth safeguard skipped, watch the per-base record cap). Screening + §9 proceed.
 
-  Either way, investigate and fix the cause (most likely a UI rename of the table/fields before the
-  post-merge id backfill — KNOWN_ISSUES §3 — or a permission/quota issue); **do not** dismiss it as
-  self-correcting, because a silently-skipped trim would let PostTopics grow into the per-base
-  1,000-record cap. As with every other report line, the **canonical `VERSION:` value lives in the
+  Either way, investigate and fix the cause (most likely a UI rename of the table/fields — KNOWN_ISSUES
+  §3 — or a permission/quota issue); **do not** dismiss it as self-correcting, because a
+  silently-skipped trim would let PostTopics grow into the per-base 1,000-record cap. As with every other report line, the **canonical `VERSION:` value lives in the
   instructions file, not pinned here**.
 
 ## Canary: missing-email check
