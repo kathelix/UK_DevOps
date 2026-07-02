@@ -232,7 +232,13 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
   // normalizes trailing whitespace; see PR body / TECH_DESIGN §4). The lowest hit position is still
   // whatjobs at 67.7%, so the 0.5 floor holds with headroom.
   const FOOTER_GOLDEN = {
-    'reed':               { from: 'noreply@reed.co.uk',             outcome: 'hit',  bytesCut: 1311, floor: 1000 },
+    // footer-markers-2026-07 (2026-07-02): reed becomes an APPEND array ['manage your contact preferences',
+    // 'received this email because you are registered with']. The fresh capture's footer leads with the NEW marker
+    // (earlier index), so earliest-valid-cut-wins selects it and the cut removes the whole footer incl. the old
+    // 'manage your contact preferences' line + its clicks.reed tracking <a>s (the 33 per-recipient clicks.reed
+    // trackers in the BODY job cards are ABOVE the footer and legitimately survive — §4). Re-measured from the
+    // fresh LF fixture (was 1311 B on the pre-2026-07 fixture + scalar marker).
+    'reed':               { from: 'noreply@reed.co.uk',             outcome: 'hit',  bytesCut: 4474, floor: 3000 }, // append array; new marker (earlier) wins
     'whatjobs':           { from: 'jobalerts@mail.uk.whatjobs.com', outcome: 'hit',  bytesCut: 1196, floor: 1000 }, // dot-boundary key
     'jobs4':              { from: 'mailer@jobmails.io',             outcome: 'hit',  bytesCut: 782,  floor: 600 },
     'joblookup':          { from: 'alerts@joblookup.com',           outcome: 'hit',  bytesCut: 820,  floor: 300 },
@@ -287,6 +293,17 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'talentsource24':     { from: 'alerts@talentsource24.com',      outcome: 'hit',  bytesCut: 1067, floor: 700 },  // text 'Happy job hunting!'; cuts the footer ?guid= account links + postal (the DUPLICATE top-bar guid survives — tail cut can't reach it, §4 caveat)
     'applygateway':       { from: 'noreply@zip.applygateway.com',   outcome: 'hit',  bytesCut: 1269, floor: 800 },  // dot-boundary key (zip.applygateway.com → applygateway.com); link mode 'Unsubscribe from this email' snaps to the enclosing <a>, dropping the ~700-char unsubscribe JWT
     'cv-library':         { from: 'jobs@cv-library.co.uk',          outcome: 'hit',  bytesCut: 815,  floor: 600 }, // text 'CV-Library Ltd, Beacon House' (postal footer-start); the /uns/<token> unsubscribe <a> follows
+    // --- footer-markers-2026-07 (2026-07-02): two previously-unmapped senders (byte-confirmed, re-measured LF goldens). ---
+    // linkedin (TEXT): 'This email was intended for' is the EARLIEST footer element → the text cut removes the WHOLE
+    // footer incl. the per-recipient otpToken. The marker is the only footer phrase present in BOTH the jobalerts@
+    // digest AND the jobs-listings@ single-role template, so BOTH variants are committed and cut (single-role omits
+    // 'You are receiving Job Alert emails' / 'Manage job alerts', which is why the marker had to be the intended-for line).
+    'linkedin':              { from: 'jobalerts-noreply@linkedin.com', outcome: 'hit', bytesCut: 3460, floor: 2000 }, // jobalerts@ digest template
+    'linkedin-jobs-listings':{ from: 'jobs-listings@linkedin.com',     outcome: 'hit', bytesCut: 4204, floor: 2000 }, // jobs-listings@ single-role template (same marker cuts it)
+    // primis (LINK): the sendgrid per-recipient token is in the href of the SAME <a> as 'Click here to unsubscribe
+    // from our emails' → link snaps to the enclosing <a> and drops it (applygateway pattern). The body greeting name
+    // sits BEFORE the marker and stays in kept text (redacted in the fixture).
+    'primis-talent':         { from: 'marketing@primis-talent.com',    outcome: 'hit', bytesCut: 590,  floor: 300 },  // link mode: enclosing <a> (sendgrid upn) dropped
   };
 
   // F1 (Codex, PR #40): a footer marker must BEGIN the footer action block, so the cut must REMOVE
@@ -329,6 +346,15 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap -> footer cut
     'haystack':       ['/asm/unsubscribe', '/asm/'],                 // the sendgrid /asm/ unsubscribe + manage links (both carry the per-recipient data= token)
     'talentsource24': ['Edit this Job Alert', 'Remove my account', 'Powered by Allthetopbananas'], // footer-only anchor texts (the top-bar duplicate uses different labels for the same ?guid= URLs)
     'applygateway':   ['Unsubscribe from this email', '/unsubscribe?token=', 'job_alerts/00000000', 'Apply Gateway Ltd'], // link snap removes the unsubscribe/edit <a> (JWT in href) + postal
+    // footer-markers-2026-07: reed's append array cuts at the NEW (earlier) marker, so BOTH the old marker line and the
+    // unsubscribe endpoint go (the body clicks.reed job-card trackers are above the footer and are NOT asserted removed).
+    'reed':           ['manage your contact preferences', 'received this email because you are registered with', 'Unsubscribe'],
+    // linkedin text cut removes the whole footer action block. Digest carries all four footer phrases; the single-role
+    // template omits 'Manage job alerts' / 'You are receiving Job Alert emails' (asserted per-fixture, present-before).
+    'linkedin':               ['Unsubscribe', 'Manage job alerts', 'You are receiving Job Alert emails', 'LinkedIn Corporation'],
+    'linkedin-jobs-listings': ['Unsubscribe', 'LinkedIn Corporation'],
+    // primis link cut removes the footer unsubscribe <a> (its sendgrid upn token drops with it — pinned in the dedicated test).
+    'primis-talent':  ['Click here to unsubscribe from our emails'],
   };
   for (const name of Object.keys(FOOTER_GOLDEN)) {
     const g = FOOTER_GOLDEN[name];
@@ -852,4 +878,167 @@ test('applygateway fixture: leak-free redaction incl. the additionally-redacted 
     { label: 'activity_data',  re: /(?:[?&]|amp;)data=([^&"\s]+)/g,  ok: PLACEHOLDER_TOK,       count: 60, realish: REALISH_TOK },
     { label: 'tsid',           re: /tsid(?:=|%3[Dd])(\d+)/g,         ok: PLACEHOLDER_ZEROS,     count: 60, realish: REALISH_DIGITS },
   ]);
+});
+
+// ---------- reed append array (slice footer-markers-2026-07, 2026-07-02) ----------
+// reed is the THIRD append-array sender (after nijobs/milkround). The scalar 'manage your contact preferences'
+// gained an appended candidate 'received this email because you are registered with', which BEGINS reed's footer
+// and sits EARLIER than the old marker, so footerCutIndexMulti_ (earliest-valid-cut-wins) selects it — the cut
+// removes MORE (the old marker line + the footer Unsubscribe endpoint). Append-only: the existing marker string is
+// retained in the map (never replaced); you can't tell drift from residual off post-cut CleanText (§4). Byte-confirmed
+// across ≥2 stored samples (provenance folded into the PR body). The 33 body clicks.reed job-card trackers sit ABOVE
+// the footer and legitimately survive (per-posting, ride the kept content — the cord/talent accepted-residue pattern).
+const REED_OLD = 'manage your contact preferences';
+const REED_NEW = 'received this email because you are registered with';
+
+test('reed append: both markers present, NEW earlier than OLD → array cuts at the new marker (removes the old line)', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-reed.html'), 'utf8'));
+  const iOld = pre.lastIndexOf(REED_OLD), iNew = pre.lastIndexOf(REED_NEW);
+  assert.ok(iOld > -1 && iNew > -1, 'both reed markers present in the capture');
+  assert.ok(iNew < iOld, 'the new marker begins the footer, earlier than the old contact-preferences line');
+  const cutOld = gas.footerCutIndex_(pre, REED_OLD), cutNew = gas.footerCutIndex_(pre, REED_NEW);
+  assert.ok(cutNew > -1 && cutOld > -1 && cutNew < cutOld, 'both resolve; the new-marker cut is earlier');
+  assert.equal(gas.footerCutIndexMulti_(pre, [REED_OLD, REED_NEW]), cutNew, 'the array resolves to the earlier new-marker cut');
+  const r = gas.truncateAtFooter_(pre, 'noreply@reed.co.uk');
+  assert.equal(r.outcome, 'hit');
+  assert.equal(r.bytesCut, 4474, 'array cuts 4474 B (re-measure + update here in the same commit if intentional)');
+  assert.ok(!r.html.includes(REED_OLD), 'the old contact-preferences line is removed (it follows the earlier new marker)');
+});
+
+test('reed append mutation: deleting the new marker falls back to the old-marker cut (proves the new marker is exercised)', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-reed.html'), 'utf8'));
+  const withNew    = pre.slice(0, gas.footerCutIndexMulti_(pre, [REED_OLD, REED_NEW])); // ships
+  const withoutNew = pre.slice(0, gas.footerCutIndexMulti_(pre, [REED_OLD]));           // mutation: new marker deleted (old scalar)
+  assert.equal(pre.length - withNew.length, 4474, 'array cuts 4474 B');
+  assert.equal(pre.length - withoutNew.length, 3406, 'with the new marker deleted, only the old marker cuts (3406 B — the old scalar value)');
+  assert.ok(withNew.length < withoutNew.length, 'the new (earlier) marker cuts MORE than the old alone');
+  assert.ok(!withNew.includes(REED_NEW), 'array [OLD,NEW]: the new-marker footer sentence is cut away');
+  assert.ok(withoutNew.includes(REED_NEW), 'new marker deleted: the new-marker footer sentence REAPPEARS (so the new marker is what removes it)');
+});
+
+test('reed fixture: leak-free clicks.reed token redaction (every path segment mutation-proven)', () => {
+  // Every clicks.reed.co.uk tracking URL is /(f/a|f/u|q)/<TOKEN>/<mid>/<TOKEN>; the two TOKEN slots are per-recipient
+  // (redacted to TOKEN_REDACTED). No greeting / @-email in reed (expected []). 34 URLs → 34 of each token slot; both
+  // are extract-and-validate + mutation-proven via the shared framework.
+  noLeak('email-reed.html', [], [
+    { label: 'reed_tok1', re: /clicks\.reed\.co\.uk\/(?:f\/[au]|q)\/([^\/"]+)\//g,                 ok: PLACEHOLDER_TOK, count: 34, realish: REALISH_TOK },
+    { label: 'reed_tok2', re: /clicks\.reed\.co\.uk\/(?:f\/[au]|q)\/[^\/"]+\/[^\/"]+\/([^\/"]+)/g, ok: PLACEHOLDER_TOK, count: 34, realish: REALISH_TOK },
+  ]);
+  // The constant middle segment is redacted to an A-run (its placeholder collides with the token padding, so the
+  // shared framework's in-place replace can't target it — guard it here). Pin every middle is an A-run, then
+  // mutation-prove a synthetic real id in that slot flips the scan red.
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-reed.html'), 'utf8');
+  const midRe = /clicks\.reed\.co\.uk\/(?:f\/[au]|q)\/[^\/"]+\/([^\/"]+)\//g;
+  const mids = [...raw.matchAll(midRe)].map((m) => m[1]);
+  assert.equal(mids.length, 34, 'reed: 34 clicks.reed middle segments');
+  assert.ok(mids.every((v) => /^A+$/.test(v)), 'reed: every clicks.reed middle segment is the redacted A-run');
+  const unred = raw.replace(/(clicks\.reed\.co\.uk\/(?:f\/[au]|q)\/[^\/"]+\/)[^\/"]+(\/)/, '$1' + REALISH_DIGITS + '$2');
+  assert.notEqual(unred, raw, 'reed: middle un-redaction changed the fixture');
+  assert.ok([...unred.matchAll(midRe)].some((m) => !/^A+$/.test(m[1])), 'reed: a real id in the middle slot flips the guard red');
+});
+
+// ---------- linkedin text cut (slice footer-markers-2026-07, 2026-07-02) ----------
+// linkedin is a plain TEXT-mode sender: 'This email was intended for' is the EARLIEST footer element, so the cut
+// removes the WHOLE footer (recipient intended-for line + the footer per-recipient otpToken + copyright). It is the
+// ONLY footer phrase shared by BOTH templates — the jobalerts@ digest AND the jobs-listings@ single-role variant
+// (the latter omits 'You are receiving Job Alert emails' / 'Manage job alerts'), so both are asserted. NB the body
+// carries ~35 more otpToken tracking links ABOVE the footer; those legitimately survive (per-recipient tracker that
+// rides the kept content — the cord/talent accepted-residue pattern; mapping this sender still strictly improves on
+// the previously-UNMAPPED state where the whole footer + its otpToken survived). docs/TECH_DESIGN.md §4.
+for (const [file, from, bytes] of [
+  ['email-linkedin.html',               'jobalerts-noreply@linkedin.com', 3460],
+  ['email-linkedin-jobs-listings.html', 'jobs-listings@linkedin.com',     4204],
+]) {
+  test(`linkedin text cut: ${file} removes the whole footer incl. the footer otpToken (text mode)`, () => {
+    const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', file), 'utf8'));
+    const idx = pre.lastIndexOf('This email was intended for');
+    assert.ok(idx > -1 && idx / pre.length >= 0.5, 'marker present past the 0.5 floor');
+    const r = gas.truncateAtFooter_(pre, from);
+    assert.equal(r.outcome, 'hit');
+    assert.equal(r.bytesCut, bytes, `${file}: exact cut bytes (re-measure + update in the same commit if intentional)`);
+    assert.ok(!r.html.includes('This email was intended for'), 'the intended-for line is removed');
+    assert.ok(!r.html.includes('Unsubscribe'), 'the footer Unsubscribe endpoint is removed');
+    // the footer copy of the per-recipient otpToken is removed by the cut (at least one fewer than before)
+    const preOtp = (pre.match(/otpToken=/g) || []).length, keptOtp = (r.html.match(/otpToken=/g) || []).length;
+    assert.ok(keptOtp < preOtp, 'the footer otpToken instance is removed by the cut');
+  });
+}
+
+test('linkedin fixture (jobalerts digest): leak-free redaction incl. the name-derived tokens (every key mutation-proven)', () => {
+  // No Hi/Hello greeting in this template (expected []; the recipient name is in the intended-for line, the /comm/in/
+  // profile slug, and the recipient profile-photo alt — all redacted, none a greeting). Three keys are general-slot
+  // mutation-proven via the shared framework: the per-recipient otpToken (36×), the intended-for name tail
+  // (RECIPIENT_REDACTED), and the /comm/in/ profile slug (USER…).
+  noLeak('email-linkedin.html', [], [
+    { label: 'otp',          re: /otpToken=([^&"\s]+)/g,          ok: PLACEHOLDER_TOK,                         count: 36, realish: REALISH_TOK },
+    { label: 'intended_for', re: /intended for ([A-Za-z][\w]*)/g, ok: (v) => /^RECIPIENT_REDACTEDA*$/.test(v), count: 1,  realish: 'Johnqdoe' },
+    { label: 'profile_slug', re: /\/comm\/in\/([A-Za-z0-9]+)/g,   ok: (v) => /^USERA*$/.test(v),               count: 1,  realish: 'johnxslug' },
+  ]);
+  // The recipient's profile-PHOTO alt (derivedNameWord) is guarded separately: a general `alt="…"` scan cannot be used
+  // because the SAME profile-displayphoto element also carries the PUBLIC names of the job POSTERS in the cards
+  // (per-posting content, like job titles — legitimately kept, not recipient PII). The recipient's own alt is the sole
+  // `alt="USER USERA"` occurrence; pin its exact count so an un-redaction (real recipient name reappearing in their
+  // photo alt) flips the scan red. An additive real-name insertion elsewhere is covered by the intended_for/profile_slug
+  // general slots above.
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-linkedin.html'), 'utf8');
+  assert.equal((raw.match(/alt="USER USERA"/g) || []).length, 1, 'exactly one recipient profile-photo alt, holding the USER placeholder');
+  const unred = raw.replace('alt="USER USERA"', 'alt="Realy Personx"');
+  assert.notEqual(unred, raw, 'un-redaction changed the fixture');
+  assert.equal((unred.match(/alt="USER USERA"/g) || []).length, 0, 'un-redacting the recipient photo alt flips the pinned-count guard red');
+});
+
+test('linkedin fixture (jobs-listings single-role): leak-free redaction (every key mutation-proven)', () => {
+  // Single-role template: no profile block (so no slug/alt name-derived tokens), fewer otpToken links. Redacted keys:
+  // the per-recipient otpToken (32×) + the intended-for name tail (RECIPIENT_REDACTED). No greeting / @-email (expected []).
+  noLeak('email-linkedin-jobs-listings.html', [], [
+    { label: 'otp',          re: /otpToken=([^&"\s]+)/g,           ok: PLACEHOLDER_TOK,                         count: 32, realish: REALISH_TOK },
+    { label: 'intended_for', re: /intended for ([A-Za-z][\w]*)/g,  ok: (v) => /^RECIPIENT_REDACTEDA*$/.test(v), count: 1,  realish: 'Johnqdoe' },
+  ]);
+});
+
+// ---------- primis-talent link cut + no-leak (slice footer-markers-2026-07, 2026-07-02) ----------
+// primis is a LINK-mode sender (applygateway pattern): the per-recipient sendgrid upn token is in the href of the
+// SAME <a> as the visible 'Click here to unsubscribe from our emails' text, so a plain text cut would leave the open
+// <a href="…upn…"> tag; link snaps the cut back to that enclosing <a> so the token drops.
+test('primis link mode: cut snaps to the enclosing <a>, dropping the footer sendgrid upn token', () => {
+  const pre = prePipeline(fs.readFileSync(path.join(__dirname, 'fixtures', 'email-primis-talent.html'), 'utf8'));
+  const r = gas.truncateAtFooter_(pre, 'marketing@primis-talent.com');
+  assert.equal(r.outcome, 'hit');
+  assert.equal(r.bytesCut, 590, 'exact cut bytes (re-measure + update here in the same commit if intentional)');
+  const tail = pre.slice(r.html.length);
+  assert.ok(tail.startsWith('<a'), 'the cut starts at the enclosing <a>, so the token-bearing href is discarded');
+  assert.ok(!r.html.includes('Click here to unsubscribe from our emails'), 'the visible marker text is gone');
+  assert.ok(!/<a\b[^>]*$/.test(r.html), 'the kept text does not end with a dangling <a open tag');
+  // link snaps EARLIER than the visible text (proving link mode moved the cut back to the enclosing <a>)
+  const linkIdx = gas.footerCutIndex_(pre, { text: 'Click here to unsubscribe from our emails', mode: 'link' });
+  const textIdx = gas.footerCutIndex_(pre, 'Click here to unsubscribe from our emails');
+  assert.ok(linkIdx > -1 && textIdx > -1 && linkIdx < textIdx, 'link snaps the cut earlier than the visible-text cut');
+  // the footer unsubscribe <a>'s sendgrid upn token drops with the snap (one fewer upn than before the cut)
+  const preUpn = (pre.match(/upn=/g) || []).length, keptUpn = (r.html.match(/upn=/g) || []).length;
+  assert.ok(keptUpn < preUpn, 'the footer unsubscribe <a> (its sendgrid upn) is removed by the link snap');
+});
+
+test('primis fixture: leak-free redaction (greeting + sendgrid upn mutation-proven; no real identity embedded)', () => {
+  // primis's redaction differs from the shared 'User' greeting convention: the body greeting name is redacted
+  // length-neutrally to 'USERAAAAAA' (padded), which the shared allow-set ({User,Candidate}) does not cover — so this
+  // fixture gets a dedicated no-leak test (it still embeds no real recipient identity). Per-recipient tokens: the
+  // SendGrid upn values in ct.sendgrid.net/ls/click links (one is the footer unsubscribe <a> the link cut drops).
+  const raw = fs.readFileSync(path.join(__dirname, 'fixtures', 'email-primis-talent.html'), 'utf8');
+  assert.ok(!/\r/.test(raw), 'primis fixture stays LF-only');
+  assert.deepEqual(emailsIn(raw), [], 'primis: no plaintext @-email appears');
+  assert.ok(!(raw.match(B64_RUN) || []).some(decodesToEmail), 'primis: no base64/base64url run decodes to an email (encoded address)');
+  // greeting: exactly one 'Hi <placeholder>,' site holding the redacted length-neutral placeholder 'USERAAAAAA'
+  const GREET = /\bHi\s+([A-Za-z]+),/g;
+  assert.deepEqual([...raw.matchAll(GREET)].map((m) => m[1]), ['USERAAAAAA'], 'primis: exactly one greeting site, redacted placeholder');
+  // sendgrid upn per-recipient tokens: extract-and-validate every occurrence (5 links + 1 open pixel = 6)
+  const upns = [...raw.matchAll(/upn=([^&"\s]+)/g)].map((m) => m[1]);
+  assert.equal(upns.length, 6, 'primis: 6 sendgrid upn occurrences');
+  assert.ok(upns.every((v) => /^TOKEN_REDACTEDA*$/.test(v)), 'primis: every upn is the redacted placeholder');
+  // mutation proofs — every class load-bearing against BOTH an un-redaction and an additive insert (all synthetic)
+  assert.ok([...raw.replace('Hi USERAAAAAA,', 'Hi Johndoe,').matchAll(GREET)].some((m) => m[1] !== 'USERAAAAAA'),
+    'primis: greeting guard catches an un-redaction');
+  assert.equal([...(raw + '<p>Hi Janedoe,</p>').matchAll(GREET)].length, 2, 'primis: greeting guard catches an additive name');
+  assert.ok([...raw.replace(/upn=TOKEN_REDACTEDA*/, 'upn=aZ9bQ2cX1wK3').matchAll(/upn=([^&"\s]+)/g)].some((m) => !/^TOKEN_REDACTEDA*$/.test(m[1])),
+    'primis: upn guard catches an un-redaction');
+  assert.equal([...(raw + ' upn=aZ9bQ2cX1wK3').matchAll(/upn=([^&"\s]+)/g)].length, 7, 'primis: upn guard catches an additive token');
 });

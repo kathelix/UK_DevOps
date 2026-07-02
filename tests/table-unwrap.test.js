@@ -213,7 +213,9 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
   // footer-multi-marker (2026-06-21) added the NIJobs DIGEST fixture (nijobs-digest 9/345) — pins the
   // unwrap of the kept digest body, so a regression confined to it can't pass on footer bytesCut alone.
   // footer-map-extension-3 (2026-06-27) added haystack (17/756), talentsource24 (2/66) and applygateway
-  // (div layout, 0/0 like ziprecruiter), re-measured from the shipped LF fixtures.
+  // (div layout, 0/0 like ziprecruiter), re-measured from the shipped LF fixtures. footer-markers-2026-07
+  // (2026-07-02) added linkedin ×2 templates (jobalerts digest 27/1206, jobs-listings single-role 29/1227) +
+  // primis-talent (2/96), and re-captured reed (20/660, was 18/594 on the pre-2026-07 fixture).
   const GOLDEN = {
     'applygateway': { tables: 0, bytesSaved: 0 }, // footer-map-extension-3 (2026-06-27): div-based layout (no single-child wrappers), like ziprecruiter
     'cord': { tables: 15, bytesSaved: 514 },
@@ -225,12 +227,15 @@ test('corpus: full pipeline (link cleanup -> CLEAN_REGEX -> unwrap) per-fixture 
     'jobs4': { tables: 1, bytesSaved: 33 },
     'joblookup': { tables: 17, bytesSaved: 561 },
     'jooble': { tables: 57, bytesSaved: 1881 },
+    'linkedin': { tables: 27, bytesSaved: 1206 }, // footer-markers-2026-07: jobalerts digest
+    'linkedin-jobs-listings': { tables: 29, bytesSaved: 1227 }, // footer-markers-2026-07: jobs-listings single-role
     'milkround': { tables: 12, bytesSaved: 460 },
     'nijobs': { tables: 3, bytesSaved: 115 },
     'nijobs-digest': { tables: 9, bytesSaved: 345 },
     'outsideir35': { tables: 0, bytesSaved: 0 },
+    'primis-talent': { tables: 2, bytesSaved: 96 }, // footer-markers-2026-07: link-mode sender
     'procontractjobs': { tables: 25, bytesSaved: 4805 },
-    'reed': { tables: 18, bytesSaved: 594 },
+    'reed': { tables: 20, bytesSaved: 660 }, // footer-markers-2026-07: fresh capture (was 18/594 on the pre-2026-07 fixture)
     'talent': { tables: 7, bytesSaved: 1200 }, // fixture-raw-transport (2026-06-24): single-job template
     'talentsource24': { tables: 2, bytesSaved: 66 }, // footer-map-extension-3
 
