@@ -1156,9 +1156,21 @@ function collapseTableWrappers_(html) {
 const FOOTER_MARKERS = {
   // reed: the seed map proposed 'Manage your job alerts' (v3), but that exact string is ABSENT
   // from the stored reed CleanText — the real footer reads "…manage your contact preferences or
-  // unsubscribe." The corrected marker cuts 1,311 B at 81.2%, matching the issue's own research
-  // evidence (reed 1,311 B) exactly. Confirm-before-pin caught the transcription slip (see PR #14).
-  'reed.co.uk': 'manage your contact preferences',
+  // unsubscribe." 'manage your contact preferences' was the corrected marker (confirm-before-pin
+  // caught the v3 transcription slip, PR #14). footer-markers-2026-07 APPENDS a second candidate:
+  // the 2026-07-02 §8 footer-freshness scan flagged a token-bearing footer sentence surviving past
+  // the floor ('…received this email because you are registered with…', which BEGINS reed's footer,
+  // preceding the 'manage your contact preferences' line). This is an APPEND, NOT a drift claim — you
+  // cannot distinguish drift from residual off post-cut CleanText (docs/TECH_DESIGN.md §4); append a
+  // candidate and let earliest-valid-cut win (the nijobs/milkround precedent). Both markers are
+  // floor-checked individually; the new marker is the earlier (winning) footer start in the captured
+  // samples, so the cut removes the footer + the clicks.reed tracking <a>s that follow it. Append-only:
+  // never replace the existing marker (a stale appended marker is a harmless −1; deleting a live one
+  // could break another template). Byte-confirmed across ≥2 stored CleanText samples.
+  'reed.co.uk': [
+    'manage your contact preferences',                      // existing — KEEP verbatim (do not remove/edit)
+    'received this email because you are registered with',  // NEW append (footer-markers-2026-07): surviving token-bearing footer start
+  ],
   'whatjobs.com': 'Overall, how relevant are these jobs',
   'jobmails.io': 'Please do not reply to this email',
   'joblookup.com': 'Pause Your Job Alerts',
@@ -1263,6 +1275,23 @@ const FOOTER_MARKERS = {
   'haystackapp.io':      'You received this email because you',                 // text. Notice line; sendgrid /asm/unsubscribe?...data=<token> + /asm/?...data=<token> follow. Leaves a token-free "Haystack App Ltd, …" address line above (acceptable residue, no per-recipient token). cut ~68-87%.
   'talentsource24.com':  'Happy job hunting!',                                  // text. Pre-links sign-off; the 3 ?guid=<token> account links (Edit alert / Remove account / Unsubscribe) + postal addr follow. cut ~94%. NB a DUPLICATE top-of-email preferences bar carries the same ?guid= — a tail cut structurally cannot reach it; out of scope (docs/TECH_DESIGN.md §4).
   'applygateway.com':    { text: 'Unsubscribe from this email', mode: 'link' }, // link. Token (jobboard.io/job_alerts/<UUID>/unsubscribe?token=<JWT>, ~700-char JWT) is in the href of the SAME <a> as the anchor text → link snaps to the enclosing <a> and drops it; the address line "Apply Gateway Ltd, …" follows and is removed too. (Address-after-links = the exact PR #40 case; link mode is the unlock.) cut ~98%.
+  // --- footer-markers-2026-07 (2026-07-02): two previously-unmapped senders flagged by the §8 footer-freshness scan.
+  // Byte-confirmed against ≥2 stored RawEmails CleanText samples each; new keys (registered domain), not appends.
+  // linkedin: TEXT mode. The footer order is 'This email was intended for <name>' (EARLIEST) → 'You are receiving
+  // Job Alert emails' → 'Manage job alerts' → 'Unsubscribe' → per-recipient otpToken + '© 2026 LinkedIn Corporation…'.
+  // Cutting at the earliest element removes the WHOLE footer incl. the otpToken. 'This email was intended for' is the
+  // only footer phrase present in BOTH the jobalerts-noreply@ digest AND the jobs-listings@ single-role template
+  // ('You are receiving Job Alert emails' / 'Manage job alerts' are ABSENT from the single-role variant), so it is the
+  // domain-robust marker (a marker that missed one variant would fail-loud on every such email). The recipient name
+  // FOLLOWS the marker (no leading per-recipient token before it), so a plain text cut discards it — link mode is not
+  // needed. cut ~89% (digest) / ~88% (single-role).
+  'linkedin.com': 'This email was intended for',
+  // primis: LINK mode. The per-recipient sendgrid token is in the href of the SAME <a> as the anchor text
+  // ('<a href="…sendgrid token…">Click here to unsubscribe from our emails</a>'), so a plain text cut would leave the
+  // open <a href="…token…"> tag; link snaps to the enclosing <a> and drops it — exactly the applygateway.com pattern.
+  // (The body greeting name sits BEFORE the marker and stays in kept text; it is redacted in the fixture, not a live
+  // per-recipient-token concern.) cut ~85%.
+  'primis-talent.com': { text: 'Click here to unsubscribe from our emails', mode: 'link' },
 };
 
 // A footer marker is only believed when it sits in the trailing portion of the text: the
